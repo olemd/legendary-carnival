@@ -187,6 +187,17 @@ class ServiceDiff:
 
 
 @dataclass(slots=True)
+class NotificationRow:
+    id: int
+    ts: str
+    channel: str
+    kind: str
+    title: str
+    ok: bool
+    error: str | None
+
+
+@dataclass(slots=True)
 class Snapshot:
     id: int
     kind: str

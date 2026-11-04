@@ -205,8 +205,12 @@ def run(ctx: typer.Context) -> None:
                 from lanwatch.llm import hooks as llm_hooks
 
                 async def digest_job() -> None:
+                    from lanwatch.notify import dispatch as notify
+
                     await llm_hooks.catch_up(cfg, store)
-                    await llm_hooks.write_digest(cfg, store)
+                    text = await llm_hooks.write_digest(cfg, store)
+                    if text:
+                        await notify.digest(cfg, store, text)
                     update_overview(store, cfg)
 
                 d = Job.daily("digest", cfg.schedule.digest_time, persisted("digest", digest_job))
@@ -406,6 +410,40 @@ def suggest(ctx: typer.Context) -> None:
         typer.echo("no suggestions: LLM disabled or unavailable (see log)", err=True)
         raise typer.Exit(1)
     typer.echo(text)
+
+
+@app.command("notify")
+def notify_cmd(
+    ctx: typer.Context,
+    test: Annotated[
+        bool, typer.Option("--test", help="Send a test message to all channels.")
+    ] = False,
+    limit: Annotated[int, typer.Option(help="Log entries to show.")] = 20,
+) -> None:
+    """Show the notification log, or send a test notification."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.notify import dispatch
+
+    with _open_store(ctx) as store:
+        if test:
+            chans = [c.name for c in dispatch.channels(cfg)]
+            if not chans:
+                typer.echo("no notification channels enabled (see [notify] in config)", err=True)
+                raise typer.Exit(1)
+            n = asyncio.run(dispatch.test_message(cfg, store))
+            typer.echo(f"delivered to {n}/{len(chans)} channels: {', '.join(chans)}")
+            if n < len(chans):
+                raise typer.Exit(1)
+            return
+        rows = store.notifications(limit)
+    if not rows:
+        typer.echo("no notifications sent yet")
+    for r in rows:
+        status = "ok " if r.ok else "ERR"
+        typer.echo(
+            f"{local_str(r.ts)}  {status} {r.channel:<15} {r.kind:<17} {r.title}"
+            + (f"  ({r.error})" if r.error else "")
+        )
 
 
 @llm_app.command("check")

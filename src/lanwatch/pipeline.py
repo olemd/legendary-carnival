@@ -13,6 +13,7 @@ from lanwatch.config import Config
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import list_interfaces, select_subnets, self_observations
+from lanwatch.notify import dispatch as notify
 from lanwatch.overview import update as update_overview
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.engine import Engine
@@ -118,6 +119,7 @@ async def run_inventory(
         len(rules.resolved_ids),
     )
     await llm_hooks.after_round(config, store, list(diffs), rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
     update_overview(store, config)
     return InventoryOutcome(
         snapshot_id=snapshot_id,
@@ -194,6 +196,7 @@ async def run_discovery(
             log.warning("inventory of new devices failed: %s", e)
 
     await llm_hooks.after_round(config, store, [], result.new_ids)
+    await notify.after_round(config, store, result.new_ids, result.resolved_ids)
 
     path = update_overview(store, config)
     if path:

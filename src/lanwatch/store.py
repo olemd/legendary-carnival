@@ -21,6 +21,7 @@ from lanwatch.models import (
     FindingStatus,
     HostObservation,
     Kind,
+    NotificationRow,
     ServiceDiff,
     ServiceRow,
     Severity,
@@ -116,6 +117,18 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE devices ADD COLUMN description TEXT;
     ALTER TABLE devices ADD COLUMN kind_confidence REAL;
+    """,
+    # v4: notification log
+    """
+    CREATE TABLE notifications (
+        id      INTEGER PRIMARY KEY,
+        ts      TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        kind    TEXT NOT NULL,
+        title   TEXT NOT NULL,
+        ok      INTEGER NOT NULL,
+        error   TEXT
+    );
     """,
 ]
 
@@ -423,6 +436,34 @@ class Store:
             (older_than_iso,),
         ).fetchall()
         return [int(r[0]) for r in rows]
+
+    # -- notifications ------------------------------------------------------
+
+    def record_notification(
+        self, channel: str, kind: str, title: str, ok: bool, error: str | None
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO notifications(ts, channel, kind, title, ok, error)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (iso(now_utc()), channel, kind, title, int(ok), error),
+        )
+
+    def notifications(self, limit: int = 100) -> list[NotificationRow]:
+        rows = self._db.execute(
+            "SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [
+            NotificationRow(
+                id=int(r["id"]),
+                ts=str(r["ts"]),
+                channel=str(r["channel"]),
+                kind=str(r["kind"]),
+                title=str(r["title"]),
+                ok=bool(r["ok"]),
+                error=r["error"],
+            )
+            for r in rows
+        ]
 
     # -- meta ---------------------------------------------------------------
 

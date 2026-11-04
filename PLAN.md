@@ -73,7 +73,13 @@ Ikke-mål
   Hver regel har id, default severity og kan slås av eller justeres i config.
 - **llm/**: tynn klient. Prompt-maler ligger i filer, ikke i kode. Alle kall
   cachet slik at reskanning ikke koster ny inferens.
-- **notify/**: adapters med felles interface. Default: bare logg + rapport.
+- **notify/**: kanaler med felles interface (ntfy, webhook, e-post, Home
+  Assistant). Alle av som default. Et funn varsles én gang når det åpnes,
+  funn fra samme runde batches til én melding, terskel `notify.min_severity`
+  (default medium) med mulighet for strengere terskel per kanal. LLM-ens
+  énlinjes oppsummering tas med når den finnes. Hver leveranse logges i
+  store og vises i web-UI. Home Assistant får i tillegg `sensor.lanwatch_*`
+  oppdatert hver runde.
 - **overview/**: renderer `overview.md` fra store etter hver runde. Atomisk
   skriving. Valgfri git-commit av overview-katalogen per endring, slik at
   `git log` blir endringshistorikk for nettet. Senere HTML-variant og
@@ -222,7 +228,7 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 | M1 | discovery + inventar + diff + "ny enhet"-funn + `overview.md` | allerede nyttig |
 | M2 | service-inventar, regelmotor, 10 regler, web-UI | kjernen |
 | M3 | LLM: klassifisering, forklaring, digest, forslag, eval-harness; podman + root-helper | det som gjør den lesbar |
-| M4 | notify-adaptere (ntfy, webhook, Home Assistant), systemd, docs | drift |
+| M4 | notify-adaptere (ntfy, webhook, e-post, Home Assistant med sensorer), varslingslogg | drift |
 | M5 | infra-probes, herdingssjekker, versjonsdatabase, forbedringsforslag | dybde |
 | M6 | web-UI utvidelser: historikk/tidslinje, søk, LLM-chat mot inventaret | bekvemmelighet |
 

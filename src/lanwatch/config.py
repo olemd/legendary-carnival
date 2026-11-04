@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from lanwatch.models import Severity
 
@@ -141,9 +141,79 @@ class OverviewConfig(StrictModel):
     git: bool = False
 
 
+class NtfyConfig(StrictModel):
+    enabled: bool = False
+    url: str = "https://ntfy.sh"
+    topic: str = ""
+    token: str | None = None
+    min_severity: Severity | None = None  # None = notify.min_severity
+
+    @model_validator(mode="after")
+    def _topic_required(self) -> NtfyConfig:
+        if self.enabled and not self.topic:
+            raise ValueError("notify.ntfy.topic is required when enabled")
+        return self
+
+
+class WebhookConfig(StrictModel):
+    enabled: bool = False
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    min_severity: Severity | None = None
+
+    @model_validator(mode="after")
+    def _url_required(self) -> WebhookConfig:
+        if self.enabled and not self.url.startswith(("http://", "https://")):
+            raise ValueError("notify.webhook.url must be an http(s) URL when enabled")
+        return self
+
+
+class HomeAssistantConfig(StrictModel):
+    enabled: bool = False
+    url: str = "http://homeassistant.local:8123"
+    token: str = ""  # long-lived access token
+    service: str = "notify.notify"  # e.g. notify.mobile_app_my_phone
+    publish_sensors: bool = True  # sensor.lanwatch_* via the states API
+    min_severity: Severity | None = None
+
+    @model_validator(mode="after")
+    def _token_required(self) -> HomeAssistantConfig:
+        if self.enabled and not self.token:
+            raise ValueError("notify.home_assistant.token is required when enabled")
+        if "." not in self.service:
+            raise ValueError("notify.home_assistant.service must be domain.service")
+        return self
+
+
+class EmailConfig(StrictModel):
+    enabled: bool = False
+    smtp_host: str = "localhost"
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    starttls: bool = True
+    username: str | None = None
+    password: str | None = None
+    sender: str = "lanwatch@localhost"
+    to: list[str] = Field(default_factory=list)
+    min_severity: Severity | None = None
+
+    @model_validator(mode="after")
+    def _to_required(self) -> EmailConfig:
+        if self.enabled and not self.to:
+            raise ValueError("notify.email.to is required when enabled")
+        return self
+
+
 class NotifyConfig(StrictModel):
     log: bool = True
     report_dir: Path | None = None
+    # Findings at or above this severity are pushed (channels may raise their own bar).
+    min_severity: Severity = Severity.MEDIUM
+    resolved: bool = False  # also push when findings auto-resolve
+    digest: bool = True  # push the daily digest
+    ntfy: NtfyConfig = NtfyConfig()
+    webhook: WebhookConfig = WebhookConfig()
+    home_assistant: HomeAssistantConfig = HomeAssistantConfig()
+    email: EmailConfig = EmailConfig()
 
 
 class WebConfig(StrictModel):

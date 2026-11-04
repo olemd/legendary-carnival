@@ -8,10 +8,11 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 
 ## Status
 
-M3. Discovery, service inventory (nmap), ten deterministic rules, change detection,
-`overview.md`, web UI, and a local LLM (Ollama) that classifies devices, explains
-findings in your language, writes a daily digest and suggests improvements. Runs bare,
-in rootful podman, or rootless podman with a small root helper (see `deploy/README.md`).
+M4. Discovery, service inventory (nmap), ten deterministic rules, change detection,
+`overview.md`, web UI, a local LLM (Ollama) that classifies devices, explains findings
+in your language, writes a daily digest and suggests improvements, and notifications via
+ntfy, webhook, e-mail and Home Assistant. Runs bare, in rootful podman, or rootless
+podman with a small root helper (see `deploy/README.md`).
 
 ## Quick start
 
@@ -34,6 +35,13 @@ structural suggestions (`lanwatch suggest`). Output is JSON-schema constrained, 
 cached on input, and references to ids not in the input are dropped. If Ollama is down,
 scanning continues and the LLM catches up later. `lanwatch llm eval` scores a model on a
 device-classification golden set in `evals/`.
+
+Notifications: all channels off by default. Enable one or more under `[notify]`: ntfy,
+generic webhook, e-mail (SMTP), Home Assistant (a notify service plus `sensor.lanwatch_*`
+entities updated every round). Findings at or above `notify.min_severity` (default
+medium) are pushed once when they open, batched per round, with the LLM's one-line
+summary when available. The daily digest is pushed too. `lanwatch notify --test` checks
+the channels; `lanwatch notify` and the web UI show the delivery log.
 
 Discovery backend is picked automatically: `arp-scan` (as root or with CAP_NET_RAW),
 else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table.

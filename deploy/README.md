@@ -19,7 +19,7 @@ raw sockets for arp-scan and nmap SYN/UDP scans.
 ## 2. Rootful podman (simplest container)
 
 ```sh
-sudo podman build -t lanwatch .
+sudo podman build -t lanwatch .          # or: make container
 sudo cp deploy/quadlet/lanwatch.container /etc/containers/systemd/
 sudo systemctl daemon-reload && sudo systemctl start lanwatch
 ```
@@ -37,7 +37,7 @@ addresses or CIDRs. No shell, no file arguments, no script args.
 
 ```sh
 # host: helper
-sudo uv tool install .               # or pipx install .; gives /root/.local/bin/lanwatch-helper
+sudo uv tool install .               # or: sudo make helper-install (does all four steps)
 sudo ln -s /root/.local/bin/lanwatch-helper /usr/local/bin/lanwatch-helper
 sudo groupadd -f lanwatch && sudo usermod -aG lanwatch $USER   # re-login afterwards
 sudo cp deploy/lanwatch-helper.service /etc/systemd/system/

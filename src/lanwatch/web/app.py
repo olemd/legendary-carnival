@@ -130,6 +130,17 @@ def create_app(config: Config) -> FastAPI:
     def overview_page(request: Request, s: StoreDep) -> HTMLResponse:
         return page(request, "overview.html", markdown=render(s, config))
 
+    @app.get("/notifications", response_class=HTMLResponse, dependencies=deps)
+    def notifications_page(request: Request, s: StoreDep) -> HTMLResponse:
+        from lanwatch.notify.dispatch import channels
+
+        return page(
+            request,
+            "notifications.html",
+            rows=s.notifications(200),
+            channels=[c.name for c in channels(config)],
+        )
+
     @app.get("/digest", response_class=HTMLResponse, dependencies=deps)
     def digest_page(request: Request, s: StoreDep, day: str | None = None) -> HTMLResponse:
         files = sorted(config.report_dir.glob("digest-*.md"), reverse=True)

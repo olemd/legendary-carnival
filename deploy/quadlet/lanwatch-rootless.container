@@ -21,6 +21,9 @@ Volume=%h/.config/lanwatch:/etc/lanwatch:ro,Z
 Volume=/run/lanwatch:/run/lanwatch
 Environment=LANWATCH_SCAN__HELPER_SOCKET=/run/lanwatch/helper.sock
 Environment=LANWATCH_LLM__BASE_URL=http://127.0.0.1:11434
+HealthCmd=python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8321/api/health', timeout=3).status == 200 else 1)"
+HealthInterval=60s
+HealthStartPeriod=30s
 
 [Service]
 Restart=always

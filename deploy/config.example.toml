@@ -53,6 +53,40 @@ git = false                             # commit each overview change in its dir
 [notify]
 log = true
 # report_dir = "/var/lib/lanwatch/reports"
+min_severity = "medium"                 # push findings at or above this; channels may raise it
+resolved = false                        # also push when findings auto-resolve
+digest = true                           # push the daily digest
+# Findings from one round are batched into one message. Test with: lanwatch notify --test
+# Secrets can live in env instead: LANWATCH_NOTIFY__NTFY__TOKEN=...
+
+[notify.ntfy]
+enabled = false
+url = "https://ntfy.sh"                 # or your own ntfy server
+topic = ""                              # required when enabled
+# token = ""                            # access token for protected topics
+# min_severity = "high"
+
+[notify.webhook]
+enabled = false
+url = ""                                # POST JSON {event, title, text, severity, ts, findings[]}
+headers = {}                            # e.g. { Authorization = "Bearer ..." }
+
+[notify.home_assistant]
+enabled = false
+url = "http://homeassistant.local:8123"
+token = ""                              # long-lived access token, required when enabled
+service = "notify.notify"               # e.g. notify.mobile_app_my_phone
+publish_sensors = true                  # sensor.lanwatch_devices_online, _devices_known, _open_findings
+
+[notify.email]
+enabled = false
+smtp_host = "localhost"
+smtp_port = 587
+starttls = true
+# username = ""
+# password = ""
+sender = "lanwatch@localhost"
+to = []                                 # required when enabled
 
 [web]
 enabled = true
