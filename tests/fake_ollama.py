@@ -17,7 +17,7 @@ ToolHandler = Callable[[list[dict[str, Any]], list[dict[str, Any]]], str | dict[
 class FakeOllama:
     def __init__(self, handler: Handler, models: list[str] | None = None) -> None:
         self.handler = handler
-        self.models = models if models is not None else ["qwen3:14b"]
+        self.models = models if models is not None else ["qwen3.8:27b"]
         self.requests: list[dict[str, Any]] = []
         self.reject_think = False
         self.tool_handler: ToolHandler | None = None

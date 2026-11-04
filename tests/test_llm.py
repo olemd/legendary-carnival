@@ -218,6 +218,7 @@ def _init(self: OllamaClient, cfg: LlmConfig, fake: FakeOllama) -> None:
     self.base_url = cfg.base_url.rstrip("/")
     self._client = fake.client()
     self._think_supported = None
+    self.tools_supported = None
 
 
 async def test_eval_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

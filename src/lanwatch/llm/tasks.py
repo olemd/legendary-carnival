@@ -381,6 +381,33 @@ class ChatAnswer:
     tools: list[dict[str, Any]] = field(default_factory=list)
 
 
+def inventory_text(store: Store, config: Config) -> str:
+    """Compact dump of the whole inventory, for models without tool support. Truncated to
+    fit llm.chat_num_ctx."""
+    lines: list[str] = []
+    services = store.open_services()
+    for d in store.devices():
+        ports = ", ".join(s.label for s in services.get(d.id, []))
+        lines.append(
+            f"- #{d.id} {d.label} ip={d.ip or '-'} mac={d.mac or '-'} vendor={d.vendor or '-'}"
+            f" kind={d.kind or '-'} {'online' if d.online else 'offline'}"
+            + (f" ports: {ports}" if ports else "")
+        )
+    for f in [*store.findings(FindingStatus.OPEN), *store.findings(FindingStatus.ACKED)]:
+        lines.append(
+            f"- finding id={f.id} [{f.severity.value}] {f.rule_id}: {f.title} ({f.status.value})"
+        )
+    for r in store.infra("upnp"):
+        if r.data.get("is_igd"):
+            lines.append(
+                f"- UPnP IGD {r.data.get('friendly_name') or r.key} at {r.key},"
+                f" {len(r.data.get('mappings', []))} port mappings"
+            )
+    budget = max(2000, (config.llm.chat_num_ctx - 1500) * 3)
+    out = "\n".join(lines)
+    return out if len(out) <= budget else out[:budget] + "\n[... truncated ...]"
+
+
 def chat_summary(store: Store) -> str:
     """Short orientation for the chat system prompt; details come from tools."""
     devices = store.devices()
@@ -429,6 +456,17 @@ async def answer_question(
                 messages, num_ctx=svc.config.llm.chat_num_ctx, tools=TOOLS
             )
             svc.calls += 1
+            if svc.client.tools_supported is False and not result.tool_calls and not runner.trace:
+                # No tool support in this model: answer from a pasted inventory instead.
+                messages[0]["content"] = (
+                    system
+                    + "\n\nFull inventory (tools unavailable):\n"
+                    + (inventory_text(svc.store, svc.config))
+                )
+                result = await svc.client.chat_text(messages, num_ctx=svc.config.llm.chat_num_ctx)
+                svc.calls += 1
+                text = result.content.strip()
+                break
             if not result.tool_calls:
                 text = result.content.strip()
                 break

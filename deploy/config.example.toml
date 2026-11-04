@@ -43,7 +43,7 @@ digest_time = "07:00"
 [llm]
 enabled = true
 base_url = "http://localhost:11434"     # Ollama; may be another machine on the LAN
-model = "qwen3:14b"                     # compare candidates with `lanwatch llm eval --model ...`
+model = "qwen3.8:27b"                   # or gemma4:26b; compare with `lanwatch llm eval --model ...`
 timeout_s = 120
 temperature = 0.1
 num_ctx = 8192

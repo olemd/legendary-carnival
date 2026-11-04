@@ -145,9 +145,11 @@ Rolle: språk og klassifisering, ikke deteksjon.
 
 - Default endepunkt: Ollama på `http://localhost:11434`. Modell pinnes i config.
 - Maskinvare: Radeon RX 7900 XTX, 24 GB VRAM, via ROCm (gfx1100, støttet av
-  Ollama). Det gir rom for 14B-klasse i Q8 eller 32B-klasse i Q4 med 8–16k
-  kontekst. Default settes til 14B-klasse for latens, 32B evalueres i M3 med
-  eval-harnessen før eventuelt bytte.
+  Ollama). Kandidater (2026-11-04): `qwen3.8:27b` (default) og `gemma4:26b`.
+  Begge er ~16–18 GB i Q4 og gir rom for 16k chat-kontekst. Velges med
+  `lanwatch llm eval`, som har to suiter: klassifisering og tool-calling-chat.
+  Hvis en modell ikke støtter tools i Ollama, faller chatten tilbake til å
+  lime inn inventaret, og sier fra i loggen.
 - Hvis agenten kjører på en annen boks enn GPU-maskinen, pek `llm.base_url`
   på GPU-maskinen. Fortsatt lokalt.
 - Egen evalueringsharness: gullsett med fingerprints → forventet klasse, slik at

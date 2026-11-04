@@ -30,7 +30,7 @@ uv run lanwatch run                 # daemon: discovery 5 min, inventory 1 h, de
 Web UI: http://127.0.0.1:8321 while `run` (or `lanwatch web`) is active. Loopback only by
 default; to reach it from another machine set `web.host` and `web.password`.
 
-LLM: install Ollama, `ollama pull qwen3:14b`, then `lanwatch llm check`. The LLM never
+LLM: install Ollama, `ollama pull qwen3.8:27b` (or `gemma4:26b`), then `lanwatch llm check`. The LLM never
 produces findings or severities. It classifies devices (kind + one line), explains each
 finding (what, why it matters, what to do), writes a digest at 07:00 and, on request,
 structural suggestions (`lanwatch suggest`). Output is JSON-schema constrained, validated,

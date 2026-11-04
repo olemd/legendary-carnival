@@ -572,17 +572,27 @@ def llm_eval(
     model: Annotated[
         str | None, typer.Option(help="Model to evaluate; default from config.")
     ] = None,
-    file: Annotated[Path, typer.Option(help="JSONL golden set.")] = Path("evals/devices.jsonl"),
+    suite: Annotated[str, typer.Option(help="classify, chat or all")] = "all",
+    file: Annotated[
+        Path | None, typer.Option(help="JSONL golden set (overrides suite path).")
+    ] = None,
 ) -> None:
-    """Run the device-classification golden set and report accuracy and latency."""
+    """Score a model on lanwatch's own tasks: device classification and tool-calling chat."""
     cfg = _state(ctx).loaded.config
     if model:
         cfg = cfg.model_copy(update={"llm": cfg.llm.model_copy(update={"model": model})})
-    from lanwatch.llm.evaluate import run_eval
+    from lanwatch.llm.evaluate import run_chat_eval, run_eval
 
-    report = asyncio.run(run_eval(cfg, file))
-    typer.echo(report.render())
-    raise typer.Exit(0 if report.errors == 0 else 1)
+    failed = False
+    if suite in ("classify", "all"):
+        report = asyncio.run(run_eval(cfg, file or Path("evals/devices.jsonl")))
+        typer.echo(report.render())
+        failed |= report.errors > 0
+    if suite in ("chat", "all"):
+        chat = asyncio.run(run_chat_eval(cfg, file or Path("evals/chat.jsonl")))
+        typer.echo(chat.render())
+        failed |= chat.errors > 0
+    raise typer.Exit(1 if failed else 0)
 
 
 @config_app.command("show")

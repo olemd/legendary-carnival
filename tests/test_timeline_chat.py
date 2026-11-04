@@ -380,3 +380,100 @@ def test_cli_timeline_search_ask(tmp_path: Path) -> None:
     r = runner.invoke(app, ["--data-dir", str(tmp_path), "ask", "anything", "here"])
     assert r.exit_code == 1 and "LLM disabled" in r.output
     _ = json, FindingStatus
+
+
+def test_tools_unsupported_falls_back_to_context(store: Store, tmp_path: Path) -> None:
+    import asyncio
+
+    import httpx
+
+    config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=4096))
+    _seed_chat(store)
+    seen: list[dict[str, Any]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content)
+        seen.append(body)
+        if "tools" in body:
+            return httpx.Response(
+                400, json={"error": "registry.ollama.ai/x does not support tools"}
+            )
+        system = body["messages"][0]["content"]
+        if "Full inventory (tools unavailable)" not in system:
+            # the client's own retry without tools; answer_question discards this reply
+            return httpx.Response(200, json={"message": {"role": "assistant", "content": "plain"}})
+        assert "OpenSSH 9.2" in system
+        return httpx.Response(
+            200, json={"message": {"role": "assistant", "content": "From the list: h1."}}
+        )
+
+    client = OllamaClient(config.llm, httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    svc = LlmService(config, store, client)
+    ans = asyncio.run(answer_question(svc, "Who runs ssh?"))
+    assert ans is not None and ans.text == "From the list: h1." and ans.tools == []
+    assert client.tools_supported is False
+    # tools: first attempt with tools (400), retry without, then the context-paste call.
+    assert [("tools" in b) for b in seen] == [True, False, False]
+    ans2 = asyncio.run(answer_question(svc, "again"))
+    assert ans2 is not None and len(seen) == 5  # no more attempts with tools
+
+
+def test_chat_eval_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from lanwatch.llm.evaluate import load_chat_cases, run_chat_eval, seed_eval_store
+
+    with Store.memory() as s:
+        seed_eval_store(s)
+        assert len(s.devices()) == 3 and s.findings()
+        assert s.device(1).name == "Router"  # type: ignore[union-attr]
+
+    cases = load_chat_cases(Path("evals/chat.jsonl"))
+    assert len(cases) == 8 and cases[4].expect_tools == ["ack_finding"]
+
+    config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True))
+    fake = FakeOllama(lambda s, u, f: "unused")
+
+    def tool_handler(
+        messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> str | dict[str, Any]:
+        q = next(m["content"] for m in reversed(messages) if m["role"] == "user")
+        done = [m for m in messages if m["role"] == "tool"]
+        if done:
+            return "Router (#1) and the NAS; VNC is critical; MySQL 8.0.3 runs there."
+        if "SSH" in q:
+            return {"tool_calls": [{"name": "list_devices", "arguments": {}}]}
+        if "serious" in q:
+            return {"tool_calls": [{"name": "list_findings", "arguments": {"status": "open"}}]}
+        if "NAS" in q:
+            return {"tool_calls": [{"name": "get_device", "arguments": {"device_id": 2}}]}
+        if "Acknowledge" in q:
+            return {"tool_calls": [{"name": "ack_finding", "arguments": {"finding_id": "bogus"}}]}
+        if "UPnP" in q:
+            return {"tool_calls": [{"name": "infrastructure", "arguments": {}}]}
+        return "I do not have that information."
+
+    fake.tool_handler = tool_handler
+    monkeypatch.setattr(
+        OllamaClient, "__init__", lambda self, cfg, client=None: _init(self, cfg, fake)
+    )
+    report = asyncio.run(run_chat_eval(config, Path("evals/chat.jsonl")))
+    by = {r.name: r for r in report.results}
+    assert by["which-expose-ssh"].ok and by["worst-finding"].ok and by["device-detail"].ok
+    assert (
+        by["no-action-when-not-asked"].ok
+        and by["unknown-device-honest"].ok
+        and by["infra-question"].ok
+    )
+    assert by["ack-when-asked"].ok  # tool was called, even though the id was wrong
+    assert not by["name-when-asked"].ok  # handler never calls name_device
+    assert report.correct == 7 and report.errors == 0
+    assert "chat accuracy: 7/8" in report.render()
+
+
+def _init(self: OllamaClient, cfg: LlmConfig, fake: FakeOllama) -> None:
+    self.cfg = cfg
+    self.base_url = cfg.base_url.rstrip("/")
+    self._client = fake.client()
+    self._think_supported = None
+    self.tools_supported = None

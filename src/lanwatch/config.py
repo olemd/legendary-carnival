@@ -127,7 +127,7 @@ class ScheduleConfig(StrictModel):
 class LlmConfig(StrictModel):
     enabled: bool = True
     base_url: str = "http://localhost:11434"
-    model: str = "qwen3:14b"
+    model: str = "qwen3.8:27b"
     timeout_s: int = Field(default=120, ge=1)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     num_ctx: int = Field(default=8192, ge=512)

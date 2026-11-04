@@ -16,6 +16,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/.venv /app/.venv
 COPY evals /app/evals
+COPY tests/fixtures/nmap-services.xml /app/evals/nmap-services.xml
 ENV PATH=/app/.venv/bin:$PATH \
     LANWATCH_DATA_DIR=/var/lib/lanwatch \
     PYTHONUNBUFFERED=1

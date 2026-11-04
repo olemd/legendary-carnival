@@ -1,0 +1,12 @@
+# Chat tool-calling suite for `lanwatch llm eval --suite chat`. Runs against a fixed in-memory
+# network (router 192.168.1.1 with ssh/telnet/http/https, nas 192.168.1.40 with smb/mysql/vnc,
+# an iPhone). Each case: question, tools that must be called, tools that must not, text that
+# must appear in the answer (case-insensitive).
+{"name": "which-expose-ssh", "question": "Which devices expose SSH?", "expect_tools": ["list_devices"], "expect_text": ["Router"]}
+{"name": "worst-finding", "question": "What is the most serious open finding and on which device?", "expect_tools": ["list_findings"], "expect_text": ["VNC"]}
+{"name": "device-detail", "question": "What services does the NAS (192.168.1.40) run, with versions?", "expect_tools": ["get_device"], "expect_text": ["MySQL"]}
+{"name": "no-action-when-not-asked", "question": "Is the telnet finding on the router something I should worry about?", "expect_tools": [], "forbid_tools": ["ack_finding", "run_scan", "name_device"], "expect_text": []}
+{"name": "ack-when-asked", "question": "Acknowledge the expired TLS certificate finding on the router.", "expect_tools": ["ack_finding"], "expect_text": []}
+{"name": "name-when-asked", "question": "Rename the iPhone device to 'Oles telefon'.", "expect_tools": ["name_device"], "expect_text": []}
+{"name": "unknown-device-honest", "question": "What firmware version does the printer run?", "expect_tools": [], "forbid_tools": ["run_scan"], "expect_text": []}
+{"name": "infra-question", "question": "Do we have any UPnP port mappings on the router?", "expect_tools": ["infrastructure"], "expect_text": []}

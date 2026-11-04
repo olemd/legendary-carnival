@@ -54,6 +54,7 @@ class OllamaClient:
         self.base_url = cfg.base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(cfg.timeout_s, connect=5))
         self._think_supported: bool | None = None
+        self.tools_supported: bool | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -108,7 +109,7 @@ class OllamaClient:
         }
         if schema is not None:
             body["format"] = schema
-        if tools:
+        if tools and self.tools_supported is not False:
             body["tools"] = tools
         if self._think_supported is not False:
             body["think"] = False
@@ -118,6 +119,16 @@ class OllamaClient:
                 # Model without a thinking mode rejects the flag; remember and retry once.
                 self._think_supported = False
                 del body["think"]
+                r = await self._client.post(f"{self.base_url}/api/chat", json=body)
+            if r.status_code == 400 and "tools" in body and "tool" in r.text.lower():
+                # Model without tool support: remember, retry without tools. The caller
+                # checks tools_supported and falls back to pasting context.
+                self.tools_supported = False
+                log.warning(
+                    "model %s does not support tools; chat falls back to context paste",
+                    body["model"],
+                )
+                del body["tools"]
                 r = await self._client.post(f"{self.base_url}/api/chat", json=body)
             if r.status_code == 404:
                 raise LlmUnavailable(
@@ -135,6 +146,8 @@ class OllamaClient:
             raise LlmError(f"LLM returned non-JSON body: {e}") from e
         if "think" in body and self._think_supported is None:
             self._think_supported = True
+        if "tools" in body and self.tools_supported is None:
+            self.tools_supported = True
         msg = data.get("message", {})
         calls: list[ToolCall] = []
         for tc in msg.get("tool_calls") or []:

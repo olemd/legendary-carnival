@@ -65,14 +65,19 @@ Either install Ollama natively (`curl -fsSL https://ollama.com/install.sh | sh`,
 detects ROCm) or use `deploy/quadlet/ollama.container`. Then:
 
 ```sh
-ollama pull qwen3:14b
+ollama pull qwen3.8:27b
 lanwatch llm check
-lanwatch llm eval                          # golden set, default model
-lanwatch llm eval --model qwen3:32b        # compare before switching llm.model
+lanwatch llm eval                          # both suites, default model
+lanwatch llm eval --model gemma4:26b       # compare before switching llm.model
+lanwatch llm eval --suite chat             # tool-calling only
 ```
 
-24 GB VRAM fits `qwen3:32b` at Q4 with 8k context; `qwen3:14b` leaves headroom and
-answers in a few seconds. Pick with the eval, not by feel.
+Two suites: `classify` (19 device fingerprints -> expected kind) and `chat` (8 questions
+against a fixed network: must the right tools be called, must actions stay unused unless
+asked, must the answer contain the facts). A ~27B model at Q4 is 16-18 GB, which leaves
+room for the 16k chat context on 24 GB. If a model turns out not to support tools in
+Ollama, the chat falls back to pasting the inventory into the prompt and says so in the
+log. Pick with the eval, not by feel.
 
 If lanwatch runs on a different host than the GPU, set `llm.base_url` to that host and
 bind Ollama to a LAN address (`OLLAMA_HOST=0.0.0.0`). Still local, nothing leaves the LAN.
