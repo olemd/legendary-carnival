@@ -9,6 +9,9 @@ from typing import Any
 import httpx
 
 Handler = Callable[[str, str, dict[str, Any]], dict[str, Any] | str]
+# Tool-aware handler: gets the full message list and tool specs, returns either a text
+# answer or {"tool_calls": [{"name": ..., "arguments": {...}}]}.
+ToolHandler = Callable[[list[dict[str, Any]], list[dict[str, Any]]], str | dict[str, Any]]
 
 
 class FakeOllama:
@@ -17,6 +20,7 @@ class FakeOllama:
         self.models = models if models is not None else ["qwen3:14b"]
         self.requests: list[dict[str, Any]] = []
         self.reject_think = False
+        self.tool_handler: ToolHandler | None = None
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -37,14 +41,35 @@ class FakeOllama:
             return httpx.Response(400, json={"error": "model does not support thinking"})
         if body["model"] not in self.models:
             return httpx.Response(404, json={"error": "model not found"})
-        system = body["messages"][0]["content"]
-        user = body["messages"][1]["content"]
-        out = self.handler(system, user, body.get("format") or {})
-        content = out if isinstance(out, str) else json.dumps(out)
+        message: dict[str, Any]
+        if body.get("tools") and self.tool_handler is not None:
+            out = self.tool_handler(body["messages"], body["tools"])
+            if isinstance(out, dict) and "tool_calls" in out:
+                message = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": c["name"], "arguments": c["arguments"]}}
+                        for c in out["tool_calls"]
+                    ],
+                }
+            else:
+                message = {
+                    "role": "assistant",
+                    "content": out if isinstance(out, str) else json.dumps(out),
+                }
+        else:
+            system = body["messages"][0]["content"]
+            user = body["messages"][1]["content"]
+            out = self.handler(system, user, body.get("format") or {})
+            message = {
+                "role": "assistant",
+                "content": out if isinstance(out, str) else json.dumps(out),
+            }
         return httpx.Response(
             200,
             json={
-                "message": {"role": "assistant", "content": content},
+                "message": message,
                 "prompt_eval_count": 100,
                 "eval_count": 50,
                 "total_duration": 1_500_000_000,

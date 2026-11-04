@@ -52,10 +52,13 @@ appeared/disappeared, device online/offline). `lanwatch timeline`, `/timeline` w
 filters, and a history section per device. `lanwatch search` and the search box cover
 devices, services and findings.
 
-Chat: `/chat` and `lanwatch ask "..."` answer questions about the network. The whole
-inventory (devices, services, findings with ids, infra, latest digest) is pasted into the
-prompt, so answers are grounded and the model is told to say when it does not know. It is
-read-only by construction: there is no tool calling, only text.
+Chat: `/chat` and `lanwatch ask "..."` answer questions about the network through tool
+calling. Read tools query the live inventory (devices, services, findings, timeline,
+infrastructure, rules); three action tools (acknowledge a finding, name a device, run a
+scan) exist and the prompt only allows them when you ask for that action. Every tool call
+is returned with the answer and shown under it, so you can see what the model looked up or
+did. Actions can be switched off per request (`--no-actions`, or the checkbox). Chat
+actions are logged as `chat.action` events in the timeline.
 
 Notifications: all channels off by default. Enable one or more under `[notify]`: ntfy,
 generic webhook, e-mail (SMTP), Home Assistant (a notify service plus `sensor.lanwatch_*`

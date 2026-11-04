@@ -190,10 +190,11 @@ def create_app(config: Config) -> FastAPI:
             history = []
         if not config.llm.enabled:
             return {"answer": None, "error": "LLM disabled in config"}
-        answer = await ask(config, s, question[:4000], history)
+        allow_actions = bool(body.get("allow_actions", True))
+        answer = await ask(config, s, question[:4000], history, allow_actions)
         if answer is None:
             return {"answer": None, "error": "LLM unavailable (is Ollama running?)"}
-        return {"answer": answer}
+        return {"answer": answer.text, "tools": answer.tools}
 
     @app.get("/infra", response_class=HTMLResponse, dependencies=deps)
     def infra_page(request: Request, s: StoreDep) -> HTMLResponse:

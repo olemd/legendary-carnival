@@ -9,6 +9,7 @@ from datetime import datetime
 
 from lanwatch.config import Config
 from lanwatch.llm.tasks import (
+    ChatAnswer,
     LlmService,
     answer_question,
     classify_devices,
@@ -91,13 +92,17 @@ async def write_digest(config: Config, store: Store, when: datetime | None = Non
 
 
 async def ask(
-    config: Config, store: Store, question: str, history: list[dict[str, str]] | None = None
-) -> str | None:
+    config: Config,
+    store: Store,
+    question: str,
+    history: list[dict[str, str]] | None = None,
+    allow_actions: bool = True,
+) -> ChatAnswer | None:
     if not config.llm.enabled:
         return None
     svc = LlmService(config, store)
     try:
-        answer = await answer_question(svc, question, history)
+        answer = await answer_question(svc, question, history, allow_actions)
         _note_unavailable(svc)
         return answer
     finally:

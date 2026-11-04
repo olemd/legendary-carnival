@@ -11,7 +11,7 @@ from lanwatch.collectors.services import PortObservation, PortSet
 from lanwatch.config import Config, LlmConfig
 from lanwatch.llm import hooks
 from lanwatch.llm.client import OllamaClient
-from lanwatch.llm.tasks import LlmService, answer_question, build_chat_context
+from lanwatch.llm.tasks import ChatAnswer, LlmService, answer_question
 from lanwatch.models import Finding, FindingStatus, HostObservation, Kind, Severity
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
@@ -156,17 +156,18 @@ def test_search_and_series(store: Store) -> None:
     assert [n for _, n in series] == [2, 1]
 
 
-def test_chat_context_and_answer(store: Store, tmp_path: Path) -> None:
-    import asyncio
-
-    config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=4096))
-    _round(store, _hosts("10.0.0.1"))
+def _seed_chat(store: Store) -> None:
+    _round(store, _hosts("10.0.0.1", "10.0.0.2"))
     store.set_device_classification(1, "router", "Gateway", 0.9)
     sid = store.begin_snapshot("inventory", "t")
     store.record_services(
         sid,
         1,
-        [PortObservation(port=22, proto="tcp", state="open", name="ssh")],
+        [
+            PortObservation(
+                port=22, proto="tcp", state="open", name="ssh", product="OpenSSH", version="9.2"
+            )
+        ],
         {"tcp": PortSet.from_spec("1-100")},
     )
     store.upsert_findings(
@@ -195,56 +196,126 @@ def test_chat_context_and_answer(store: Store, tmp_path: Path) -> None:
         },
         sid,
     )
-    ctx = build_chat_context(store, config)
-    assert "DEVICES (1 known, 1 online)" in ctx and "22/tcp ssh" in ctx and "kind=router" in ctx
-    assert "id=abc [low] ssh.x: Weak ssh" in ctx and "UPnP IGD Router" in ctx
 
-    seen: dict[str, Any] = {}
 
-    def handler(system: str, user: str, schema: dict[str, Any]) -> str:
-        seen["system"] = system
-        seen["user"] = user
-        return "Only the router (#1) exposes SSH."
+def test_chat_summary_and_tools(store: Store, tmp_path: Path) -> None:
+    import asyncio
 
-    fake = FakeOllama(handler)
+    from lanwatch.llm.tasks import chat_summary
+    from lanwatch.llm.tools import ToolRunner
+
+    config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=4096))
+    _seed_chat(store)
+    summary = chat_summary(store)
+    assert "devices: 2 known, 2 online" in summary and "id=abc [low] Weak ssh" in summary
+
+    runner = ToolRunner(config, store)
+    devs = json.loads(asyncio.run(runner.call("list_devices", {"query": "h1"})))
+    assert [d["id"] for d in devs] == [1] and devs[0]["open_ports"] == 1
+    dev = json.loads(asyncio.run(runner.call("get_device", {"device_id": 1})))
+    assert dev["services"][0]["product"] == "OpenSSH" and dev["open_findings"][0]["id"] == "abc"
+    assert "error" in json.loads(asyncio.run(runner.call("get_device", {"device_id": 99})))
+    fl = json.loads(asyncio.run(runner.call("list_findings", {"severity": "low"})))
+    assert fl[0]["device"] == "h1"
+    assert (
+        json.loads(asyncio.run(runner.call("get_finding", {"finding_id": "abc"})))["rule_id"]
+        == "ssh.x"
+    )
+    assert json.loads(asyncio.run(runner.call("search", {"query": "ssh"})))["services"]
+    assert (
+        json.loads(asyncio.run(runner.call("infrastructure", {})))["upnp"][0]["friendly_name"]
+        == "Router"
+    )
+    assert any(
+        r["id"] == "ssh.weak-algorithms"
+        for r in json.loads(asyncio.run(runner.call("list_rules", {})))
+    )
+    assert json.loads(asyncio.run(runner.call("timeline", {"limit": 5})))
+    assert "error" in json.loads(asyncio.run(runner.call("nope", {})))
+    assert "bad arguments" in json.loads(asyncio.run(runner.call("get_device", {"x": 1})))["error"]
+
+    # Actions: executed, recorded as events; refused when actions are disabled.
+    assert json.loads(asyncio.run(runner.call("name_device", {"device_id": 2, "name": "Printer"})))[
+        "ok"
+    ]
+    assert json.loads(asyncio.run(runner.call("ack_finding", {"finding_id": "abc"})))["ok"]
+    assert (
+        "only open"
+        in json.loads(asyncio.run(runner.call("ack_finding", {"finding_id": "abc"})))["error"]
+    )
+    assert store.device(2).name == "Printer"  # type: ignore[union-attr]
+    assert [e.kind for e in store.events(limit=4)] == [
+        "chat.action",
+        "finding.acked",
+        "chat.action",
+        "device.named",
+    ]
+    ro = ToolRunner(config, store, allow_actions=False)
+    assert (
+        "disabled"
+        in json.loads(asyncio.run(ro.call("name_device", {"device_id": 2, "name": "X"})))["error"]
+    )
+    assert len(runner.trace) == 14 and runner.trace[0].name == "list_devices" and runner.trace[0].ok
+
+
+def test_answer_question_tool_loop(store: Store, tmp_path: Path) -> None:
+    import asyncio
+
+    config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=4096))
+    _seed_chat(store)
+    fake = FakeOllama(lambda s, u, f: "unused")
+
+    def tool_handler(
+        messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> str | dict[str, Any]:
+        names = {t["function"]["name"] for t in tools}
+        assert {"list_devices", "get_device", "ack_finding", "run_scan"} <= names
+        tool_msgs = [m for m in messages if m["role"] == "tool"]
+        if not tool_msgs:
+            return {"tool_calls": [{"name": "list_devices", "arguments": {"query": "h1"}}]}
+        if len(tool_msgs) == 1:
+            dev_id = json.loads(tool_msgs[0]["content"])[0]["id"]
+            return {
+                "tool_calls": [
+                    {"name": "get_device", "arguments": json.dumps({"device_id": dev_id})}
+                ]
+            }
+        svc = json.loads(tool_msgs[1]["content"])["services"][0]
+        return f"h1 (#1) runs {svc['product']} {svc['version']} on {svc['port']}/{svc['proto']}."
+
+    fake.tool_handler = tool_handler
     svc = LlmService(config, store, OllamaClient(config.llm, fake.client()))
-    answer = asyncio.run(
+    ans = asyncio.run(
         answer_question(
             svc,
-            "Which devices expose SSH?",
+            "What does h1 run?",
             [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
         )
     )
-    assert answer == "Only the router (#1) exposes SSH."
-    body = fake.requests[0]
-    assert "format" not in body and body["options"]["num_ctx"] == 4096
-    assert [m["role"] for m in body["messages"]] == ["system", "user", "assistant", "user"]
-    assert (
-        "22/tcp ssh" in body["messages"][0]["content"]
-        and "Norwegian" in body["messages"][0]["content"]
+    assert ans is not None and ans.text == "h1 (#1) runs OpenSSH 9.2 on 22/tcp."
+    assert [t["name"] for t in ans.tools] == ["list_devices", "get_device"] and all(
+        t["ok"] for t in ans.tools
     )
+    assert ans.tools[1]["arguments"] == {"device_id": 1}  # JSON-string arguments are decoded
+    first = fake.requests[0]
+    assert "tools" in first and "format" not in first and first["options"]["num_ctx"] == 4096
+    assert [m["role"] for m in first["messages"]] == ["system", "user", "assistant", "user"]
+    assert (
+        "devices: 2 known" in first["messages"][0]["content"]
+        and "Norwegian" in first["messages"][0]["content"]
+    )
+    assert [m["role"] for m in fake.requests[2]["messages"]][-4:] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+    ]
+    assert svc.calls == 3
 
-    # Truncation respects the budget.
-    small = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=2048))
-    for i in range(300):
-        store.upsert_findings(
-            [
-                Finding(
-                    id=f"x{i}",
-                    rule_id="r",
-                    severity=Severity.INFO,
-                    kind=Kind.PROBLEM,
-                    title="t" * 50,
-                )
-            ],
-            {"r"},
-            set(),
-        )
-    text = build_chat_context(store, small)
-    assert (
-        text.endswith("[... inventory truncated to fit the context window ...]")
-        and len(text) < 3000
-    )
+    # Runaway tool loops are cut off.
+    fake.tool_handler = lambda m, t: {"tool_calls": [{"name": "list_rules", "arguments": {}}]}
+    ans2 = asyncio.run(answer_question(svc, "loop"))
+    assert ans2 is not None and "too many tool calls" in ans2.text and len(ans2.tools) == 9
 
 
 def test_web_pages_and_chat_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,16 +344,24 @@ def test_web_pages_and_chat_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert j["answer"] is None and "disabled" in j["error"]
 
     async def fake_ask(
-        cfg: Config, s: Store, q: str, h: list[dict[str, str]] | None = None
-    ) -> str | None:
-        return f"echo: {q} ({len(h or [])} turns)"
+        cfg: Config, s: Store, q: str, h: list[dict[str, str]] | None = None, allow: bool = True
+    ) -> ChatAnswer | None:
+        return ChatAnswer(
+            f"echo: {q} ({len(h or [])} turns, actions={allow})",
+            [{"name": "x", "arguments": {}, "ok": True, "result": ""}],
+        )
 
     monkeypatch.setattr(hooks, "ask", fake_ask)
     config.llm.enabled = True
     j = client.post(
-        "/api/chat", json={"question": "what?", "history": [{"role": "user", "content": "x"}]}
+        "/api/chat",
+        json={
+            "question": "what?",
+            "history": [{"role": "user", "content": "x"}],
+            "allow_actions": False,
+        },
     ).json()
-    assert j == {"answer": "echo: what? (1 turns)"}
+    assert j["answer"] == "echo: what? (1 turns, actions=False)" and j["tools"][0]["name"] == "x"
 
 
 def test_cli_timeline_search_ask(tmp_path: Path) -> None:

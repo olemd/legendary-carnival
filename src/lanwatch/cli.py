@@ -448,17 +448,27 @@ def suggest(ctx: typer.Context) -> None:
 
 
 @app.command()
-def ask(ctx: typer.Context, question: list[str]) -> None:
-    """Ask the local LLM a question about the current inventory."""
+def ask(
+    ctx: typer.Context,
+    question: list[str],
+    no_actions: Annotated[bool, typer.Option("--no-actions", help="Read-only tools only.")] = False,
+    quiet: Annotated[bool, typer.Option("-q", help="Hide the tool trace.")] = False,
+) -> None:
+    """Ask the local LLM about the network. It reads the inventory through tools and can
+    act (ack, name, scan) when you ask it to."""
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import ask as _ask
 
     with _open_store(ctx) as store:
-        answer = asyncio.run(_ask(cfg, store, " ".join(question)))
+        answer = asyncio.run(_ask(cfg, store, " ".join(question), allow_actions=not no_actions))
     if answer is None:
         typer.echo("no answer: LLM disabled or unavailable (see log)", err=True)
         raise typer.Exit(1)
-    typer.echo(answer)
+    if not quiet:
+        for t in answer.tools:
+            args = ", ".join(f"{k}={v!r}" for k, v in t["arguments"].items())
+            typer.echo(f"  [tool] {t['name']}({args}){'' if t['ok'] else '  -> error'}", err=True)
+    typer.echo(answer.text)
 
 
 @app.command()

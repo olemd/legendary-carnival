@@ -4,8 +4,9 @@ Works against anything serving Ollama's /api/chat, local or on another LAN host.
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -24,11 +25,18 @@ class LlmUnavailable(LlmError):
 
 
 @dataclass(slots=True)
+class ToolCall:
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(slots=True)
 class ChatResult:
     content: str
     prompt_tokens: int
     output_tokens: int
     duration_s: float
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -74,17 +82,22 @@ class OllamaClient:
         return await self._chat(messages, schema, model, self.cfg.num_ctx)
 
     async def chat_text(
-        self, messages: list[dict[str, str]], num_ctx: int | None = None
+        self,
+        messages: list[dict[str, Any]],
+        num_ctx: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> ChatResult:
-        """Free-text multi-turn chat (no schema). messages = [{role, content}, ...]."""
-        return await self._chat(messages, None, None, num_ctx or self.cfg.num_ctx)
+        """Free-text multi-turn chat, optionally with tools. messages = [{role, content}, ...].
+        When the model wants tools, the result has tool_calls and usually empty content."""
+        return await self._chat(messages, None, None, num_ctx or self.cfg.num_ctx, tools)
 
     async def _chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         schema: dict[str, Any] | None,
         model: str | None,
         num_ctx: int,
+        tools: list[dict[str, Any]] | None = None,
     ) -> ChatResult:
         body: dict[str, Any] = {
             "model": model or self.cfg.model,
@@ -95,6 +108,8 @@ class OllamaClient:
         }
         if schema is not None:
             body["format"] = schema
+        if tools:
+            body["tools"] = tools
         if self._think_supported is not False:
             body["think"] = False
         try:
@@ -121,9 +136,21 @@ class OllamaClient:
         if "think" in body and self._think_supported is None:
             self._think_supported = True
         msg = data.get("message", {})
+        calls: list[ToolCall] = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            if fn.get("name"):
+                calls.append(ToolCall(str(fn["name"]), args if isinstance(args, dict) else {}))
         return ChatResult(
             content=str(msg.get("content", "")),
             prompt_tokens=int(data.get("prompt_eval_count", 0)),
             output_tokens=int(data.get("eval_count", 0)),
             duration_s=float(data.get("total_duration", 0)) / 1e9,
+            tool_calls=calls,
         )

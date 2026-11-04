@@ -252,9 +252,13 @@ pipelinen, slik at CLI, web og scheduler alle produserer samme historikk.
 Presence-hendelser (online/offline) lagres men skjules som default i UI,
 siden telefoner som sover gir støy.
 
-Chat (M6) er bevisst uten tool calling. Hele inventaret limes inn i
-prompten (budsjett `llm.chat_num_ctx`, default 16k, trunkeres ellers), så
-svarene er forankret og modellen kan ikke endre noe.
+Chat (M6) bruker tool calling (bekreftet ok 2026-11-04). Lesende verktøy
+mot store pluss tre handlinger: ack funn, navngi enhet, kjør skann.
+Handlinger skal kun utføres når brukeren ber om det i samtalen, kan slås av
+per forespørsel, og logges som `chat.action` i tidslinjen. Hvert svar bærer
+med seg listen over verktøykall, så det er sporbart hva modellen slo opp.
+System-prompten har bare et kort sammendrag; detaljer hentes via verktøy,
+som skalerer bedre enn å lime inn hele inventaret.
 
 ## 10. Risiko og ærlige forbehold
 
