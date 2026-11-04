@@ -1,0 +1,217 @@
+# lanwatch – prosjektplan
+
+Kontinuerlig agent som holder oversikt over eget lokalnett, oppdager problemer,
+svakheter og forbedringsmuligheter, og bruker en lokal LLM til å forklare og
+prioritere. Alt kjører lokalt. Ingenting forlater nettverket uten eksplisitt
+opt-in.
+
+Arbeidsnavn på pakken: `lanwatch`.
+
+## 1. Mål og ikke-mål
+
+Mål
+- Automatisk inventar over enheter og tjenester på eget LAN, uten konfigurasjon.
+- Oppdage endringer over tid (ny enhet, ny tjeneste, endret oppsett).
+- Flagge kjente svakheter i eget oppsett via et sett deterministiske regler.
+- Foreslå forbedringer (segmentering, oppdateringer, herding).
+- Forklare funn på norsk i klartekst med anbefalt tiltak, via lokal LLM.
+- Kjøre ubetjent i måneder på en Linux-boks under `systemd`.
+- Sane defaults overalt. Null obligatorisk config for å få verdi.
+
+Ikke-mål
+- Angrep av noe slag. Agenten er en revisor av eget nett, ikke et angrepsverktøy.
+- Full trafikkinspeksjon (IDS). Krever mirror port, som de fleste routere
+  ikke har. Passiv lytting begrenses til broadcast/multicast og egen trafikk.
+- Automatisk utbedring. Regler og LLM foreslår, mennesket utfører.
+- Skanning utenfor subnettene agenten selv sitter på. Alt annet krever
+  eksplisitt allowlist i config.
+
+## 2. Prinsipper, med begrunnelse
+
+1. **Regler finner, LLM forklarer.** Små lokale modeller er upålitelige til å
+   *oppdage* problemer fra rådata, men gode til å *formulere*, *klassifisere*
+   og *oppsummere*. Alle funn og all severity kommer fra kode. LLM får aldri
+   finne på identifikatorer, versjoner eller sårbarheter, kun referere til
+   data vi gir den.
+2. **Diff er hoveddetektoren.** "Noe nytt dukket opp" fanger mer i praksis enn
+   signaturer. Historikk i SQLite er derfor kjernen, ikke et tillegg.
+3. **Ikke ødelegg nettet du overvåker.** IoT, printere og gamle embedded-
+   enheter tåler lite. Default er konservativ timing, rate limit, ingen
+   aggressive prober, og en exclude-liste som er enkel å fylle.
+4. **Alt lokalt.** Ollama (eller annet OpenAI-kompatibelt endepunkt) på samme
+   maskin eller en annen maskin på LAN.
+5. **Lagdelt konfig.** Innebygde defaults → `/etc/lanwatch/config.toml` →
+   env `LANWATCH_*` → CLI-flagg. Alt kan overstyres, ingenting må.
+
+## 3. Arkitektur
+
+```
+ scheduler (asyncio, kadens per jobb)
+    │
+    ├─ collectors   eksterne verktøy → typede observasjoner (pydantic)
+    │                discovery, service inventory, router/infra-probes
+    ▼
+ store (sqlite)    devices, snapshots (immutable), services, findings, llm_cache
+    ▼
+ rules engine      ren Python, input = nå + forrige snapshot, output = Finding
+    ▼
+ llm layer         Ollama, JSON-schema-output, cachet på input-hash
+    ▼
+ notify / report   logg + markdown default. Opt-in: ntfy, webhook, e-post,
+                   Home Assistant
+```
+
+- **collectors/**: én modul per kilde. Alltid timeout og rate limit. Returnerer
+  aldri rå tekst oppover.
+- **store/**: `sqlite3` direkte med små håndskrevne migrasjoner. Ingen ORM.
+  Enhet identifiseres på MAC først, deretter IP + hostname for enheter uten
+  synlig MAC.
+- **rules/**: en fil per regel, felles interface `evaluate(ctx) -> list[Finding]`.
+  Hver regel har id, default severity og kan slås av eller justeres i config.
+- **llm/**: tynn klient. Prompt-maler ligger i filer, ikke i kode. Alle kall
+  cachet slik at reskanning ikke koster ny inferens.
+- **notify/**: adapters med felles interface. Default: bare logg + rapport.
+- **cli/**: `run` (daemon), `scan` (engangs), `report`, `devices`, `findings`,
+  `ack <id>`, `config show` (effektiv konfig etter lagdeling).
+
+## 4. Funn-modellen
+
+```
+Finding
+  id            stabil hash av (rule_id, device_id, nøkkel-evidence)
+  rule_id
+  severity      critical | high | medium | low | info     (settes av regelen)
+  kind          security | problem | improvement
+  device_id
+  evidence      dict, maskinlesbart, det regelen faktisk så
+  first_seen / last_seen
+  status        open | acked | resolved   (auto-resolved når evidence forsvinner)
+  explanation   LLM-tekst, fylles inn asynkront, cachet
+```
+
+Regelkategorier i første runde (konkret liste defineres i M2):
+- inventar: ny enhet, endret enhet, enhet som flapper
+- tjenester: ukrypterte eller autentiseringsløse admin-/fjernaksess-tjenester
+- infrastruktur: uventede DHCP-servere, åpne portmappinger i routeren,
+  IPv6-eksponering som omgår NAT-antakelser
+- herding: svake SSH/TLS-oppsett, utløpte sertifikater
+- forbedring: manglende segmentering av IoT, manglende DNS-filtrering,
+  utdaterte versjoner (kun mot lokal, nedlastet database, aldri LLM-gjetting)
+
+## 5. LLM-laget
+
+Rolle: språk og klassifisering, ikke deteksjon.
+
+| oppgave | input | output (JSON schema) |
+|---|---|---|
+| klassifiser enhet | OUI, hostname, mDNS-navn, åpne porter, banners | type, produsent, confidence |
+| forklar funn | Finding + evidence + regelens tekst | forklaring, konsekvens, tiltak |
+| daglig digest | åpne funn + endringer siste 24t | prioritert liste, 5 linjer sammendrag |
+| foreslå forbedringer | hele inventaret oppsummert | liste med tiltak, begrunnelse |
+
+- Default endepunkt: Ollama på `http://localhost:11434`. Modell pinnes i config,
+  default velges ved implementasjon (8B-klasse, verifiser kvalitet i M3).
+- Hvis maskinen er for svak (Pi), pek `llm.base_url` på en annen boks på LAN.
+- Egen evalueringsharness: gullsett med fingerprints → forventet klasse, slik at
+  modellbytte kan måles.
+- Guardrails: temperatur lav, schema-validering, avvis svar som refererer til
+  noe som ikke finnes i input.
+
+## 6. Scheduler, defaults
+
+| jobb | default kadens | begrunnelse |
+|---|---|---|
+| discovery | 5 min | billig, gir "ny enhet" raskt |
+| service inventory, nye enheter | umiddelbart, lett profil | vite hva det er før neste runde |
+| service inventory, alle | 1 t, lett profil | nok til diff |
+| dyp inventar | ukentlig, natt | tungt, kan plage enheter |
+| infra-probes (DHCP, UPnP, IPv6) | 15 min | billig, høy verdi |
+| regler | etter hver jobb | |
+| LLM-forklaringer | fortløpende, kø | |
+| digest | daglig 07:00 | |
+
+Autodeteksjon: subnett fra egne interfaces, ekskluder loopback, docker-,
+veth-, tun-/wg-interfaces. Alt kan overstyres i `[network]`.
+
+## 7. Konfig (utdrag av defaults)
+
+```toml
+[network]
+subnets = "auto"            # eller liste
+exclude_hosts = []          # IP eller MAC
+exclude_interfaces = ["lo", "docker*", "veth*", "br-*", "tun*", "wg*"]
+
+[scan]
+profile = "gentle"          # gentle | normal | thorough
+max_parallel_hosts = 4
+rate_limit_pps = 100
+
+[llm]
+base_url = "http://localhost:11434"
+model = "TBD-i-M3"
+timeout_s = 120
+enabled = true
+
+[notify]
+log = true
+report_dir = "/var/lib/lanwatch/reports"
+# ntfy, webhook, email, home_assistant: alle av som default
+
+[rules]
+# "rule.id" = { enabled = false } eller { severity = "low" }
+```
+
+## 8. Teknologivalg
+
+| valg | hvorfor |
+|---|---|
+| Python 3.12, `uv` | raskest iterasjon, best økosystem for å wrappe nettverksverktøy |
+| pydantic | typede observasjoner og JSON-schema til LLM gratis |
+| typer | CLI |
+| sqlite3 (stdlib) | ingen tjeneste, én fil, enkel backup |
+| httpx | Ollama-klient |
+| eksterne verktøy via subprocess | `arp-scan`, `nmap` (XML), `ssh-audit`, `miniupnpc`. Modne, ikke verdt å reimplementere |
+| pytest + opptak av XML-output | tester uten nett |
+| ruff + mypy strict | |
+
+Deployment: `systemd`-unit, egen bruker, `AmbientCapabilities=CAP_NET_RAW
+CAP_NET_ADMIN`. Alternativ: Docker med `network_mode: host`. Data i
+`/var/lib/lanwatch`, config i `/etc/lanwatch/config.toml`.
+
+Go ble vurdert (én statisk binær) og valgt bort: økosystemet rundt skann-
+parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
+
+## 9. Milepæler
+
+| M | leveranse | verdi når ferdig |
+|---|---|---|
+| M0 | skjelett, config-lagdeling, logging, sqlite, CLI, CI | kjører, gjør ingenting |
+| M1 | discovery + inventar + diff + "ny enhet"-funn | allerede nyttig |
+| M2 | service-inventar, regelmotor, ~10 regler, rapport | kjernen |
+| M3 | LLM: klassifisering, forklaring, digest, eval-harness | det som gjør den lesbar |
+| M4 | notify-adaptere (ntfy, webhook, Home Assistant), systemd, docs | drift |
+| M5 | infra-probes, herdingssjekker, versjonsdatabase, forbedringsforslag | dybde |
+| M6 | liten web-UI (FastAPI + htmx), valgfri | bekvemmelighet |
+
+Hver milepæl skal være kjørbar og nyttig alene.
+
+## 10. Risiko og ærlige forbehold
+
+- **Små LLM-er hallusinerer.** Derfor skjema-tvang, cache og ingen deteksjon
+  i LLM. Forvent likevel at forklaringer må leses kritisk.
+- **Skanning kan forstyrre.** Konservativ default. Første kjøring bør overvåkes.
+- **Plassering.** Agenten må sitte på L2 på det nettet den skal se. En VM bak
+  NAT ser ingenting. Pi/NUC/server på samme switch.
+- **Ytelse for LLM.** 8B-klasse trenger 6–8 GB RAM og helst GPU. På Pi blir
+  det ubrukelig tregt, derfor remote Ollama på LAN som støttet oppsett.
+- **Juridisk.** Kun eget nett. Default-oppsettet ser bare subnett agenten er
+  medlem av, alt annet er opt-in.
+
+## 11. Beslutninger som bør bekreftes
+
+1. Python, ikke Go.
+2. SQLite, ingen ekstern database.
+3. Ollama som default LLM-backend.
+4. LLM foreslår, utfører aldri. Ingen "auto-fix" i første versjon.
+5. Home Assistant som første integrasjon etter ntfy/webhook.
+6. Web-UI er sist og valgfritt. CLI + markdown-rapport er primær-UI.
