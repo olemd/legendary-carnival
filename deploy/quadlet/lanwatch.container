@@ -1,0 +1,29 @@
+# Rootful podman, host network, only the two capabilities scanning needs.
+# Install: cp to /etc/containers/systemd/lanwatch.container && systemctl daemon-reload && systemctl start lanwatch
+# Config:  /etc/lanwatch/config.toml (optional). Data: /var/lib/lanwatch. Web UI: http://127.0.0.1:8321
+[Unit]
+Description=lanwatch network auditor
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/lanwatch:latest
+ContainerName=lanwatch
+Network=host
+DropCapability=ALL
+AddCapability=NET_RAW NET_ADMIN
+NoNewPrivileges=true
+ReadOnly=true
+Tmpfs=/tmp
+Volume=/var/lib/lanwatch:/var/lib/lanwatch:Z
+Volume=/etc/lanwatch:/etc/lanwatch:ro,Z
+# Ollama on the same host (or point at the GPU box on the LAN).
+Environment=LANWATCH_LLM__BASE_URL=http://127.0.0.1:11434
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -22,6 +22,7 @@ exclude_ports = [9100]                  # never probed
 version_detection = true
 scripts = ["ssl-cert", "ssh2-enum-algos", "smb-protocols", "vnc-info", "http-title"]
 scan_new_devices_immediately = true
+# helper_socket = "/run/lanwatch/helper.sock"   # rootless container: forward to lanwatch-helper
 
 [schedule]
 discovery_interval_s = 300
@@ -33,10 +34,13 @@ digest_time = "07:00"
 [llm]
 enabled = true
 base_url = "http://localhost:11434"     # Ollama; may be another machine on the LAN
-model = "qwen3:14b"
+model = "qwen3:14b"                     # compare candidates with `lanwatch llm eval --model ...`
 timeout_s = 120
 temperature = 0.1
 num_ctx = 8192
+language = "nb"                         # explanations, digest, suggestions
+max_calls_per_round = 25                # the rest is picked up next round
+keep_alive = "30m"
 
 [store]
 # path = "/var/lib/lanwatch/lanwatch.db"

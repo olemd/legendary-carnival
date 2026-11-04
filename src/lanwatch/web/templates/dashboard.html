@@ -14,6 +14,10 @@
   {% endfor %}
 </p>
 
+{% if digest %}
+<div class="digest"><div class="day">Digest {{ digest[0] }} · <a href="/digest">all digests</a></div>{{ digest[1] }}</div>
+{% endif %}
+
 <h2>Open findings{% if findings_total > findings|length %} <span class="muted">(top {{ findings|length }} of {{ findings_total }})</span>{% endif %}</h2>
 {% if findings %}
 <table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>

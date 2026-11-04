@@ -39,6 +39,10 @@ form.inline { display:inline } button { font:inherit; padding:.2rem .6rem; curso
 input[type=text] { font:inherit; padding:.25rem .5rem }
 pre { background:var(--card); border:1px solid var(--line); padding:1rem; overflow:auto; font-size:.85em }
 details > summary { cursor:pointer; color:var(--muted) }
+.digest { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.8rem 1rem; margin-bottom:1rem }
+.digest .day { color:var(--muted); font-size:.85em }
+.kind { display:inline-block; padding:.05rem .45rem; border:1px solid var(--line); border-radius:4px; font-size:.8em; color:var(--muted) }
+.md h1, .md h2 { font-size:1.05rem; margin:1rem 0 .4rem } .md p { margin:.4rem 0 } .md ul { margin:.3rem 0 .3rem 1.2rem }
 .tabs a { margin-right:.8rem }
 </style>
 </head>
@@ -50,6 +54,7 @@ details > summary { cursor:pointer; color:var(--muted) }
     <a href="/devices" class="{{ 'active' if active == 'devices' }}">Devices</a>
     <a href="/findings" class="{{ 'active' if active == 'findings' }}">Findings</a>
     <a href="/overview" class="{{ 'active' if active == 'overview' }}">Overview</a>
+    <a href="/digest" class="{{ 'active' if active == 'digest' }}">Digest</a>
   </nav>
   <span class="ver">v{{ version }}</span>
 </header>

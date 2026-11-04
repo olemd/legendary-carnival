@@ -4,14 +4,13 @@ output (certificate validity, SSH algorithm lists, SMB dialects) for the rules."
 from __future__ import annotations
 
 import logging
-import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from lanwatch.collectors.base import have, run_cmd
+from lanwatch.collectors.base import Executor
 from lanwatch.config import ScanConfig
 from lanwatch.models import normalize_mac
 
@@ -189,24 +188,27 @@ def build_nmap_udp_args(targets: list[str], cfg: ScanConfig) -> list[str]:
     ]
 
 
-def nmap_available() -> bool:
-    return have("nmap")
+async def nmap_available(ex: Executor) -> bool:
+    return (await ex.which("nmap"))[0]
 
 
-async def scan_services(targets: list[str], cfg: ScanConfig, deep: bool) -> ServiceScanResult:
+async def scan_services(
+    ex: Executor, targets: list[str], cfg: ScanConfig, deep: bool
+) -> ServiceScanResult:
     if not targets:
         return ServiceScanResult()
-    if not nmap_available():
+    present, root = await ex.which("nmap")
+    if not present:
         raise RuntimeError("nmap is required for service inventory (apt install nmap)")
-    rc, out, err = await run_cmd(build_nmap_args(targets, cfg, deep), timeout=3600 if deep else 900)
+    rc, out, err = await ex.run(build_nmap_args(targets, cfg, deep), timeout=3600 if deep else 900)
     if rc != 0:
         raise RuntimeError(f"nmap failed (rc={rc}): {err.strip()[:300]}")
     result = parse_nmap_xml_services(out)
     if deep and cfg.deep_udp_top_ports > 0:
-        if os.geteuid() != 0:
+        if not root:
             log.warning("skipping UDP scan: needs root or CAP_NET_RAW")
         else:
-            rc, out, err = await run_cmd(build_nmap_udp_args(targets, cfg), timeout=3600)
+            rc, out, err = await ex.run(build_nmap_udp_args(targets, cfg), timeout=3600)
             if rc != 0:
                 log.warning("UDP scan failed (rc=%s): %s", rc, err.strip()[:200])
             else:

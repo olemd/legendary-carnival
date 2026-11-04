@@ -1,0 +1,28 @@
+# Root helper for the rootless container. Runs only allowlisted nmap/arp-scan/ip/ping
+# invocations with validated arguments (see src/lanwatch/helper.py).
+# Install: pipx install /path/to/lanwatch (or uv tool install), then
+#   groupadd -f lanwatch; usermod -aG lanwatch <user running the container>
+#   cp deploy/lanwatch-helper.service /etc/systemd/system/ && systemctl enable --now lanwatch-helper
+[Unit]
+Description=lanwatch privileged command helper
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/lanwatch-helper --socket /run/lanwatch/helper.sock --group lanwatch
+RuntimeDirectory=lanwatch
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5
+# Root for raw sockets, but nothing else.
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

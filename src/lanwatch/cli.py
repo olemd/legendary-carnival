@@ -27,7 +27,9 @@ from lanwatch.store import Store
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="lanwatch: audit your own LAN.")
 config_app = typer.Typer(no_args_is_help=True, help="Show effective configuration.")
+llm_app = typer.Typer(no_args_is_help=True, help="Local LLM: status and evaluation.")
 app.add_typer(config_app, name="config")
+app.add_typer(llm_app, name="llm")
 log = logging.getLogger("lanwatch")
 
 
@@ -199,6 +201,18 @@ def run(ctx: typer.Context) -> None:
                     lambda: run_inventory(cfg, store, deep=True),
                 ),
             ]
+            if cfg.llm.enabled:
+                from lanwatch.llm import hooks as llm_hooks
+
+                async def digest_job() -> None:
+                    await llm_hooks.catch_up(cfg, store)
+                    await llm_hooks.write_digest(cfg, store)
+                    update_overview(store, cfg)
+
+                d = Job.daily("digest", cfg.schedule.digest_time, persisted("digest", digest_job))
+                last = store.meta_get("job.digest.last_run")
+                d.resume_from(float(last) if last else None)
+                jobs.append(d)
             sched = Scheduler(jobs)
             sched.install_signal_handlers()
             tasks = [asyncio.create_task(sched.run_forever())]
@@ -312,6 +326,132 @@ def rules(ctx: typer.Context) -> None:
         enabled = not (o is not None and o.enabled is False)
         sev = (o.severity if o is not None and o.severity is not None else r.default_severity).value
         typer.echo(f"{'on ' if enabled else 'off'}  {sev:<8} {r.id:<28} {r.description}")
+
+
+@app.command()
+def explain(
+    ctx: typer.Context,
+    finding_id: str,
+    refresh: Annotated[bool, typer.Option(help="Ignore the stored explanation.")] = False,
+) -> None:
+    """Explain one finding with the local LLM (and store the explanation)."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.hooks import after_round
+
+    with _open_store(ctx) as store:
+        f = store.finding(finding_id)
+        if f is None:
+            typer.echo("no such finding", err=True)
+            raise typer.Exit(1)
+        if refresh:
+            store.set_explanation(finding_id, "")
+            f = store.finding(finding_id)
+        if f is not None and not f.explanation:
+            asyncio.run(after_round(cfg, store, [], [finding_id]))
+            f = store.finding(finding_id)
+        update_overview(store, cfg)
+    assert f is not None
+    typer.echo(f"{f.severity.value.upper()}  {f.title}\n")
+    typer.echo(f.explanation or "(no explanation: LLM disabled or unavailable, see log)")
+
+
+@app.command()
+def classify(
+    ctx: typer.Context,
+    device_ids: Annotated[list[int] | None, typer.Argument(help="Default: all devices.")] = None,
+) -> None:
+    """Classify devices with the local LLM (kind + one-line description)."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.hooks import after_round
+
+    with _open_store(ctx) as store:
+        ids = device_ids or [d.id for d in store.devices()]
+        asyncio.run(after_round(cfg, store, ids, []))
+        update_overview(store, cfg)
+        for did in ids:
+            d = store.device(did)
+            if d:
+                conf = f"{d.kind_confidence:.0%}" if d.kind_confidence is not None else "-"
+                typer.echo(
+                    f"{d.id:>4}  {d.ip or '-':<15} {d.kind or '-':<16} {conf:>4}  "
+                    f"{d.description or ''}"
+                )
+
+
+@app.command()
+def digest(ctx: typer.Context) -> None:
+    """Write today's digest now (open findings + last 24h) and print it."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.hooks import catch_up, write_digest
+
+    with _open_store(ctx) as store:
+        asyncio.run(catch_up(cfg, store))
+        text = asyncio.run(write_digest(cfg, store))
+        update_overview(store, cfg)
+    if text is None:
+        typer.echo("no digest: LLM disabled or unavailable (see log)", err=True)
+        raise typer.Exit(1)
+    typer.echo(text)
+
+
+@app.command()
+def suggest(ctx: typer.Context) -> None:
+    """Ask the local LLM for structural improvements based on the whole inventory."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.hooks import write_suggestions
+
+    with _open_store(ctx) as store:
+        text = asyncio.run(write_suggestions(cfg, store))
+    if text is None:
+        typer.echo("no suggestions: LLM disabled or unavailable (see log)", err=True)
+        raise typer.Exit(1)
+    typer.echo(text)
+
+
+@llm_app.command("check")
+def llm_check(ctx: typer.Context) -> None:
+    """Verify the Ollama endpoint and that the configured model is pulled."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.client import OllamaClient
+
+    async def _check() -> int:
+        client = OllamaClient(cfg.llm)
+        try:
+            st = await client.status()
+        finally:
+            await client.aclose()
+        version = f"  version: {st.version}" if st.version else ""
+        typer.echo(f"endpoint: {cfg.llm.base_url}  reachable: {st.reachable}{version}")
+        if not st.reachable:
+            typer.echo(f"error: {st.error}", err=True)
+            return 1
+        typer.echo(f"model: {cfg.llm.model}  present: {st.model_present}")
+        typer.echo("models: " + (", ".join(st.models) or "(none)"))
+        if not st.model_present:
+            typer.echo(f"run: ollama pull {cfg.llm.model}", err=True)
+            return 1
+        return 0
+
+    raise typer.Exit(asyncio.run(_check()))
+
+
+@llm_app.command("eval")
+def llm_eval(
+    ctx: typer.Context,
+    model: Annotated[
+        str | None, typer.Option(help="Model to evaluate; default from config.")
+    ] = None,
+    file: Annotated[Path, typer.Option(help="JSONL golden set.")] = Path("evals/devices.jsonl"),
+) -> None:
+    """Run the device-classification golden set and report accuracy and latency."""
+    cfg = _state(ctx).loaded.config
+    if model:
+        cfg = cfg.model_copy(update={"llm": cfg.llm.model_copy(update={"model": model})})
+    from lanwatch.llm.evaluate import run_eval
+
+    report = asyncio.run(run_eval(cfg, file))
+    typer.echo(report.render())
+    raise typer.Exit(0 if report.errors == 0 else 1)
 
 
 @config_app.command("show")

@@ -112,6 +112,11 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    # v3: LLM device classification
+    """
+    ALTER TABLE devices ADD COLUMN description TEXT;
+    ALTER TABLE devices ADD COLUMN kind_confidence REAL;
+    """,
 ]
 
 
@@ -267,6 +272,18 @@ class Store:
 
     def set_device_kind(self, device_id: int, kind: str | None) -> bool:
         cur = self._db.execute("UPDATE devices SET kind = ? WHERE id = ?", (kind, device_id))
+        return cur.rowcount > 0
+
+    def set_device_classification(
+        self, device_id: int, kind: str, description: str, confidence: float
+    ) -> bool:
+        """Returns True when something actually changed."""
+        cur = self._db.execute(
+            """UPDATE devices SET kind = ?, description = ?, kind_confidence = ?
+               WHERE id = ?
+                 AND (kind IS NOT ? OR description IS NOT ? OR kind_confidence IS NOT ?)""",
+            (kind, description, confidence, device_id, kind, description, confidence),
+        )
         return cur.rowcount > 0
 
     def _online_ids(self) -> set[int]:
@@ -562,6 +579,8 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         vendor=row["vendor"],
         name=row["name"],
         kind=row["kind"],
+        description=row["description"],
+        kind_confidence=row["kind_confidence"],
         first_seen=str(row["first_seen"]),
         last_seen=str(row["last_seen"]),
         online=online,

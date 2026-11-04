@@ -123,6 +123,8 @@ class Device:
     vendor: str | None
     name: str | None
     kind: str | None
+    description: str | None
+    kind_confidence: float | None
     first_seen: str
     last_seen: str
     online: bool

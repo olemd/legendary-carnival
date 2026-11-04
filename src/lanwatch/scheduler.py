@@ -9,8 +9,19 @@ import signal
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
+
+
+def seconds_until_daily(hhmm: str, now: datetime | None = None) -> float:
+    """Seconds from now (local time) until the next occurrence of HH:MM."""
+    now = now or datetime.now().astimezone()
+    h, m = (int(x) for x in hhmm.split(":"))
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 @dataclass(slots=True)
@@ -20,13 +31,43 @@ class Job:
     run: Callable[[], Awaitable[object]]
     next_due: float = field(default_factory=time.monotonic)
     failures: int = 0
+    # Daily jobs run at a fixed local time instead of on an interval.
+    daily_at: str | None = None
+
+    @classmethod
+    def daily(cls, name: str, hhmm: str, run: Callable[[], Awaitable[object]]) -> Job:
+        j = cls(name, 86400, run, daily_at=hhmm)
+        j.next_due = time.monotonic() + seconds_until_daily(hhmm)
+        return j
 
     def resume_from(self, last_run_wall: float | None) -> None:
         """Keep cadence across restarts: due at last_run + interval, or now."""
+        if self.daily_at is not None:
+            # Missed today's slot since the last run -> run now, else wait for the slot.
+            now = datetime.now().astimezone()
+            h, m = (int(x) for x in self.daily_at.split(":"))
+            slot = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if slot > now:
+                slot -= timedelta(days=1)
+            missed = last_run_wall is None or last_run_wall < slot.timestamp()
+            self.next_due = (
+                time.monotonic()
+                if missed
+                else time.monotonic() + seconds_until_daily(self.daily_at)
+            )
+            return
         if last_run_wall is None:
             return
         remaining = (last_run_wall + self.interval_s) - time.time()
         self.next_due = time.monotonic() + max(0.0, remaining)
+
+    def schedule_next(self) -> None:
+        if self.daily_at is not None:
+            self.next_due = time.monotonic() + seconds_until_daily(self.daily_at)
+        else:
+            # Back off on repeated failure, capped at 8x the interval.
+            factor = min(2 ** min(self.failures, 3), 8)
+            self.next_due = time.monotonic() + self.interval_s * factor
 
 
 class Scheduler:
@@ -58,13 +99,17 @@ class Scheduler:
                 job.failures += 1
                 log.exception("job %s failed (%d in a row)", job.name, job.failures)
             finally:
-                # Back off on repeated failure, capped at 8x the interval.
-                factor = min(2 ** min(job.failures, 3), 8)
-                job.next_due = time.monotonic() + job.interval_s * factor
+                job.schedule_next()
 
     async def run_forever(self) -> None:
         log.info(
-            "scheduler: %s", ", ".join(f"{j.name} every {int(j.interval_s)}s" for j in self.jobs)
+            "scheduler: %s",
+            ", ".join(
+                f"{j.name} daily at {j.daily_at}"
+                if j.daily_at
+                else f"{j.name} every {int(j.interval_s)}s"
+                for j in self.jobs
+            ),
         )
         while not self._stop.is_set():
             now = time.monotonic()

@@ -39,3 +39,31 @@ def test_resume_from_last_run() -> None:
     assert 2900 < j.next_due - time.monotonic() <= 3000
     j.resume_from(time.time() - 7200)
     assert j.next_due <= time.monotonic()
+
+
+def test_daily_job_scheduling() -> None:
+    import time
+    from datetime import datetime, timedelta
+
+    from lanwatch.scheduler import seconds_until_daily
+
+    now = datetime(2026, 11, 4, 6, 30).astimezone()
+    assert seconds_until_daily("07:00", now) == 1800
+    assert seconds_until_daily("06:30", now) == 86400
+    assert seconds_until_daily("00:00", now) == (24 - 6.5) * 3600
+
+    async def noop() -> None:
+        pass
+
+    j = Job.daily("digest", "07:00", noop)
+    assert j.daily_at == "07:00" and 0 < j.next_due - time.monotonic() <= 86400
+    # Ran 10 minutes ago: if today's slot already passed since then, run now; else wait.
+    j.resume_from(time.time() - 600)
+    slot_passed_recently = seconds_until_daily("07:00") > 86400 - 600
+    assert (j.next_due <= time.monotonic() + 1) == slot_passed_recently
+    j.resume_from(time.time() - 3 * 86400)
+    assert j.next_due <= time.monotonic() + 1
+    j.failures = 5
+    j.schedule_next()
+    assert j.next_due - time.monotonic() <= 86400  # no backoff multiplier for daily jobs
+    _ = timedelta

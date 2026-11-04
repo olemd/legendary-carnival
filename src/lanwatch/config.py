@@ -96,6 +96,9 @@ class ScanConfig(StrictModel):
         ]
     )
     scan_new_devices_immediately: bool = True
+    # Forward privileged commands to lanwatch-helper (root) over this unix socket.
+    # Needed for rootless containers. Unset = run commands locally.
+    helper_socket: Path | None = None
 
 
 class ScheduleConfig(StrictModel):
@@ -120,6 +123,11 @@ class LlmConfig(StrictModel):
     timeout_s: int = Field(default=120, ge=1)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     num_ctx: int = Field(default=8192, ge=512)
+    # Language for explanations, digests and suggestions (ISO 639-1).
+    language: str = "nb"
+    # Cap on LLM calls per scan round; the rest is picked up next round.
+    max_calls_per_round: int = Field(default=25, ge=0)
+    keep_alive: str = "30m"
 
 
 class StoreConfig(StrictModel):

@@ -8,8 +8,10 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 
 ## Status
 
-M2. Discovery, service inventory (nmap), ten deterministic rules, change detection,
-`overview.md`, and a web UI. No LLM yet (M3).
+M3. Discovery, service inventory (nmap), ten deterministic rules, change detection,
+`overview.md`, web UI, and a local LLM (Ollama) that classifies devices, explains
+findings in your language, writes a daily digest and suggests improvements. Runs bare,
+in rootful podman, or rootless podman with a small root helper (see `deploy/README.md`).
 
 ## Quick start
 
@@ -25,6 +27,14 @@ uv run lanwatch run                 # daemon: discovery 5 min, inventory 1 h, de
 Web UI: http://127.0.0.1:8321 while `run` (or `lanwatch web`) is active. Loopback only by
 default; to reach it from another machine set `web.host` and `web.password`.
 
+LLM: install Ollama, `ollama pull qwen3:14b`, then `lanwatch llm check`. The LLM never
+produces findings or severities. It classifies devices (kind + one line), explains each
+finding (what, why it matters, what to do), writes a digest at 07:00 and, on request,
+structural suggestions (`lanwatch suggest`). Output is JSON-schema constrained, validated,
+cached on input, and references to ids not in the input are dropped. If Ollama is down,
+scanning continues and the LLM catches up later. `lanwatch llm eval` scores a model on a
+device-classification golden set in `evals/`.
+
 Discovery backend is picked automatically: `arp-scan` (as root or with CAP_NET_RAW),
 else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table.
 
@@ -38,8 +48,9 @@ configuration after defaults, file, env and CLI are merged.
 
 ## Deploy
 
-`deploy/lanwatch.service` runs it as an unprivileged user with the two capabilities
-scanning needs.
+See `deploy/README.md`: bare systemd, rootful podman (quadlet, host network, two
+capabilities), or rootless podman plus `lanwatch-helper`, a root daemon that runs only
+allowlisted scan commands over a unix socket. Ollama with ROCm has its own quadlet.
 
 ## Development
 

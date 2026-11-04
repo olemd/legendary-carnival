@@ -136,8 +136,12 @@ Rolle: språk og klassifisering, ikke deteksjon.
   på GPU-maskinen. Fortsatt lokalt.
 - Egen evalueringsharness: gullsett med fingerprints → forventet klasse, slik at
   modellbytte kan måles.
-- Guardrails: temperatur lav, schema-validering, avvis svar som refererer til
-  noe som ikke finnes i input.
+- Guardrails: temperatur lav, JSON-schema tvunget av Ollama, pydantic-validering
+  med ett retry som siterer feilen, cache på hash av modell+prompt-versjon+input,
+  budsjett per runde, digest-prioriteringer som peker på ukjente id-er kastes.
+- Degradering: Ollama nede → skanning upåvirket, LLM-arbeid tas igjen neste
+  runde. Varsel i logg maks én gang i timen.
+- Språk: `llm.language`, default `nb`. Tekniske termer holdes på engelsk i prompt.
 
 ## 6. Scheduler, defaults
 
@@ -196,9 +200,16 @@ report_dir = "/var/lib/lanwatch/reports"
 | pytest + opptak av XML-output | tester uten nett |
 | ruff + mypy strict | |
 
-Deployment: `systemd`-unit, egen bruker, `AmbientCapabilities=CAP_NET_RAW
-CAP_NET_ADMIN`. Alternativ: Docker med `network_mode: host`. Data i
-`/var/lib/lanwatch`, config i `/etc/lanwatch/config.toml`.
+Deployment, tre støttede oppsett (`deploy/README.md`):
+1. `systemd`-unit, egen bruker, `AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN`.
+2. Rootful podman via quadlet: `Network=host`, `DropCapability=ALL` +
+   `AddCapability=NET_RAW NET_ADMIN`, read-only rootfs.
+3. Rootless podman uten capabilities + `lanwatch-helper`: en liten root-daemon
+   på verten som kun kjører allowlistede `nmap`/`arp-scan`/`ip`/`ping`-kall
+   over en unix-socket. Argumentene valideres mot mønstre, targets må være
+   IP/CIDR. Rootless + host-nett + raw sockets er en blindvei (capabilities
+   gjelder bare i user namespace som eier nett-namespace), derfor helperen.
+Ollama med ROCm har egen quadlet (`/dev/kfd`, `/dev/dri`).
 
 Go ble vurdert (én statisk binær) og valgt bort: økosystemet rundt skann-
 parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
@@ -210,7 +221,7 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 | M0 | skjelett, config-lagdeling, logging, sqlite, CLI, CI | kjører, gjør ingenting |
 | M1 | discovery + inventar + diff + "ny enhet"-funn + `overview.md` | allerede nyttig |
 | M2 | service-inventar, regelmotor, 10 regler, web-UI | kjernen |
-| M3 | LLM: klassifisering, forklaring, digest, eval-harness | det som gjør den lesbar |
+| M3 | LLM: klassifisering, forklaring, digest, forslag, eval-harness; podman + root-helper | det som gjør den lesbar |
 | M4 | notify-adaptere (ntfy, webhook, Home Assistant), systemd, docs | drift |
 | M5 | infra-probes, herdingssjekker, versjonsdatabase, forbedringsforslag | dybde |
 | M6 | web-UI utvidelser: historikk/tidslinje, søk, LLM-chat mot inventaret | bekvemmelighet |

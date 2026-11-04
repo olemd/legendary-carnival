@@ -7,7 +7,10 @@
   <tr><th>MAC</th><td class="mono">{{ device.mac or '-' }}</td></tr>
   <tr><th>Vendor</th><td>{{ device.vendor or '-' }}</td></tr>
   <tr><th>Hostname</th><td>{{ device.hostname or '-' }}</td></tr>
-  <tr><th>Kind</th><td>{{ device.kind or '-' }}</td></tr>
+  <tr><th>Kind</th><td>{% if device.kind %}<span class="kind">{{ device.kind }}</span>
+      {% if device.kind_confidence is not none %}<span class="muted">{{ (device.kind_confidence * 100) | round | int }}% confidence</span>{% endif %}
+      {% else %}-{% endif %}</td></tr>
+  <tr><th>Description</th><td>{{ device.description or '-' }}</td></tr>
   <tr><th>First seen</th><td>{{ device.first_seen | local }}</td></tr>
   <tr><th>Last seen</th><td>{{ device.last_seen | local }}</td></tr>
   <tr><th>Last service scan</th><td>{{ last_inventory | local }}</td></tr>

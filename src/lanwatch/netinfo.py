@@ -13,7 +13,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any
 
-from lanwatch.collectors.base import run_cmd
+from lanwatch.collectors.base import Executor, LocalExecutor
 from lanwatch.config import NetworkConfig
 
 log = logging.getLogger(__name__)
@@ -56,9 +56,9 @@ def parse_ip_addr_json(data: list[dict[str, Any]]) -> list[Interface]:
     return out
 
 
-async def list_interfaces() -> list[Interface]:
+async def list_interfaces(executor: Executor | None = None) -> list[Interface]:
     """`ip -j addr` when available (all addresses), else ioctl (primary IPv4 per interface)."""
-    rc, out, _ = await run_cmd(["ip", "-j", "addr", "show"], timeout=10)
+    rc, out, _ = await (executor or LocalExecutor()).run(["ip", "-j", "addr", "show"], timeout=10)
     if rc == 0 and out.strip():
         try:
             return parse_ip_addr_json(json.loads(out))

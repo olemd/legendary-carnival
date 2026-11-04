@@ -6,7 +6,8 @@
 {% for d, ports in rows %}
 <tr>
   <td><span class="dot {{ 'on' if d.online }}" title="{{ 'online' if d.online else 'offline' }}"></span></td>
-  <td><a href="/devices/{{ d.id }}">{{ d.name or d.kind or '-' }}</a></td>
+  <td><a href="/devices/{{ d.id }}">{{ d.name or d.hostname or d.vendor or d.key }}</a>
+      {% if d.kind %}<br><span class="kind">{{ d.kind }}</span>{% endif %}</td>
   <td class="mono">{{ d.ip or '-' }}</td>
   <td class="mono">{{ d.mac or '-' }}</td>
   <td>{{ d.vendor or '-' }}</td>

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 lanwatch = "lanwatch.cli:app"
+lanwatch-helper = "lanwatch.helper:main"
 
 [dependency-groups]
 dev = [

@@ -70,6 +70,7 @@ def create_app(config: Config) -> FastAPI:
             devices_by_id={d.id: d for d in devices},
             snapshots={k: s.latest_snapshot(k) for k in ("discovery", "inventory", "deep")},
             recent=s.devices_first_seen_since(_days_ago(7)),
+            digest=_latest_digest(config, s),
         )
 
     @app.get("/devices", response_class=HTMLResponse, dependencies=deps)
@@ -129,6 +130,21 @@ def create_app(config: Config) -> FastAPI:
     def overview_page(request: Request, s: StoreDep) -> HTMLResponse:
         return page(request, "overview.html", markdown=render(s, config))
 
+    @app.get("/digest", response_class=HTMLResponse, dependencies=deps)
+    def digest_page(request: Request, s: StoreDep, day: str | None = None) -> HTMLResponse:
+        files = sorted(config.report_dir.glob("digest-*.md"), reverse=True)
+        chosen = next(
+            (f for f in files if day and f.stem == f"digest-{day}"), files[0] if files else None
+        )
+        return page(
+            request,
+            "digest.html",
+            days=[f.stem.removeprefix("digest-") for f in files],
+            chosen=chosen.stem.removeprefix("digest-") if chosen else None,
+            text=chosen.read_text() if chosen else None,
+            suggestions=_read_report(config, "suggestions.md"),
+        )
+
     # -- api ----------------------------------------------------------------
 
     @app.get("/api/health")
@@ -153,6 +169,25 @@ def create_app(config: Config) -> FastAPI:
         return render(s, config)
 
     return app
+
+
+def _read_report(config: Config, name: str) -> str | None:
+    p = config.report_dir / name
+    return p.read_text() if p.is_file() else None
+
+
+def _latest_digest(config: Config, s: Store) -> tuple[str, str] | None:
+    """(day, summary paragraph) of the newest digest, for the dashboard."""
+    latest = s.meta_get("digest.latest")
+    p = Path(latest) if latest else None
+    if p is None or not p.is_file():
+        files = sorted(config.report_dir.glob("digest-*.md"))
+        p = files[-1] if files else None
+    if p is None:
+        return None
+    body = p.read_text().split("\n\n")
+    summary = body[1].strip() if len(body) > 1 else ""
+    return p.stem.removeprefix("digest-"), summary
 
 
 def _days_ago(days: int) -> str:

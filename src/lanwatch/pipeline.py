@@ -6,9 +6,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.discovery import select_backend
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.config import Config
+from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import list_interfaces, select_subnets, self_observations
 from lanwatch.overview import update as update_overview
@@ -55,8 +57,10 @@ async def run_inventory(
     store: Store,
     device_ids: list[int] | None = None,
     deep: bool = False,
+    executor: Executor | None = None,
 ) -> InventoryOutcome:
     """Service scan of online devices (or the given ones), then rules and overview."""
+    ex = executor or make_executor(config.scan.helper_socket)
     if device_ids is None:
         targets = {d.id: d for d in store.devices(online_only=True)}
     else:
@@ -82,7 +86,7 @@ async def run_inventory(
 
     log.info("%s scan of %d devices (%s profile)", kind, len(ips), config.scan.profile)
     snapshot_id = store.begin_snapshot(kind, "nmap")
-    result = await scan_services(ips, config.scan, deep=deep)
+    result = await scan_services(ex, ips, config.scan, deep=deep)
     by_ip = {h.ip: h for h in result.hosts}
     diffs: dict[int, ServiceDiff] = {}
     for d in targets.values():
@@ -113,6 +117,7 @@ async def run_inventory(
         len(rules.new_ids),
         len(rules.resolved_ids),
     )
+    await llm_hooks.after_round(config, store, list(diffs), rules.new_ids)
     update_overview(store, config)
     return InventoryOutcome(
         snapshot_id=snapshot_id,
@@ -130,16 +135,19 @@ def _excluded(h: HostObservation, excludes: list[str]) -> bool:
     return h.ip in ex or (h.mac is not None and h.mac in ex)
 
 
-async def run_discovery(config: Config, store: Store) -> DiscoveryOutcome:
-    ifaces = await list_interfaces()
+async def run_discovery(
+    config: Config, store: Store, executor: Executor | None = None
+) -> DiscoveryOutcome:
+    ex = executor or make_executor(config.scan.helper_socket)
+    ifaces = await list_interfaces(ex)
     subnets = select_subnets(ifaces, config.network)
     if not subnets:
         raise RuntimeError("no subnets to scan (check network.subnets / exclude_interfaces)")
-    backend = select_backend(config.scan)
+    backend = await select_backend(ex, config.scan)
     log.info("discovery via %s on %s", backend.name, ", ".join(str(s) for s in subnets))
 
     snapshot_id = store.begin_snapshot("discovery", backend.name)
-    hosts = await backend.discover(subnets, config.scan)
+    hosts = await backend.discover(ex, subnets, config.scan)
     for ip, mac in self_observations(ifaces, subnets):
         hosts.append(HostObservation(ip=ip, mac=mac, source="self"))
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
@@ -178,12 +186,14 @@ async def run_discovery(config: Config, store: Store) -> DiscoveryOutcome:
         config.scan.scan_new_devices_immediately
         and not is_baseline
         and rec.new_device_ids
-        and nmap_available()
+        and await nmap_available(ex)
     ):
         try:
-            await run_inventory(config, store, device_ids=rec.new_device_ids)
+            await run_inventory(config, store, device_ids=rec.new_device_ids, executor=ex)
         except RuntimeError as e:
             log.warning("inventory of new devices failed: %s", e)
+
+    await llm_hooks.after_round(config, store, [], result.new_ids)
 
     path = update_overview(store, config)
     if path:

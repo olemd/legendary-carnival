@@ -10,13 +10,12 @@ import asyncio
 import ipaddress
 import json
 import logging
-import os
 import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Protocol
 
-from lanwatch.collectors.base import have, run_cmd
+from lanwatch.collectors.base import Executor
 from lanwatch.config import ScanConfig
 from lanwatch.models import HostObservation
 from lanwatch.netinfo import Subnet
@@ -29,9 +28,11 @@ NMAP_TIMING = {"gentle": "-T2", "normal": "-T3", "thorough": "-T4"}
 class DiscoveryBackend(Protocol):
     name: str
 
-    def available(self) -> bool: ...
+    async def available(self, ex: Executor) -> bool: ...
 
-    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]: ...
+    async def discover(
+        self, ex: Executor, subnets: list[Subnet], cfg: ScanConfig
+    ) -> list[HostObservation]: ...
 
 
 # -- arp-scan ---------------------------------------------------------------
@@ -59,10 +60,13 @@ def parse_arp_scan_plain(text: str, source: str = "arp-scan") -> list[HostObserv
 class ArpScanBackend:
     name = "arp-scan"
 
-    def available(self) -> bool:
-        return have("arp-scan") and os.geteuid() == 0
+    async def available(self, ex: Executor) -> bool:
+        present, root = await ex.which("arp-scan")
+        return present and root
 
-    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]:
+    async def discover(
+        self, ex: Executor, subnets: list[Subnet], cfg: ScanConfig
+    ) -> list[HostObservation]:
         interval_ms = max(1, 1000 // cfg.rate_limit_pps)
         hosts: list[HostObservation] = []
         for s in subnets:
@@ -77,7 +81,7 @@ class ArpScanBackend:
                 f"--interface={s.interface}",
                 str(s.network),
             ]
-            rc, out, err = await run_cmd(args, timeout=300)
+            rc, out, err = await ex.run(args, timeout=300)
             if rc != 0:
                 log.warning("arp-scan failed on %s (rc=%s): %s", s, rc, err.strip()[:200])
                 continue
@@ -116,10 +120,12 @@ def parse_nmap_xml_hosts(xml_text: str, source: str = "nmap") -> list[HostObserv
 class NmapPingBackend:
     name = "nmap"
 
-    def available(self) -> bool:
-        return have("nmap")
+    async def available(self, ex: Executor) -> bool:
+        return (await ex.which("nmap"))[0]
 
-    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]:
+    async def discover(
+        self, ex: Executor, subnets: list[Subnet], cfg: ScanConfig
+    ) -> list[HostObservation]:
         if not subnets:
             return []
         args = [
@@ -131,7 +137,7 @@ class NmapPingBackend:
             f"--max-rate={cfg.rate_limit_pps}",
             *[str(s.network) for s in subnets],
         ]
-        rc, out, err = await run_cmd(args, timeout=600)
+        rc, out, err = await ex.run(args, timeout=600)
         if rc != 0:
             log.warning("nmap -sn failed (rc=%s): %s", rc, err.strip()[:200])
             return []
@@ -173,8 +179,8 @@ def parse_proc_net_arp(text: str) -> dict[str, str]:
     return out
 
 
-async def neighbour_table() -> dict[str, str]:
-    rc, out, _ = await run_cmd(["ip", "-j", "neigh", "show"], timeout=10)
+async def neighbour_table(ex: Executor) -> dict[str, str]:
+    rc, out, _ = await ex.run(["ip", "-j", "neigh", "show"], timeout=10)
     if rc == 0 and out.strip():
         try:
             return parse_ip_neigh_json(json.loads(out))
@@ -189,21 +195,24 @@ async def neighbour_table() -> dict[str, str]:
 class PingSweepBackend:
     name = "ping"
 
-    def available(self) -> bool:
-        return have("ping")
+    async def available(self, ex: Executor) -> bool:
+        return (await ex.which("ping"))[0]
 
-    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]:
+    async def discover(
+        self, ex: Executor, subnets: list[Subnet], cfg: ScanConfig
+    ) -> list[HostObservation]:
         targets = [str(ip) for s in subnets for ip in s.network.hosts()]
-        sem = asyncio.Semaphore(min(64, max(1, cfg.rate_limit_pps)))
+        # Through the helper each ping is a round trip, so keep concurrency modest there.
+        sem = asyncio.Semaphore(min(64 if ex.name == "local" else 8, max(1, cfg.rate_limit_pps)))
 
         async def ping(ip: str) -> str | None:
             async with sem:
-                rc, _, _ = await run_cmd(["ping", "-c", "1", "-W", "1", ip], timeout=3)
+                rc, _, _ = await ex.run(["ping", "-c", "1", "-W", "1", ip], timeout=3)
                 return ip if rc == 0 else None
 
         replies = {r for r in await asyncio.gather(*(ping(t) for t in targets)) if r}
 
-        neigh = await neighbour_table()
+        neigh = await neighbour_table(ex)
         ips = replies | {
             ip for ip in neigh if any(ipaddress.ip_address(ip) in s.network for s in subnets)
         }
@@ -244,14 +253,14 @@ BACKENDS: dict[str, DiscoveryBackend] = {
 }
 
 
-def select_backend(cfg: ScanConfig) -> DiscoveryBackend:
+async def select_backend(ex: Executor, cfg: ScanConfig) -> DiscoveryBackend:
     if cfg.discovery_backend != "auto":
         b = BACKENDS[cfg.discovery_backend]
-        if not b.available():
+        if not await b.available(ex):
             raise RuntimeError(f"discovery backend {b.name!r} is configured but not usable here")
         return b
     for name in ("arp-scan", "nmap", "ping"):
         b = BACKENDS[name]
-        if b.available():
+        if await b.available(ex):
             return b
     raise RuntimeError("no discovery backend available (need arp-scan, nmap, or ping)")

@@ -1,0 +1,26 @@
+# Ollama with ROCm for the RX 7900 XTX (gfx1100). Rootful quadlet.
+# Install: cp to /etc/containers/systemd/ollama.container && systemctl daemon-reload && systemctl start ollama
+# Then:    podman exec ollama ollama pull qwen3:14b
+# Host needs the amdgpu kernel driver only; ROCm userspace is inside the image.
+[Unit]
+Description=Ollama (ROCm)
+After=network-online.target
+
+[Container]
+Image=docker.io/ollama/ollama:rocm
+ContainerName=ollama
+# Loopback only: lanwatch runs on the same host. Use 0.0.0.0 to serve other LAN hosts.
+PublishPort=127.0.0.1:11434:11434
+AddDevice=/dev/kfd
+AddDevice=/dev/dri
+Volume=ollama:/root/.ollama
+Environment=OLLAMA_KEEP_ALIVE=30m
+# Uncomment if the GPU is not detected (older ROCm builds need the override for some cards).
+# Environment=HSA_OVERRIDE_GFX_VERSION=11.0.0
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

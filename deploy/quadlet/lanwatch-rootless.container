@@ -1,0 +1,30 @@
+# Rootless podman: the container has no privileges at all; privileged commands go to
+# lanwatch-helper on the host over a unix socket (see deploy/lanwatch-helper.service).
+# Install: cp to ~/.config/containers/systemd/lanwatch.container && systemctl --user daemon-reload
+#          && systemctl --user start lanwatch   (loginctl enable-linger $USER to survive logout)
+# The user must be in the "lanwatch" group so the socket is reachable.
+[Unit]
+Description=lanwatch network auditor (rootless)
+After=network-online.target
+
+[Container]
+Image=localhost/lanwatch:latest
+ContainerName=lanwatch
+Network=host
+DropCapability=ALL
+NoNewPrivileges=true
+ReadOnly=true
+Tmpfs=/tmp
+UserNS=keep-id
+Volume=%h/.local/share/lanwatch:/var/lib/lanwatch:Z
+Volume=%h/.config/lanwatch:/etc/lanwatch:ro,Z
+Volume=/run/lanwatch:/run/lanwatch
+Environment=LANWATCH_SCAN__HELPER_SOCKET=/run/lanwatch/helper.sock
+Environment=LANWATCH_LLM__BASE_URL=http://127.0.0.1:11434
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

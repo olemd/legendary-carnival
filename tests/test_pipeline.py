@@ -20,10 +20,12 @@ class FakeBackend:
         self.hosts: list[HostObservation] = []
         self.seen_subnets: list[Subnet] = []
 
-    def available(self) -> bool:
+    async def available(self, ex: object) -> bool:
         return True
 
-    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]:
+    async def discover(
+        self, ex: object, subnets: list[Subnet], cfg: ScanConfig
+    ) -> list[HostObservation]:
         self.seen_subnets = subnets
         return list(self.hosts)
 
@@ -38,11 +40,18 @@ async def test_run_discovery_end_to_end(
     backend = FakeBackend()
     backend.hosts = [HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="fake")]
 
-    async def fake_ifaces() -> list[Interface]:
+    async def fake_ifaces(ex: object = None) -> list[Interface]:
         return ifaces
 
+    async def fake_select(ex: object, cfg: ScanConfig) -> FakeBackend:
+        return backend
+
+    async def no_nmap(ex: object) -> bool:
+        return False
+
     monkeypatch.setattr(pipeline, "list_interfaces", fake_ifaces)
-    monkeypatch.setattr(pipeline, "select_backend", lambda cfg: backend)
+    monkeypatch.setattr(pipeline, "select_backend", fake_select)
+    monkeypatch.setattr(pipeline, "nmap_available", no_nmap)
     config.network.exclude_hosts = ["192.168.1.99"]
 
     first = await pipeline.run_discovery(config, store)
@@ -83,7 +92,9 @@ async def test_run_inventory_with_fake_nmap(
     store.finish_snapshot(sid, 3)
     scanned: list[list[str]] = []
 
-    async def fake_scan(targets: list[str], cfg: ScanConfig, deep: bool) -> ServiceScanResult:
+    async def fake_scan(
+        ex: object, targets: list[str], cfg: ScanConfig, deep: bool
+    ) -> ServiceScanResult:
         scanned.append(sorted(targets))
         return res
 
