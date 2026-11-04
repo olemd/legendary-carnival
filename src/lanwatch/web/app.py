@@ -9,7 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
@@ -78,6 +78,8 @@ def create_app(config: Config) -> FastAPI:
             },
             recent=s.devices_first_seen_since(_days_ago(7)),
             digest=_latest_digest(config, s),
+            events=s.events(limit=15, exclude_prefix="presence."),
+            spark=_sparkline(s.snapshot_series("discovery", _days_ago(7))),
         )
 
     @app.get("/devices", response_class=HTMLResponse, dependencies=deps)
@@ -104,6 +106,7 @@ def create_app(config: Config) -> FastAPI:
             services=s.services(device_id, open_only=False),
             findings=findings,
             last_inventory=s.last_inventory_at(device_id),
+            events=s.events(device_id=device_id, limit=50),
         )
 
     @app.post("/devices/{device_id}/name", dependencies=deps)
@@ -136,6 +139,61 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/overview", response_class=HTMLResponse, dependencies=deps)
     def overview_page(request: Request, s: StoreDep) -> HTMLResponse:
         return page(request, "overview.html", markdown=render(s, config))
+
+    @app.get("/timeline", response_class=HTMLResponse, dependencies=deps)
+    def timeline_page(
+        request: Request,
+        s: StoreDep,
+        kind: str | None = None,
+        device: int | None = None,
+        presence: bool = False,
+        limit: int = 200,
+    ) -> HTMLResponse:
+        kinds = [kind] if kind else None
+        rows = s.events(
+            kinds=kinds,
+            device_id=device,
+            limit=min(limit, 1000),
+            exclude_prefix=None if (presence or kind) else "presence.",
+        )
+        return page(
+            request,
+            "timeline.html",
+            rows=rows,
+            kinds=s.event_kinds(),
+            kind=kind,
+            device=device,
+            presence=presence,
+            devices_by_id={d.id: d for d in s.devices()},
+        )
+
+    @app.get("/search", response_class=HTMLResponse, dependencies=deps)
+    def search_page(request: Request, s: StoreDep, q: str = "") -> HTMLResponse:
+        res = s.search(q) if q.strip() else {"devices": [], "services": [], "findings": []}
+        return page(
+            request, "search.html", q=q, res=res, devices_by_id={d.id: d for d in s.devices()}
+        )
+
+    @app.get("/chat", response_class=HTMLResponse, dependencies=deps)
+    def chat_page(request: Request) -> HTMLResponse:
+        return page(request, "chat.html")
+
+    @app.post("/api/chat", dependencies=deps)
+    async def api_chat(s: StoreDep, body: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
+        from lanwatch.llm.hooks import ask
+
+        question = str(body.get("question", "")).strip()
+        if not question:
+            raise HTTPException(400, "question required")
+        history = body.get("history") or []
+        if not isinstance(history, list):
+            history = []
+        if not config.llm.enabled:
+            return {"answer": None, "error": "LLM disabled in config"}
+        answer = await ask(config, s, question[:4000], history)
+        if answer is None:
+            return {"answer": None, "error": "LLM unavailable (is Ollama running?)"}
+        return {"answer": answer}
 
     @app.get("/infra", response_class=HTMLResponse, dependencies=deps)
     def infra_page(request: Request, s: StoreDep) -> HTMLResponse:
@@ -201,6 +259,33 @@ def create_app(config: Config) -> FastAPI:
         return render(s, config)
 
     return app
+
+
+def _sparkline(
+    series: list[tuple[str, int]], width: int = 320, height: int = 40
+) -> dict[str, Any] | None:
+    """Points for an inline SVG polyline of hosts online over time."""
+    if len(series) < 2:
+        return None
+    values = [v for _, v in series]
+    lo, hi = min(values), max(values)
+    span = max(1, hi - lo)
+    n = len(values)
+    pts = [
+        f"{i * (width - 2) / (n - 1) + 1:.1f},{height - 2 - (v - lo) * (height - 4) / span:.1f}"
+        for i, v in enumerate(values)
+    ]
+    return {
+        "points": " ".join(pts),
+        "width": width,
+        "height": height,
+        "min": lo,
+        "max": hi,
+        "last": values[-1],
+        "first_ts": series[0][0],
+        "last_ts": series[-1][0],
+        "n": n,
+    }
 
 
 def _read_report(config: Config, name: str) -> str | None:

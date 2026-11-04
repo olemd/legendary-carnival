@@ -1,0 +1,34 @@
+{% extends "base.html" %}{% set active = 'chat' %}
+{% block content %}
+<h1>Chat</h1>
+<p class="muted">Ask about your network. Answers come from the local LLM ({{ config.llm.model }}) and are grounded in the current inventory only. It cannot change anything.</p>
+<div class="chat">
+  <div id="log"></div>
+  <form id="f"><textarea id="q" placeholder="e.g. Which devices expose SSH? What changed this week? Why is the NAS finding high?"></textarea>
+  <p><button id="send">Ask</button> <button type="button" id="clear">Clear</button> <span id="status" class="muted"></span></p></form>
+</div>
+<script>
+const log = document.getElementById('log'), q = document.getElementById('q'), status = document.getElementById('status');
+let history = [];
+try { history = JSON.parse(sessionStorage.getItem('lanwatch.chat') || '[]'); } catch (e) { history = []; }
+function add(role, text) {
+  const d = document.createElement('div'); d.className = 'msg ' + (role === 'user' ? 'user' : 'bot'); d.textContent = text; log.appendChild(d);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+history.forEach(m => add(m.role, m.content));
+document.getElementById('clear').onclick = () => { history = []; sessionStorage.removeItem('lanwatch.chat'); log.innerHTML = ''; };
+document.getElementById('f').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const question = q.value.trim(); if (!question) return;
+  add('user', question); q.value = ''; status.textContent = 'thinking…'; document.getElementById('send').disabled = true;
+  try {
+    const r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({question, history})});
+    const j = await r.json();
+    if (j.answer) { add('assistant', j.answer); history.push({role: 'user', content: question}, {role: 'assistant', content: j.answer}); history = history.slice(-12); sessionStorage.setItem('lanwatch.chat', JSON.stringify(history)); }
+    else add('assistant', 'Error: ' + (j.error || r.status));
+  } catch (e) { add('assistant', 'Error: ' + e); }
+  status.textContent = ''; document.getElementById('send').disabled = false;
+};
+q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('send').click(); } });
+</script>
+{% endblock %}

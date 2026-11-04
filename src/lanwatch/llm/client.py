@@ -70,17 +70,31 @@ class OllamaClient:
     async def chat_json(
         self, system: str, user: str, schema: dict[str, Any], model: str | None = None
     ) -> ChatResult:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        return await self._chat(messages, schema, model, self.cfg.num_ctx)
+
+    async def chat_text(
+        self, messages: list[dict[str, str]], num_ctx: int | None = None
+    ) -> ChatResult:
+        """Free-text multi-turn chat (no schema). messages = [{role, content}, ...]."""
+        return await self._chat(messages, None, None, num_ctx or self.cfg.num_ctx)
+
+    async def _chat(
+        self,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any] | None,
+        model: str | None,
+        num_ctx: int,
+    ) -> ChatResult:
         body: dict[str, Any] = {
             "model": model or self.cfg.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "messages": messages,
             "stream": False,
-            "format": schema,
             "keep_alive": self.cfg.keep_alive,
-            "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
+            "options": {"temperature": self.cfg.temperature, "num_ctx": num_ctx},
         }
+        if schema is not None:
+            body["format"] = schema
         if self._think_supported is not False:
             body["think"] = False
         try:

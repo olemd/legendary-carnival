@@ -17,7 +17,13 @@ header { display:flex; gap:1.2rem; align-items:baseline; padding:.8rem 1.2rem; b
 header .brand { font-weight:700; letter-spacing:.02em }
 header nav a { margin-right:1rem; color:var(--link); text-decoration:none }
 header nav a.active { font-weight:600; text-decoration:underline }
-header .ver { margin-left:auto; color:var(--muted); font-size:.85em }
+header .ver { color:var(--muted); font-size:.85em }
+header form.search { margin-left:auto } header input[type=search] { font:inherit; padding:.2rem .5rem; width:14rem }
+.ev { color:var(--muted); font-size:.85em; white-space:nowrap }
+.chat { max-width:800px } .chat .msg { padding:.6rem .9rem; border-radius:8px; margin:.4rem 0; white-space:pre-wrap }
+.chat .user { background:var(--card); border:1px solid var(--line) } .chat .bot { border-left:3px solid var(--link); padding-left:.9rem }
+.chat textarea { width:100%; font:inherit; padding:.5rem; min-height:4rem }
+svg.spark polyline { fill:none; stroke:var(--link); stroke-width:1.5 }
 main { padding:1.2rem; max-width:1400px }
 h1 { font-size:1.4rem; margin:.2rem 0 1rem } h2 { font-size:1.1rem; margin:1.4rem 0 .6rem }
 table { border-collapse:collapse; width:100%; font-size:.93em }
@@ -56,8 +62,11 @@ details > summary { cursor:pointer; color:var(--muted) }
     <a href="/infra" class="{{ 'active' if active == 'infra' }}">Infra</a>
     <a href="/overview" class="{{ 'active' if active == 'overview' }}">Overview</a>
     <a href="/digest" class="{{ 'active' if active == 'digest' }}">Digest</a>
+    <a href="/timeline" class="{{ 'active' if active == 'timeline' }}">Timeline</a>
     <a href="/notifications" class="{{ 'active' if active == 'notifications' }}">Notifications</a>
+    <a href="/chat" class="{{ 'active' if active == 'chat' }}">Chat</a>
   </nav>
+  <form class="search" action="/search" method="get"><input type="search" name="q" placeholder="search…" value="{{ q or '' }}"></form>
   <span class="ver">v{{ version }}</span>
 </header>
 <main>

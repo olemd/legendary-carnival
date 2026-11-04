@@ -188,6 +188,17 @@ class ServiceDiff:
 
 
 @dataclass(slots=True)
+class EventRow:
+    id: int
+    ts: str
+    kind: str
+    device_id: int | None
+    finding_id: str | None
+    summary: str
+    data: dict[str, Any]
+
+
+@dataclass(slots=True)
 class InfraRow:
     kind: str
     key: str

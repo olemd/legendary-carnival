@@ -8,8 +8,9 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 
 ## Status
 
-M5. Discovery, service inventory (nmap), infra probes (DHCP, UPnP port mappings, IPv6,
-mDNS), 17 deterministic rules, change detection, `overview.md`, web UI, a local LLM
+M6, all planned milestones delivered. Discovery, service inventory (nmap), infra probes
+(DHCP, UPnP port mappings, IPv6, mDNS), 17 deterministic rules, change detection with an
+event timeline, `overview.md`, web UI with search and an inventory chat, a local LLM
 (Ollama) that classifies devices, explains findings in your language, writes a daily
 digest and suggests improvements, and notifications via ntfy, webhook, e-mail and Home
 Assistant. Runs bare, in rootful podman, or rootless podman with a small root helper
@@ -44,6 +45,17 @@ services, and mDNS service names. UPnP and mDNS facts also feed the LLM's device
 classification. Version checks: a curated table of support thresholds ships with the code
 (no network, no guessing); optionally nmap's `vulners` script (`scan.vulners = true`, the
 one feature that calls out to the internet).
+
+Timeline: every state change is an event (device new/renamed/classified/IP change,
+service opened/closed, finding opened/resolved/acked/reopened, DHCP server or port mapping
+appeared/disappeared, device online/offline). `lanwatch timeline`, `/timeline` with
+filters, and a history section per device. `lanwatch search` and the search box cover
+devices, services and findings.
+
+Chat: `/chat` and `lanwatch ask "..."` answer questions about the network. The whole
+inventory (devices, services, findings with ids, infra, latest digest) is pasted into the
+prompt, so answers are grounded and the model is told to say when it does not know. It is
+read-only by construction: there is no tool calling, only text.
 
 Notifications: all channels off by default. Enable one or more under `[notify]`: ntfy,
 generic webhook, e-mail (SMTP), Home Assistant (a notify service plus `sensor.lanwatch_*`

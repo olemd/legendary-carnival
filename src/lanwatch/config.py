@@ -136,6 +136,8 @@ class LlmConfig(StrictModel):
     # Cap on LLM calls per scan round; the rest is picked up next round.
     max_calls_per_round: int = Field(default=25, ge=0)
     keep_alive: str = "30m"
+    # Context window for the inventory chat (the whole inventory is pasted in).
+    chat_num_ctx: int = Field(default=16384, ge=2048)
 
 
 class StoreConfig(StrictModel):

@@ -240,9 +240,21 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 | M3 | LLM: klassifisering, forklaring, digest, forslag, eval-harness; podman + root-helper | det som gjør den lesbar |
 | M4 | notify-adaptere (ntfy, webhook, e-post, Home Assistant med sensorer), varslingslogg | drift |
 | M5 | infra-probes (DHCP, UPnP-mappinger, IPv6, mDNS), versjonstabell + opt-in vulners, flat-nett-regel | dybde |
-| M6 | web-UI utvidelser: historikk/tidslinje, søk, LLM-chat mot inventaret | bekvemmelighet |
+| M6 | hendelseslogg + tidslinje, søk, LLM-chat mot inventaret, historikk-graf | bekvemmelighet |
 
 Hver milepæl skal være kjørbar og nyttig alene.
+
+Status 2026-11-04: M0–M6 levert. Se README for hva som er verifisert i ekte
+nett og hva som bare er testet mot opptak og mocks.
+
+Hendelsesloggen (M6) skrives av store selv der tilstand endres, ikke av
+pipelinen, slik at CLI, web og scheduler alle produserer samme historikk.
+Presence-hendelser (online/offline) lagres men skjules som default i UI,
+siden telefoner som sover gir støy.
+
+Chat (M6) er bevisst uten tool calling. Hele inventaret limes inn i
+prompten (budsjett `llm.chat_num_ctx`, default 16k, trunkeres ellers), så
+svarene er forankret og modellen kan ikke endre noe.
 
 ## 10. Risiko og ærlige forbehold
 

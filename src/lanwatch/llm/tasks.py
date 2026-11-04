@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import timedelta
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -367,3 +368,106 @@ def suggestions_markdown(s: Suggestions, date: str) -> str:
 
 def describe_finding_row(f: FindingRow) -> str:
     return f"[{f.severity.value}] {f.title}"
+
+
+# -- inventory chat ----------------------------------------------------------
+
+
+def build_chat_context(store: Store, config: Config) -> str:
+    """The inventory as compact text, truncated to fit llm.chat_num_ctx."""
+    lines: list[str] = []
+    devices = store.devices()
+    services = store.open_services()
+    lines.append(f"DEVICES ({len(devices)} known, {sum(1 for d in devices if d.online)} online)")
+    for d in sorted(devices, key=lambda x: (not x.online, x.ip or "")):
+        ports = ", ".join(s.label for s in services.get(d.id, []))
+        extra = []
+        if d.kind:
+            extra.append(f"kind={d.kind}")
+        if d.description:
+            extra.append(d.description)
+        if d.attrs.get("upnp"):
+            extra.append(f"upnp={d.attrs['upnp'].get('friendly_name')}")
+        if d.attrs.get("ipv6"):
+            extra.append(f"ipv6={','.join(d.attrs['ipv6'])}")
+        lines.append(
+            f"- #{d.id} {d.label} ip={d.ip or '-'} mac={d.mac or '-'} vendor={d.vendor or '-'}"
+            f" hostname={d.hostname or '-'} {'online' if d.online else 'offline'}"
+            f" last_seen={local_str(d.last_seen)}"
+            + (f" [{'; '.join(extra)}]" if extra else "")
+            + (f" ports: {ports}" if ports else "")
+        )
+    open_f = store.findings(FindingStatus.OPEN)
+    acked = store.findings(FindingStatus.ACKED)
+    lines.append("")
+    lines.append(f"OPEN FINDINGS ({len(open_f)}; {len(acked)} acknowledged)")
+    for f in [*open_f, *acked]:
+        dev = store.device(f.device_id) if f.device_id is not None else None
+        where = f"device #{dev.id} {dev.label}; " if dev else ""
+        acked_flag = "; acked" if f.status is FindingStatus.ACKED else ""
+        lines.append(
+            f"- id={f.id} [{f.severity.value}] {f.rule_id}: {f.title}"
+            f" ({where}since {local_str(f.first_seen)}{acked_flag})"
+        )
+    dhcp = store.infra("dhcp")
+    upnp = store.infra("upnp")
+    if dhcp or upnp:
+        lines.append("")
+        lines.append("INFRASTRUCTURE")
+        if dhcp:
+            lines.append(
+                "- DHCP servers: " + ", ".join(sorted({str(r.data.get("server")) for r in dhcp}))
+            )
+        for r in upnp:
+            if r.data.get("is_igd"):
+                maps = r.data.get("mappings", [])
+                lines.append(
+                    f"- UPnP IGD {r.data.get('friendly_name') or r.key} at {r.key}, external IP"
+                    f" {r.data.get('external_ip') or '-'}, {len(maps)} port mappings:"
+                )
+                for m in maps:
+                    desc = f" {m['description']}" if m.get("description") else ""
+                    lines.append(
+                        f"  - {m.get('external_port')}/{m.get('protocol')} -> "
+                        f"{m.get('internal_client')}:{m.get('internal_port')}{desc}"
+                    )
+    latest = store.meta_get("digest.latest")
+    if latest:
+        try:
+            text = Path(latest).read_text(encoding="utf-8")
+            lines.append("")
+            lines.append("LATEST DIGEST")
+            lines.append(text.strip())
+        except OSError:
+            pass
+    budget_chars = max(2000, (config.llm.chat_num_ctx - 1500) * 3)
+    out = "\n".join(lines)
+    if len(out) > budget_chars:
+        out = out[:budget_chars] + "\n[... inventory truncated to fit the context window ...]"
+    return out
+
+
+async def answer_question(
+    svc: LlmService, question: str, history: list[dict[str, str]] | None = None
+) -> str | None:
+    """Grounded Q&A over the inventory. Returns None when the LLM is unavailable."""
+    from lanwatch.llm.client import LlmError, LlmUnavailable
+
+    prompt = load_prompt("chat")
+    context = build_chat_context(svc.store, svc.config)
+    system, _ = render(prompt, svc.config.llm.language, context=context, question=question)
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    for turn in (history or [])[-6:]:
+        if turn.get("role") in ("user", "assistant") and turn.get("content"):
+            messages.append({"role": turn["role"], "content": str(turn["content"])[:4000]})
+    messages.append({"role": "user", "content": question[:4000]})
+    try:
+        result = await svc.client.chat_text(messages, num_ctx=svc.config.llm.chat_num_ctx)
+    except LlmUnavailable as e:
+        svc.unavailable = str(e)
+        return None
+    except LlmError as e:
+        log.warning("chat failed: %s", e)
+        return None
+    svc.calls += 1
+    return result.content.strip()

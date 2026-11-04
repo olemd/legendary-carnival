@@ -14,6 +14,10 @@
   {% endfor %}
 </p>
 
+{% if spark %}
+<p class="muted">Hosts online, last 7 days ({{ spark.n }} rounds, {{ spark.min }}–{{ spark.max }}, now {{ spark.last }}):<br>
+<svg class="spark" width="{{ spark.width }}" height="{{ spark.height }}" viewBox="0 0 {{ spark.width }} {{ spark.height }}"><polyline points="{{ spark.points }}"/></svg></p>
+{% endif %}
 <p class="muted">Infra: DHCP {{ infra_summary.dhcp | join(', ') if infra_summary.dhcp else 'not probed' }} ·
   UPnP IGD {{ 'yes' if infra_summary.igd else 'no' }}{% if infra_summary.mappings %}, <a href="/infra">{{ infra_summary.mappings }} port mapping{{ 's' if infra_summary.mappings != 1 }}</a>{% endif %}</p>
 
@@ -26,6 +30,14 @@
 <table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>
 <tbody>{% set back = '/' %}{% include "_finding_rows.html" %}</tbody></table>
 {% else %}<p class="muted">None.</p>{% endif %}
+
+<h2>Recent events <a class="muted" style="font-size:.8em;font-weight:400" href="/timeline">timeline</a></h2>
+{% if events %}
+<table><tbody>
+{% for e in events %}<tr><td class="ev">{{ e.ts | local }}</td><td class="muted mono">{{ e.kind }}</td>
+<td>{{ e.summary }}{% set d = devices_by_id.get(e.device_id) %}{% if d %} <a class="muted" href="/devices/{{ d.id }}">#{{ d.id }}</a>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">None yet.</p>{% endif %}
 
 <h2>New devices, last 7 days</h2>
 {% if recent %}

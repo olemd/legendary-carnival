@@ -16,6 +16,7 @@ from typing import Any
 from lanwatch.collectors.services import PortObservation, PortSet
 from lanwatch.models import (
     Device,
+    EventRow,
     Finding,
     FindingRow,
     FindingStatus,
@@ -144,6 +145,20 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (kind, key)
     );
     """,
+    # v6: event log for the timeline
+    """
+    CREATE TABLE events (
+        id         INTEGER PRIMARY KEY,
+        ts         TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        device_id  INTEGER REFERENCES devices(id),
+        finding_id TEXT,
+        summary    TEXT NOT NULL,
+        data       TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX events_ts ON events(ts);
+    CREATE INDEX events_device ON events(device_id, ts);
+    """,
 ]
 
 
@@ -247,6 +262,8 @@ class Store:
         result = RecordResult()
         ts = iso(now_utc())
         seen_keys: set[str] = set()
+        previous = self.latest_snapshot("discovery")
+        prev_ids = self.sighting_device_ids(previous.id) if previous else set()
         with self._tx():
             for h in hosts:
                 if h.key in seen_keys:
@@ -262,10 +279,29 @@ class Store:
                     )
                     device_id = int(cur.lastrowid or 0)
                     result.new_device_ids.append(device_id)
+                    label = h.hostname or h.vendor or h.key
+                    self.add_event(
+                        "device.new",
+                        f"New device {label} ({h.ip})",
+                        device_id,
+                        data={"ip": h.ip, "mac": h.mac, "vendor": h.vendor},
+                    )
                 else:
                     device_id = int(row["id"])
                     if row["ip"] and row["ip"] != h.ip:
                         result.ip_changes.append((device_id, str(row["ip"]), h.ip))
+                        self.add_event(
+                            "device.ip-changed",
+                            f"{row['name'] or row['hostname'] or h.key}: {row['ip']} -> {h.ip}",
+                            device_id,
+                            data={"old": row["ip"], "new": h.ip},
+                        )
+                    if previous and device_id not in prev_ids:
+                        self.add_event(
+                            "presence.online",
+                            f"{row['name'] or row['hostname'] or h.key} back online",
+                            device_id,
+                        )
                     self._db.execute(
                         """UPDATE devices SET ip = ?, hostname = COALESCE(?, hostname),
                            vendor = COALESCE(?, vendor), last_seen = ? WHERE id = ?""",
@@ -277,6 +313,16 @@ class Store:
                     " VALUES (?, ?, ?, ?)",
                     (snapshot_id, device_id, h.ip, h.hostname),
                 )
+            for gone in sorted(prev_ids - set(result.seen_device_ids)):
+                d = self._db.execute(
+                    "SELECT name, hostname, key FROM devices WHERE id = ?", (gone,)
+                ).fetchone()
+                if d is not None:
+                    self.add_event(
+                        "presence.offline",
+                        f"{d['name'] or d['hostname'] or d['key']} went offline",
+                        gone,
+                    )
         return result
 
     def devices(self, online_only: bool = False) -> list[Device]:
@@ -304,7 +350,12 @@ class Store:
 
     def set_device_name(self, device_id: int, name: str | None) -> bool:
         cur = self._db.execute("UPDATE devices SET name = ? WHERE id = ?", (name, device_id))
-        return cur.rowcount > 0
+        if cur.rowcount > 0:
+            self.add_event(
+                "device.named", f"Named {name or '(cleared)'}", device_id, data={"name": name}
+            )
+            return True
+        return False
 
     def set_device_kind(self, device_id: int, kind: str | None) -> bool:
         cur = self._db.execute("UPDATE devices SET kind = ? WHERE id = ?", (kind, device_id))
@@ -314,13 +365,22 @@ class Store:
         self, device_id: int, kind: str, description: str, confidence: float
     ) -> bool:
         """Returns True when something actually changed."""
+        before = self._db.execute("SELECT kind FROM devices WHERE id = ?", (device_id,)).fetchone()
         cur = self._db.execute(
             """UPDATE devices SET kind = ?, description = ?, kind_confidence = ?
                WHERE id = ?
                  AND (kind IS NOT ? OR description IS NOT ? OR kind_confidence IS NOT ?)""",
             (kind, description, confidence, device_id, kind, description, confidence),
         )
-        return cur.rowcount > 0
+        changed = cur.rowcount > 0
+        if changed and before is not None and before["kind"] != kind:
+            self.add_event(
+                "device.classified",
+                f"Classified as {kind}: {description}",
+                device_id,
+                data={"kind": kind, "previous": before["kind"], "confidence": confidence},
+            )
+        return changed
 
     def _online_ids(self) -> set[int]:
         latest = self.latest_snapshot("discovery")
@@ -382,9 +442,22 @@ class Store:
                         ),
                     )
                     diff.opened.append((p.port, p.proto))
+                    if prior is not None:
+                        self.add_event(
+                            "service.opened",
+                            f"{p.port}/{p.proto} {p.name or ''} opened".rstrip(),
+                            device_id,
+                            data={"port": p.port, "proto": p.proto, "name": p.name},
+                        )
                 else:
                     if row["state"] != "open":
                         diff.opened.append((p.port, p.proto))
+                        self.add_event(
+                            "service.opened",
+                            f"{p.port}/{p.proto} {p.name or ''} reopened".rstrip(),
+                            device_id,
+                            data={"port": p.port, "proto": p.proto, "name": p.name},
+                        )
                     self._db.execute(
                         """UPDATE services SET state = 'open', name = COALESCE(?, name),
                            product = COALESCE(?, product), version = COALESCE(?, version),
@@ -417,6 +490,12 @@ class Store:
                         (snapshot_id, r["id"]),
                     )
                     diff.closed.append(key)
+                    self.add_event(
+                        "service.closed",
+                        f"{key[0]}/{key[1]} closed",
+                        device_id,
+                        data={"port": key[0], "proto": key[1]},
+                    )
             self._db.execute(
                 """INSERT INTO device_scans
                    (device_id, last_inventory_at, last_deep_at, inventory_count)
@@ -460,6 +539,105 @@ class Store:
         ).fetchall()
         return [int(r[0]) for r in rows]
 
+    # -- events -------------------------------------------------------------
+
+    def add_event(
+        self,
+        kind: str,
+        summary: str,
+        device_id: int | None = None,
+        finding_id: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO events(ts, kind, device_id, finding_id, summary, data)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (iso(now_utc()), kind, device_id, finding_id, summary, json.dumps(data or {})),
+        )
+
+    def events(
+        self,
+        kinds: list[str] | None = None,
+        device_id: int | None = None,
+        since: str | None = None,
+        limit: int = 200,
+        exclude_prefix: str | None = None,
+    ) -> list[EventRow]:
+        q = "SELECT * FROM events WHERE 1=1"
+        args: list[Any] = []
+        if kinds:
+            q += f" AND kind IN ({','.join('?' * len(kinds))})"
+            args += kinds
+        if device_id is not None:
+            q += " AND device_id = ?"
+            args.append(device_id)
+        if since:
+            q += " AND ts >= ?"
+            args.append(since)
+        if exclude_prefix:
+            q += " AND kind NOT LIKE ?"
+            args.append(exclude_prefix + "%")
+        q += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        rows = self._db.execute(q, args).fetchall()
+        return [
+            EventRow(
+                id=int(r["id"]),
+                ts=str(r["ts"]),
+                kind=str(r["kind"]),
+                device_id=r["device_id"],
+                finding_id=r["finding_id"],
+                summary=str(r["summary"]),
+                data=json.loads(r["data"]),
+            )
+            for r in rows
+        ]
+
+    def event_kinds(self) -> list[str]:
+        rows = self._db.execute("SELECT DISTINCT kind FROM events ORDER BY kind").fetchall()
+        return [str(r[0]) for r in rows]
+
+    def snapshot_series(self, kind: str, since: str) -> list[tuple[str, int]]:
+        """(finished_at, host_count) for finished snapshots of a kind since a timestamp."""
+        rows = self._db.execute(
+            "SELECT finished_at, host_count FROM snapshots"
+            " WHERE kind = ? AND finished_at IS NOT NULL AND finished_at >= ? ORDER BY id",
+            (kind, since),
+        ).fetchall()
+        return [(str(r[0]), int(r[1])) for r in rows]
+
+    def search(self, q: str, limit: int = 50) -> dict[str, list[Any]]:
+        """Substring search over devices, services and findings."""
+        like = f"%{q.strip()}%"
+        online = self._online_ids()
+        devices = [
+            _device(r, int(r["id"]) in online)
+            for r in self._db.execute(
+                """SELECT * FROM devices WHERE ip LIKE ? OR mac LIKE ? OR hostname LIKE ?
+                   OR vendor LIKE ? OR name LIKE ? OR kind LIKE ? OR description LIKE ?
+                   OR attrs LIKE ? ORDER BY last_seen DESC LIMIT ?""",
+                (like,) * 8 + (limit,),
+            ).fetchall()
+        ]
+        services = [
+            _service(r)
+            for r in self._db.execute(
+                """SELECT * FROM services WHERE state = 'open' AND (CAST(port AS TEXT) = ?
+                   OR name LIKE ? OR product LIKE ? OR version LIKE ? OR details LIKE ?)
+                   ORDER BY device_id, port LIMIT ?""",
+                (q.strip(), like, like, like, like, limit),
+            ).fetchall()
+        ]
+        findings = [
+            _finding(r)
+            for r in self._db.execute(
+                """SELECT * FROM findings WHERE title LIKE ? OR rule_id LIKE ? OR id LIKE ?
+                   OR evidence LIKE ? ORDER BY last_seen DESC LIMIT ?""",
+                (like, like, like, like, limit),
+            ).fetchall()
+        ]
+        return {"devices": devices, "services": services, "findings": findings}
+
     # -- device attributes & infra ------------------------------------------
 
     def merge_device_attrs(self, device_id: int, attrs: dict[str, Any]) -> bool:
@@ -481,7 +659,9 @@ class Store:
     ) -> None:
         """Current-state semantics: entries of this kind not in `entries` are removed."""
         ts = iso(now_utc())
+        before = {r.key: r.data for r in self.infra(kind)}
         with self._tx():
+            self._infra_events(kind, before, entries)
             for key, data in entries.items():
                 self._db.execute(
                     """INSERT INTO infra(kind, key, data, first_seen, last_seen, snapshot_id)
@@ -498,6 +678,48 @@ class Store:
                 )
             else:
                 self._db.execute("DELETE FROM infra WHERE kind = ?", (kind,))
+
+    def _infra_events(
+        self, kind: str, before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]]
+    ) -> None:
+        if kind == "dhcp":
+            for key in sorted(set(after) - set(before)):
+                self.add_event(
+                    "infra.dhcp-server",
+                    f"DHCP server seen: {after[key].get('server')}",
+                    data=after[key],
+                )
+            for key in sorted(set(before) - set(after)):
+                self.add_event(
+                    "infra.dhcp-server",
+                    f"DHCP server gone: {before[key].get('server')}",
+                    data=before[key],
+                )
+        elif kind == "upnp":
+
+            def mappings(d: dict[str, Any]) -> dict[str, dict[str, Any]]:
+                out: dict[str, dict[str, Any]] = {}
+                for m in d.get("mappings", []):
+                    mk = (
+                        f"{m.get('external_port')}/{m.get('protocol')}->"
+                        f"{m.get('internal_client')}:{m.get('internal_port')}"
+                    )
+                    out[mk] = m
+                return out
+
+            for key in set(before) | set(after):
+                old, new = mappings(before.get(key, {})), mappings(after.get(key, {}))
+                router = (after.get(key) or before.get(key) or {}).get("friendly_name") or key
+                for mk in sorted(set(new) - set(old)):
+                    self.add_event(
+                        "infra.port-mapping", f"Port mapping added on {router}: {mk}", data=new[mk]
+                    )
+                for mk in sorted(set(old) - set(new)):
+                    self.add_event(
+                        "infra.port-mapping",
+                        f"Port mapping removed on {router}: {mk}",
+                        data=old[mk],
+                    )
 
     def infra(self, kind: str) -> list[InfraRow]:
         rows = self._db.execute(
@@ -594,10 +816,25 @@ class Store:
                         ),
                     )
                     new_ids.append(f.id)
+                    self.add_event(
+                        "finding.opened",
+                        f"[{f.severity.value}] {f.title}",
+                        f.device_id,
+                        f.id,
+                        data={"rule_id": f.rule_id, "severity": f.severity.value},
+                    )
                 else:
                     # A resolved finding that reappears is open again. Acked stays acked.
                     status = row["status"]
                     new_status = "open" if status == "resolved" else status
+                    if status == "resolved":
+                        self.add_event(
+                            "finding.reopened",
+                            f"[{f.severity.value}] {f.title}",
+                            f.device_id,
+                            f.id,
+                            data={"rule_id": f.rule_id, "severity": f.severity.value},
+                        )
                     self._db.execute(
                         """UPDATE findings SET severity = ?, title = ?, evidence = ?,
                            last_seen = ?, status = ? WHERE id = ?""",
@@ -625,6 +862,17 @@ class Store:
                         "UPDATE findings SET status = 'resolved', last_seen = ? WHERE id = ?",
                         (ts, fid),
                     )
+                    r = self._db.execute(
+                        "SELECT title, device_id, rule_id FROM findings WHERE id = ?", (fid,)
+                    ).fetchone()
+                    if r is not None:
+                        self.add_event(
+                            "finding.resolved",
+                            f"Resolved: {r['title']}",
+                            r["device_id"],
+                            fid,
+                            data={"rule_id": r["rule_id"]},
+                        )
         return new_ids, resolved_ids
 
     def findings(self, status: FindingStatus | None = FindingStatus.OPEN) -> list[FindingRow]:
@@ -646,7 +894,15 @@ class Store:
         cur = self._db.execute(
             "UPDATE findings SET status = 'acked' WHERE id = ? AND status = 'open'", (finding_id,)
         )
-        return cur.rowcount > 0
+        if cur.rowcount > 0:
+            r = self._db.execute(
+                "SELECT title, device_id FROM findings WHERE id = ?", (finding_id,)
+            ).fetchone()
+            self.add_event(
+                "finding.acked", f"Acknowledged: {r['title']}", r["device_id"], finding_id
+            )
+            return True
+        return False
 
     def set_explanation(self, finding_id: str, text: str) -> None:
         self._db.execute("UPDATE findings SET explanation = ? WHERE id = ?", (text, finding_id))

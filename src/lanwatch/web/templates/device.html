@@ -40,6 +40,13 @@
 </tbody></table>
 {% else %}<p class="muted">No service scan yet.</p>{% endif %}
 
+<h2>History</h2>
+{% if events %}
+<table><tbody>
+{% for e in events %}<tr><td class="ev">{{ e.ts | local }}</td><td class="muted mono">{{ e.kind }}</td><td>{{ e.summary }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">No events recorded.</p>{% endif %}
+
 <h2>Findings</h2>
 {% if findings %}
 <table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>

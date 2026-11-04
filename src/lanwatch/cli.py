@@ -447,6 +447,54 @@ def suggest(ctx: typer.Context) -> None:
     typer.echo(text)
 
 
+@app.command()
+def ask(ctx: typer.Context, question: list[str]) -> None:
+    """Ask the local LLM a question about the current inventory."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.llm.hooks import ask as _ask
+
+    with _open_store(ctx) as store:
+        answer = asyncio.run(_ask(cfg, store, " ".join(question)))
+    if answer is None:
+        typer.echo("no answer: LLM disabled or unavailable (see log)", err=True)
+        raise typer.Exit(1)
+    typer.echo(answer)
+
+
+@app.command()
+def timeline(
+    ctx: typer.Context,
+    device: Annotated[int | None, typer.Option(help="Only this device id.")] = None,
+    presence: Annotated[bool, typer.Option(help="Include online/offline events.")] = False,
+    limit: Annotated[int, typer.Option()] = 50,
+) -> None:
+    """Recent events: devices, services, findings, infra changes."""
+    with _open_store(ctx) as store:
+        rows = store.events(
+            device_id=device, limit=limit, exclude_prefix=None if presence else "presence."
+        )
+    if not rows:
+        typer.echo("no events yet")
+    for e in rows:
+        dev = f"#{e.device_id}" if e.device_id is not None else ""
+        typer.echo(f"{local_str(e.ts)}  {e.kind:<20} {dev:>5}  {e.summary}")
+
+
+@app.command()
+def search(ctx: typer.Context, query: str) -> None:
+    """Search devices, services and findings."""
+    with _open_store(ctx) as store:
+        res = store.search(query)
+        for d in res["devices"]:
+            typer.echo(f"device  #{d.id:<4} {d.ip or '-':<15} {d.mac or '-':<17} {d.label}")
+        for s in res["services"]:
+            typer.echo(f"service #{s.device_id:<4} {s.label}")
+        for f in res["findings"]:
+            typer.echo(f"finding {f.id}  [{f.severity.value}] {f.status.value:<8} {f.title}")
+    if not any(res.values()):
+        typer.echo("no matches")
+
+
 @app.command("notify")
 def notify_cmd(
     ctx: typer.Context,

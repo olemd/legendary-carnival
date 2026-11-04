@@ -39,7 +39,7 @@ class FakeOllama:
             return httpx.Response(404, json={"error": "model not found"})
         system = body["messages"][0]["content"]
         user = body["messages"][1]["content"]
-        out = self.handler(system, user, body["format"])
+        out = self.handler(system, user, body.get("format") or {})
         content = out if isinstance(out, str) else json.dumps(out)
         return httpx.Response(
             200,
