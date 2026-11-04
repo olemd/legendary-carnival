@@ -1,0 +1,26 @@
+# /etc/systemd/system/lanwatch.service
+# Needs: useradd -r -s /usr/sbin/nologin lanwatch; mkdir -p /var/lib/lanwatch; chown lanwatch /var/lib/lanwatch
+[Unit]
+Description=lanwatch network auditor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lanwatch
+Group=lanwatch
+ExecStart=/opt/lanwatch/.venv/bin/lanwatch run
+Restart=on-failure
+RestartSec=10
+Environment=LANWATCH_DATA_DIR=/var/lib/lanwatch
+# ARP/raw sockets for arp-scan and nmap without running as root.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lanwatch
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

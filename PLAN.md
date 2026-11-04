@@ -15,6 +15,9 @@ Mål
 - Flagge kjente svakheter i eget oppsett via et sett deterministiske regler.
 - Foreslå forbedringer (segmentering, oppdateringer, herding).
 - Forklare funn på norsk i klartekst med anbefalt tiltak, via lokal LLM.
+- Kontinuerlig vedlikeholdt oversikt over nettet: ett dokument som alltid
+  viser nåtilstand (enheter, tjenester, segmenter, åpne funn, siste endringer),
+  regenerert etter hver runde, med historikk via git.
 - Kjøre ubetjent i måneder på en Linux-boks under `systemd`.
 - Sane defaults overalt. Null obligatorisk config for å få verdi.
 
@@ -71,8 +74,12 @@ Ikke-mål
 - **llm/**: tynn klient. Prompt-maler ligger i filer, ikke i kode. Alle kall
   cachet slik at reskanning ikke koster ny inferens.
 - **notify/**: adapters med felles interface. Default: bare logg + rapport.
+- **overview/**: renderer `overview.md` fra store etter hver runde. Atomisk
+  skriving. Valgfri git-commit av overview-katalogen per endring, slik at
+  `git log` blir endringshistorikk for nettet. Senere HTML-variant og
+  LLM-berikede enhetsbeskrivelser.
 - **cli/**: `run` (daemon), `scan` (engangs), `report`, `devices`, `findings`,
-  `ack <id>`, `config show` (effektiv konfig etter lagdeling).
+  `ack <id>`, `overview`, `config show` (effektiv konfig etter lagdeling).
 
 ## 4. Funn-modellen
 
@@ -109,9 +116,13 @@ Rolle: språk og klassifisering, ikke deteksjon.
 | daglig digest | åpne funn + endringer siste 24t | prioritert liste, 5 linjer sammendrag |
 | foreslå forbedringer | hele inventaret oppsummert | liste med tiltak, begrunnelse |
 
-- Default endepunkt: Ollama på `http://localhost:11434`. Modell pinnes i config,
-  default velges ved implementasjon (8B-klasse, verifiser kvalitet i M3).
-- Hvis maskinen er for svak (Pi), pek `llm.base_url` på en annen boks på LAN.
+- Default endepunkt: Ollama på `http://localhost:11434`. Modell pinnes i config.
+- Maskinvare: Radeon RX 7900 XTX, 24 GB VRAM, via ROCm (gfx1100, støttet av
+  Ollama). Det gir rom for 14B-klasse i Q8 eller 32B-klasse i Q4 med 8–16k
+  kontekst. Default settes til 14B-klasse for latens, 32B evalueres i M3 med
+  eval-harnessen før eventuelt bytte.
+- Hvis agenten kjører på en annen boks enn GPU-maskinen, pek `llm.base_url`
+  på GPU-maskinen. Fortsatt lokalt.
 - Egen evalueringsharness: gullsett med fingerprints → forventet klasse, slik at
   modellbytte kan måles.
 - Guardrails: temperatur lav, schema-validering, avvis svar som refererer til
@@ -186,7 +197,7 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 | M | leveranse | verdi når ferdig |
 |---|---|---|
 | M0 | skjelett, config-lagdeling, logging, sqlite, CLI, CI | kjører, gjør ingenting |
-| M1 | discovery + inventar + diff + "ny enhet"-funn | allerede nyttig |
+| M1 | discovery + inventar + diff + "ny enhet"-funn + `overview.md` | allerede nyttig |
 | M2 | service-inventar, regelmotor, ~10 regler, rapport | kjernen |
 | M3 | LLM: klassifisering, forklaring, digest, eval-harness | det som gjør den lesbar |
 | M4 | notify-adaptere (ntfy, webhook, Home Assistant), systemd, docs | drift |
@@ -202,16 +213,20 @@ Hver milepæl skal være kjørbar og nyttig alene.
 - **Skanning kan forstyrre.** Konservativ default. Første kjøring bør overvåkes.
 - **Plassering.** Agenten må sitte på L2 på det nettet den skal se. En VM bak
   NAT ser ingenting. Pi/NUC/server på samme switch.
-- **Ytelse for LLM.** 8B-klasse trenger 6–8 GB RAM og helst GPU. På Pi blir
-  det ubrukelig tregt, derfor remote Ollama på LAN som støttet oppsett.
+- **Ytelse for LLM.** Løst med 7900 XTX. Agenten og Ollama trenger ikke
+  være på samme boks, remote Ollama på LAN er støttet oppsett.
+- **ROCm.** Ollama på AMD er stabilt for gfx1100, men driverversjoner på
+  verten kan bite. Dokumenteres i M3.
 - **Juridisk.** Kun eget nett. Default-oppsettet ser bare subnett agenten er
   medlem av, alt annet er opt-in.
 
-## 11. Beslutninger som bør bekreftes
+## 11. Beslutninger
+
+Bekreftet 2026-11-04:
 
 1. Python, ikke Go.
 2. SQLite, ingen ekstern database.
-3. Ollama som default LLM-backend.
+3. Ollama som default LLM-backend, på RX 7900 XTX (24 GB).
 4. LLM foreslår, utfører aldri. Ingen "auto-fix" i første versjon.
 5. Home Assistant som første integrasjon etter ntfy/webhook.
-6. Web-UI er sist og valgfritt. CLI + markdown-rapport er primær-UI.
+6. Web-UI er sist og valgfritt. CLI + `overview.md` er primær-UI.

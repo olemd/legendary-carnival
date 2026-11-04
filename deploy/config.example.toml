@@ -1,0 +1,49 @@
+# lanwatch configuration. Every key is optional; these are the defaults.
+# Lookup order: --config, $LANWATCH_CONFIG, ~/.config/lanwatch/config.toml, /etc/lanwatch/config.toml
+# Any key can also be set via env: LANWATCH_<SECTION>__<KEY>, e.g. LANWATCH_SCAN__PROFILE=normal
+
+# data_dir = "/var/lib/lanwatch"       # root: /var/lib/lanwatch, otherwise ~/.local/share/lanwatch
+
+[network]
+subnets = "auto"                        # or ["192.168.1.0/24", "10.0.0.0/24"]
+max_auto_prefix = 22                    # auto-detected subnets wider than this are skipped
+exclude_hosts = []                      # IPs or MACs never recorded
+exclude_interfaces = ["lo", "docker*", "veth*", "br-*", "virbr*", "tun*", "tap*", "wg*"]
+
+[scan]
+profile = "gentle"                      # gentle | normal | thorough
+max_parallel_hosts = 4
+rate_limit_pps = 100
+discovery_backend = "auto"              # auto | arp-scan | nmap | ping
+resolve_hostnames = true
+
+[schedule]
+discovery_interval_s = 300
+inventory_interval_s = 3600
+deep_interval_s = 604800
+infra_interval_s = 900
+digest_time = "07:00"
+
+[llm]
+enabled = true
+base_url = "http://localhost:11434"     # Ollama; may be another machine on the LAN
+model = "qwen3:14b"
+timeout_s = 120
+temperature = 0.1
+num_ctx = 8192
+
+[store]
+# path = "/var/lib/lanwatch/lanwatch.db"
+
+[overview]
+enabled = true
+# path = "/var/lib/lanwatch/overview/overview.md"
+git = false                             # commit each overview change in its directory
+
+[notify]
+log = true
+# report_dir = "/var/lib/lanwatch/reports"
+
+[rules]
+# "inventory.ip-changed" = { enabled = false }
+# "inventory.new-device" = { severity = "high" }

@@ -1,0 +1,64 @@
+"""End-to-end: fake interfaces and a fake backend through run_discovery, rules and overview."""
+
+from __future__ import annotations
+
+import ipaddress
+
+import pytest
+
+from lanwatch import pipeline
+from lanwatch.config import Config, ScanConfig
+from lanwatch.models import FindingStatus, HostObservation
+from lanwatch.netinfo import Interface, Subnet
+from lanwatch.store import Store
+
+
+class FakeBackend:
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.hosts: list[HostObservation] = []
+        self.seen_subnets: list[Subnet] = []
+
+    def available(self) -> bool:
+        return True
+
+    async def discover(self, subnets: list[Subnet], cfg: ScanConfig) -> list[HostObservation]:
+        self.seen_subnets = subnets
+        return list(self.hosts)
+
+
+async def test_run_discovery_end_to_end(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ifaces = [
+        Interface("lo", None, [ipaddress.IPv4Interface("127.0.0.1/8")]),
+        Interface("eth0", "aa:bb:cc:dd:ee:ff", [ipaddress.IPv4Interface("192.168.1.10/24")]),
+    ]
+    backend = FakeBackend()
+    backend.hosts = [HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="fake")]
+
+    async def fake_ifaces() -> list[Interface]:
+        return ifaces
+
+    monkeypatch.setattr(pipeline, "list_interfaces", fake_ifaces)
+    monkeypatch.setattr(pipeline, "select_backend", lambda cfg: backend)
+    config.network.exclude_hosts = ["192.168.1.99"]
+
+    first = await pipeline.run_discovery(config, store)
+    assert first.baseline and first.backend == "fake"
+    assert first.subnets == ["192.168.1.0/24 via eth0"]
+    assert first.hosts == 2  # gateway + this host itself
+    assert config.overview_path.exists()
+
+    backend.hosts.append(HostObservation(ip="192.168.1.99", mac="aa:bb:cc:00:00:99", source="fake"))
+    backend.hosts.append(HostObservation(ip="192.168.1.50", mac="aa:bb:cc:00:00:50", source="fake"))
+    second = await pipeline.run_discovery(config, store)
+    assert not second.baseline
+    assert second.hosts == 3  # excluded host is not recorded
+    assert len(second.new_devices) == 1 and len(second.new_findings) == 1
+    assert store.device_by_key("aa:bb:cc:00:00:99") is None
+
+    f = store.findings(FindingStatus.OPEN)[0]
+    assert f.rule_id == "inventory.new-device" and f.evidence["ip"] == "192.168.1.50"
+    assert "192.168.1.50" in config.overview_path.read_text()

@@ -1,0 +1,4 @@
+192.168.1.1	aa:bb:cc:00:00:01	Ubiquiti Inc
+192.168.1.20	AA-BB-CC-00-00-14	(Unknown)
+192.168.1.33	aa:bb:cc:00:00:21	Raspberry Pi Trading Ltd
+garbage line

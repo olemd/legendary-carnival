@@ -1,0 +1,14 @@
+[
+ {"ifname":"lo","flags":["LOOPBACK","UP","LOWER_UP"],"link_type":"loopback",
+  "addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8}]},
+ {"ifname":"eth0","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],"link_type":"ether","address":"aa:bb:cc:dd:ee:ff",
+  "addr_info":[{"family":"inet","local":"192.168.1.10","prefixlen":24},{"family":"inet6","local":"fe80::1","prefixlen":64}]},
+ {"ifname":"docker0","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],"link_type":"ether","address":"02:42:00:00:00:01",
+  "addr_info":[{"family":"inet","local":"172.17.0.1","prefixlen":16}]},
+ {"ifname":"wg0","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"link_type":"none",
+  "addr_info":[{"family":"inet","local":"10.8.0.2","prefixlen":24}]},
+ {"ifname":"eth1","flags":["BROADCAST","MULTICAST"],"link_type":"ether","address":"aa:bb:cc:dd:ee:01",
+  "addr_info":[{"family":"inet","local":"10.0.0.5","prefixlen":8}]},
+ {"ifname":"eth2","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],"link_type":"ether","address":"aa:bb:cc:dd:ee:02",
+  "addr_info":[{"family":"inet","local":"10.10.0.5","prefixlen":16}]}
+]
