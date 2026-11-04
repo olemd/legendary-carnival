@@ -6,7 +6,9 @@ import asyncio
 import json
 import logging
 import sys
-from dataclasses import dataclass
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -18,7 +20,7 @@ from lanwatch.logging_setup import setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
-from lanwatch.pipeline import run_discovery
+from lanwatch.pipeline import run_discovery, run_inventory
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
@@ -71,37 +73,143 @@ def version() -> None:
 
 
 @app.command()
-def scan(ctx: typer.Context) -> None:
-    """Run one discovery round now, then exit."""
+def scan(
+    ctx: typer.Context,
+    discovery_only: Annotated[bool, typer.Option(help="Skip the service inventory.")] = False,
+    deep: Annotated[bool, typer.Option(help="Full port range instead of top ports.")] = False,
+) -> None:
+    """Run one discovery round plus a service inventory of online devices, then exit."""
     cfg = _state(ctx).loaded.config
-    with _open_store(ctx) as store:
-        try:
-            outcome = asyncio.run(run_discovery(cfg, store))
-        except RuntimeError as e:
-            typer.echo(f"error: {e}", err=True)
-            raise typer.Exit(1) from e
+
+    async def _scan() -> None:
+        with _open_store(ctx) as store:
+            d = await run_discovery(cfg, store)
+            typer.echo(
+                f"discovery: {d.hosts} hosts via {d.backend} on {', '.join(d.subnets)}; "
+                f"{len(d.new_devices)} new devices, {len(d.new_findings)} new findings"
+                + (" (baseline)" if d.baseline else "")
+            )
+            if discovery_only:
+                return
+            i = await run_inventory(cfg, store, deep=deep)
+            typer.echo(
+                f"inventory: {i.devices} devices answered, {i.opened} ports opened, "
+                f"{i.closed} closed, {len(i.new_findings)} new findings, "
+                f"{len(i.resolved_findings)} resolved"
+            )
+
+    try:
+        asyncio.run(_scan())
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from e
+
+
+@app.command()
+def inventory(
+    ctx: typer.Context,
+    device_ids: Annotated[
+        list[int] | None, typer.Argument(help="Device ids; default: all online.")
+    ] = None,
+    deep: Annotated[
+        bool, typer.Option(help="Full port range, plus UDP top ports as root.")
+    ] = False,
+) -> None:
+    """Service inventory (nmap) of online devices, without a discovery round first."""
+    cfg = _state(ctx).loaded.config
+    try:
+        with _open_store(ctx) as store:
+            i = asyncio.run(run_inventory(cfg, store, device_ids=device_ids or None, deep=deep))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from e
     typer.echo(
-        f"{outcome.hosts} hosts via {outcome.backend} on {', '.join(outcome.subnets)}; "
-        f"{len(outcome.new_devices)} new devices, {len(outcome.new_findings)} new findings"
-        + (" (baseline)" if outcome.baseline else "")
+        f"{i.devices} devices answered, {i.opened} ports opened, {i.closed} closed, "
+        f"{len(i.new_findings)} new findings, {len(i.resolved_findings)} resolved"
     )
 
 
 @app.command()
+def services(ctx: typer.Context, device_id: int) -> None:
+    """Open services on one device."""
+    with _open_store(ctx) as store:
+        d = store.device(device_id)
+        if d is None:
+            typer.echo("no such device", err=True)
+            raise typer.Exit(1)
+        rows = store.services(device_id)
+        last = store.last_inventory_at(device_id)
+    typer.echo(f"{d.label} {d.ip or ''}  last scan {local_str(last)}")
+    if not rows:
+        typer.echo("no open services recorded")
+    for s in rows:
+        scripts = ",".join(sorted(s.details)) if s.details else ""
+        typer.echo(f"  {s.label:<50} {scripts}")
+
+
+@app.command()
+def web(ctx: typer.Context) -> None:
+    """Serve only the web UI (no scanning)."""
+    cfg = _state(ctx).loaded.config
+    from lanwatch.web.app import create_app
+    from lanwatch.web.server import make_server
+
+    log.info("web ui on http://%s:%d", cfg.web.host, cfg.web.port)
+    make_server(create_app(cfg), cfg.web.host, cfg.web.port).run()
+
+
+@app.command()
 def run(ctx: typer.Context) -> None:
-    """Run continuously (daemon mode). Stops cleanly on SIGTERM/SIGINT."""
+    """Run continuously: discovery, inventory, deep scans and the web UI in one process."""
     cfg = _state(ctx).loaded.config
     log.info("lanwatch %s starting, data_dir=%s", __version__, cfg.data_dir)
 
     async def _main() -> None:
         with _open_store(ctx) as store:
 
-            async def discovery() -> None:
-                await run_discovery(cfg, store)
+            def persisted(
+                name: str, fn: Callable[[], Awaitable[object]]
+            ) -> Callable[[], Awaitable[None]]:
+                async def wrapper() -> None:
+                    await fn()
+                    store.meta_set(f"job.{name}.last_run", str(time.time()))
 
-            sched = Scheduler([Job("discovery", cfg.schedule.discovery_interval_s, discovery)])
+                return wrapper
+
+            def job(name: str, interval: int, fn: Callable[[], Awaitable[object]]) -> Job:
+                j = Job(name, interval, persisted(name, fn))
+                last = store.meta_get(f"job.{name}.last_run")
+                j.resume_from(float(last) if last else None)
+                return j
+
+            jobs = [
+                job(
+                    "discovery",
+                    cfg.schedule.discovery_interval_s,
+                    lambda: run_discovery(cfg, store),
+                ),
+                job(
+                    "inventory",
+                    cfg.schedule.inventory_interval_s,
+                    lambda: run_inventory(cfg, store),
+                ),
+                job(
+                    "deep",
+                    cfg.schedule.deep_interval_s,
+                    lambda: run_inventory(cfg, store, deep=True),
+                ),
+            ]
+            sched = Scheduler(jobs)
             sched.install_signal_handlers()
-            await sched.run_forever()
+            tasks = [asyncio.create_task(sched.run_forever())]
+            if cfg.web.enabled:
+                from lanwatch.web.app import create_app
+                from lanwatch.web.server import make_server, serve_until
+
+                server = make_server(create_app(cfg), cfg.web.host, cfg.web.port)
+                log.info("web ui on http://%s:%d", cfg.web.host, cfg.web.port)
+                tasks.append(asyncio.create_task(serve_until(server, sched.stopped)))
+            await asyncio.gather(*tasks)
 
     asyncio.run(_main())
 
@@ -116,7 +224,7 @@ def devices(
     with _open_store(ctx) as store:
         rows = store.devices(online_only=not all_)
     if as_json:
-        typer.echo(json.dumps([r.__dict__ for r in rows], indent=2))
+        typer.echo(json.dumps([asdict(r) for r in rows], indent=2))
         return
     if not rows:
         typer.echo("no devices (run `lanwatch scan` first)")
@@ -141,7 +249,7 @@ def findings(
     with _open_store(ctx) as store:
         rows = store.findings(st)
         if as_json:
-            typer.echo(json.dumps([r.__dict__ for r in rows], indent=2, default=str))
+            typer.echo(json.dumps([asdict(r) for r in rows], indent=2, default=str))
             return
         if not rows:
             typer.echo("no findings")

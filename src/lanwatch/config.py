@@ -79,6 +79,23 @@ class ScanConfig(StrictModel):
     rate_limit_pps: int = Field(default=100, ge=1, le=10000)
     discovery_backend: Literal["auto", "arp-scan", "nmap", "ping"] = "auto"
     resolve_hostnames: bool = True
+    # Service inventory (nmap). Light scans run hourly and on new devices; deep weekly.
+    light_top_ports: int = Field(default=200, ge=10, le=65535)
+    deep_udp_top_ports: int = Field(default=50, ge=0, le=1000)
+    # Never probed. 9100 (raw printing) makes printers print probe garbage.
+    exclude_ports: list[int] = Field(default_factory=lambda: [9100])
+    version_detection: bool = True
+    # nmap scripts, all from the "safe" category, run only against open ports.
+    scripts: list[str] = Field(
+        default_factory=lambda: [
+            "ssl-cert",
+            "ssh2-enum-algos",
+            "smb-protocols",
+            "vnc-info",
+            "http-title",
+        ]
+    )
+    scan_new_devices_immediately: bool = True
 
 
 class ScheduleConfig(StrictModel):
@@ -121,6 +138,14 @@ class NotifyConfig(StrictModel):
     report_dir: Path | None = None
 
 
+class WebConfig(StrictModel):
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = Field(default=8321, ge=1, le=65535)
+    # Required when host is not loopback. Basic auth, user "lanwatch".
+    password: str | None = None
+
+
 class RuleOverride(StrictModel):
     enabled: bool | None = None
     severity: Severity | None = None
@@ -135,6 +160,7 @@ class Config(StrictModel):
     store: StoreConfig = StoreConfig()
     overview: OverviewConfig = OverviewConfig()
     notify: NotifyConfig = NotifyConfig()
+    web: WebConfig = WebConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property
@@ -241,7 +267,21 @@ def load_config(
         cfg = Config.model_validate(merged)
     except ValidationError as e:
         raise ConfigError(format_validation_error(e, file_path)) from e
+    if cfg.web.enabled and not cfg.web.password and not _is_loopback(cfg.web.host):
+        raise ConfigError(
+            f"web.host={cfg.web.host!r} is reachable from the network; set web.password"
+            " or bind to 127.0.0.1"
+        )
     return LoadedConfig(config=cfg, config_file=file_path, env_keys=env_keys, cli_overrides=cli)
+
+
+def _is_loopback(host: str) -> bool:
+    if host in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def format_validation_error(e: ValidationError, file_path: Path | None) -> str:

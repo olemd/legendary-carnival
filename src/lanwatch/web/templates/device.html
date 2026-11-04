@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% set active = 'devices' %}
+{% block title %}{{ device.label }} · lanwatch{% endblock %}
+{% block content %}
+<h1><span class="dot {{ 'on' if device.online }}"></span>{{ device.label }}</h1>
+<table style="width:auto">
+  <tr><th>IP</th><td class="mono">{{ device.ip or '-' }}</td></tr>
+  <tr><th>MAC</th><td class="mono">{{ device.mac or '-' }}</td></tr>
+  <tr><th>Vendor</th><td>{{ device.vendor or '-' }}</td></tr>
+  <tr><th>Hostname</th><td>{{ device.hostname or '-' }}</td></tr>
+  <tr><th>Kind</th><td>{{ device.kind or '-' }}</td></tr>
+  <tr><th>First seen</th><td>{{ device.first_seen | local }}</td></tr>
+  <tr><th>Last seen</th><td>{{ device.last_seen | local }}</td></tr>
+  <tr><th>Last service scan</th><td>{{ last_inventory | local }}</td></tr>
+  <tr><th>Name</th><td>
+    <form class="inline" method="post" action="/devices/{{ device.id }}/name">
+      <input type="text" name="name" value="{{ device.name or '' }}" placeholder="give it a name"> <button>save</button>
+    </form></td></tr>
+</table>
+
+<h2>Services</h2>
+{% if services %}
+<table><thead><tr><th>Port</th><th>State</th><th>Service</th><th>Product</th><th>Details</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>
+{% for s in services %}
+<tr>
+  <td class="mono">{{ s.port }}/{{ s.proto }}</td>
+  <td class="{{ 'muted' if s.state != 'open' }}">{{ s.state }}</td>
+  <td>{{ s.name or '-' }}{% if s.tunnel %} <span class="muted">({{ s.tunnel }})</span>{% endif %}</td>
+  <td>{{ s.product or '' }} {{ s.version or '' }} <span class="muted">{{ s.extrainfo or '' }}</span></td>
+  <td>{% if s.details %}<details><summary>{{ s.details|length }} script{{ 's' if s.details|length != 1 }}</summary><pre>{{ s.details | tojson(indent=2) }}</pre></details>{% else %}-{% endif %}</td>
+  <td class="muted">{{ s.first_seen | local }}</td>
+  <td class="muted">{{ s.last_seen | local }}</td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">No service scan yet.</p>{% endif %}
+
+<h2>Findings</h2>
+{% if findings %}
+<table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>
+<tbody>{% set back = '/devices/' ~ device.id %}{% set devices_by_id = {device.id: device} %}{% include "_finding_rows.html" %}</tbody></table>
+{% else %}<p class="muted">None.</p>{% endif %}
+{% endblock %}

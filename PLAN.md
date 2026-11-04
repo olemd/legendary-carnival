@@ -78,8 +78,12 @@ Ikke-mål
   skriving. Valgfri git-commit av overview-katalogen per endring, slik at
   `git log` blir endringshistorikk for nettet. Senere HTML-variant og
   LLM-berikede enhetsbeskrivelser.
-- **cli/**: `run` (daemon), `scan` (engangs), `report`, `devices`, `findings`,
-  `ack <id>`, `overview`, `config show` (effektiv konfig etter lagdeling).
+- **web/**: FastAPI + Jinja2, server-rendret, ingen JS-bygg. Dashboard, enheter,
+  tjenester, funn med ack, oversikten. JSON-API under `/api`. Kjører i samme
+  prosess som scheduleren. Bundet til 127.0.0.1 som default, passord påkrevd
+  for å binde videre. Trukket frem fra M6 til M2 etter ønske.
+- **cli/**: `run` (daemon), `scan` (engangs), `inventory`, `devices`, `services`,
+  `findings`, `ack <id>`, `name`, `overview`, `rules`, `web`, `config show`.
 
 ## 4. Funn-modellen
 
@@ -96,12 +100,19 @@ Finding
   explanation   LLM-tekst, fylles inn asynkront, cachet
 ```
 
-Regelkategorier i første runde (konkret liste defineres i M2):
-- inventar: ny enhet, endret enhet, enhet som flapper
-- tjenester: ukrypterte eller autentiseringsløse admin-/fjernaksess-tjenester
+Regler i M2 (se `lanwatch rules` for effektiv severity):
+- inventar: ny enhet, IP-endring, nye åpne porter på kjent enhet
+- tjenester: ukryptert fjerninnlogging, FTP uten TLS, SMBv1, VNC uten
+  autentisering, database synlig for hele segmentet
+- herding: SSH med legacy-algoritmer, utløpt eller snart utløpt TLS-sertifikat
+
+Tjenesteregler leser gjeldende tilstand i store, ikke bare runden som nettopp
+kjørte. Et funn lever nøyaktig så lenge tilstanden gjør, uansett hvilke
+enheter en runde skannet. "Hendelsesfunn" (ny enhet, nye porter) lukkes med ack.
+
+Planlagt i M5:
 - infrastruktur: uventede DHCP-servere, åpne portmappinger i routeren,
   IPv6-eksponering som omgår NAT-antakelser
-- herding: svake SSH/TLS-oppsett, utløpte sertifikater
 - forbedring: manglende segmentering av IoT, manglende DNS-filtrering,
   utdaterte versjoner (kun mot lokal, nedlastet database, aldri LLM-gjetting)
 
@@ -133,9 +144,9 @@ Rolle: språk og klassifisering, ikke deteksjon.
 | jobb | default kadens | begrunnelse |
 |---|---|---|
 | discovery | 5 min | billig, gir "ny enhet" raskt |
-| service inventory, nye enheter | umiddelbart, lett profil | vite hva det er før neste runde |
-| service inventory, alle | 1 t, lett profil | nok til diff |
-| dyp inventar | ukentlig, natt | tungt, kan plage enheter |
+| service inventory, nye enheter | umiddelbart, top 200 porter | vite hva det er før neste runde |
+| service inventory, alle online | 1 t, top 200 porter | nok til diff |
+| dyp inventar | ukentlig per enhet, alle porter + UDP top 50 | tungt, kan plage enheter |
 | infra-probes (DHCP, UPnP, IPv6) | 15 min | billig, høy verdi |
 | regler | etter hver jobb | |
 | LLM-forklaringer | fortløpende, kø | |
@@ -198,11 +209,11 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 |---|---|---|
 | M0 | skjelett, config-lagdeling, logging, sqlite, CLI, CI | kjører, gjør ingenting |
 | M1 | discovery + inventar + diff + "ny enhet"-funn + `overview.md` | allerede nyttig |
-| M2 | service-inventar, regelmotor, ~10 regler, rapport | kjernen |
+| M2 | service-inventar, regelmotor, 10 regler, web-UI | kjernen |
 | M3 | LLM: klassifisering, forklaring, digest, eval-harness | det som gjør den lesbar |
 | M4 | notify-adaptere (ntfy, webhook, Home Assistant), systemd, docs | drift |
 | M5 | infra-probes, herdingssjekker, versjonsdatabase, forbedringsforslag | dybde |
-| M6 | liten web-UI (FastAPI + htmx), valgfri | bekvemmelighet |
+| M6 | web-UI utvidelser: historikk/tidslinje, søk, LLM-chat mot inventaret | bekvemmelighet |
 
 Hver milepæl skal være kjørbar og nyttig alene.
 
@@ -229,4 +240,5 @@ Bekreftet 2026-11-04:
 3. Ollama som default LLM-backend, på RX 7900 XTX (24 GB).
 4. LLM foreslår, utfører aldri. Ingen "auto-fix" i første versjon.
 5. Home Assistant som første integrasjon etter ntfy/webhook.
-6. Web-UI er sist og valgfritt. CLI + `overview.md` er primær-UI.
+6. ~~Web-UI er sist og valgfritt.~~ Endret 2026-11-04: web-UI er del av M2 og
+   primær presentasjonsflate sammen med `overview.md`.

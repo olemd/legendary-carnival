@@ -1,0 +1,16 @@
+{% for f in findings %}
+<tr>
+  <td><span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span></td>
+  <td class="muted">{{ f.kind.value }}</td>
+  <td>{{ f.title }}<br><span class="muted mono">{{ f.rule_id }}</span>
+    {% if f.evidence %}<details><summary>evidence</summary><pre>{{ f.evidence | tojson(indent=2) }}</pre></details>{% endif %}
+    {% if f.explanation %}<p>{{ f.explanation }}</p>{% endif %}
+  </td>
+  <td>{% set d = devices_by_id.get(f.device_id) %}{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a>{% else %}-{% endif %}</td>
+  <td class="muted">{{ f.first_seen | local }}</td>
+  <td class="muted">{{ f.status.value }}</td>
+  <td>{% if f.status.value == 'open' %}
+    <form class="inline" method="post" action="/findings/{{ f.id }}/ack"><input type="hidden" name="back" value="{{ back }}"><button>ack</button></form>
+    {% endif %}</td>
+</tr>
+{% endfor %}

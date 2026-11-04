@@ -62,3 +62,41 @@ async def test_run_discovery_end_to_end(
     f = store.findings(FindingStatus.OPEN)[0]
     assert f.rule_id == "inventory.new-device" and f.evidence["ip"] == "192.168.1.50"
     assert "192.168.1.50" in config.overview_path.read_text()
+
+
+async def test_run_inventory_with_fake_nmap(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lanwatch.collectors.services import ServiceScanResult, parse_nmap_xml_services
+    from tests.conftest import fixture_text
+
+    res = parse_nmap_xml_services(fixture_text("nmap-services.xml"))
+    sid = store.begin_snapshot("discovery", "t")
+    rec = store.record_hosts(
+        sid,
+        [
+            HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="t"),
+            HostObservation(ip="192.168.1.40", source="t"),
+            HostObservation(ip="192.168.1.77", source="t"),  # will not answer the scan
+        ],
+    )
+    store.finish_snapshot(sid, 3)
+    scanned: list[list[str]] = []
+
+    async def fake_scan(targets: list[str], cfg: ScanConfig, deep: bool) -> ServiceScanResult:
+        scanned.append(sorted(targets))
+        return res
+
+    monkeypatch.setattr(pipeline, "scan_services", fake_scan)
+    out = await pipeline.run_inventory(config, store)
+    assert scanned == [["192.168.1.1", "192.168.1.40", "192.168.1.77"]]
+    assert out.devices == 2 and out.opened == 7 and out.closed == 0
+    assert len(out.new_findings) == 6
+    assert store.services(rec.new_device_ids[2]) == []
+    assert "22/tcp ssh" in config.overview_path.read_text()
+
+    # Deep scan only targets devices never deep-scanned; after it, nothing is due.
+    out2 = await pipeline.run_inventory(config, store, deep=True)
+    assert out2.devices == 2 and out2.new_findings == []
+    out3 = await pipeline.run_inventory(config, store, deep=True)
+    assert out3.devices == 0 and scanned[-1] != scanned[-2]

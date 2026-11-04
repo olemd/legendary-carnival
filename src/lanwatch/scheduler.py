@@ -21,12 +21,23 @@ class Job:
     next_due: float = field(default_factory=time.monotonic)
     failures: int = 0
 
+    def resume_from(self, last_run_wall: float | None) -> None:
+        """Keep cadence across restarts: due at last_run + interval, or now."""
+        if last_run_wall is None:
+            return
+        remaining = (last_run_wall + self.interval_s) - time.time()
+        self.next_due = time.monotonic() + max(0.0, remaining)
+
 
 class Scheduler:
     def __init__(self, jobs: list[Job]) -> None:
         self.jobs = jobs
         self._stop = asyncio.Event()
         self._lock = asyncio.Lock()
+
+    @property
+    def stopped(self) -> asyncio.Event:
+        return self._stop
 
     def stop(self) -> None:
         self._stop.set()

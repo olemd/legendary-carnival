@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from lanwatch.config import Config
-from lanwatch.models import Finding, Kind, Severity
+from lanwatch.models import Finding, Kind, ServiceDiff, Severity
 from lanwatch.store import Store
 
 
@@ -20,6 +20,8 @@ class RuleContext:
     is_baseline: bool
     new_device_ids: list[int] = field(default_factory=list)
     ip_changes: list[tuple[int, str, str]] = field(default_factory=list)
+    # Service scan results from this round, keyed by device id (empty after discovery).
+    service_diffs: dict[int, ServiceDiff] = field(default_factory=dict)
 
 
 class Rule(ABC):

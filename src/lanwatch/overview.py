@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from lanwatch.config import Config
-from lanwatch.models import Device, FindingRow, FindingStatus, iso, local_str, now_utc
+from lanwatch.models import Device, FindingRow, FindingStatus, ServiceRow, iso, local_str, now_utc
 from lanwatch.store import Store
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def render(store: Store, config: Config, now: datetime | None = None) -> str:
     open_findings = store.findings(FindingStatus.OPEN)
     acked = store.findings(FindingStatus.ACKED)
     latest = store.latest_snapshot("discovery")
+    latest_inv = store.latest_snapshot("inventory")
     week_ago = iso(now - timedelta(days=7))
     recent = store.devices_first_seen_since(week_ago)
 
@@ -39,6 +40,8 @@ def render(store: Store, config: Config, now: datetime | None = None) -> str:
             f"Last discovery: {local_str(latest.finished_at)} via {latest.source}, "
             f"{latest.host_count} hosts."
         )
+    if latest_inv:
+        lines.append(f"Last service inventory: {local_str(latest_inv.finished_at)}.")
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -53,17 +56,20 @@ def render(store: Store, config: Config, now: datetime | None = None) -> str:
 
     lines.append("## Devices")
     lines.append("")
-    lines.append("| | Name | IP | MAC | Vendor | Hostname | First seen | Last seen |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+    services = store.open_services()
+    lines.append("| | Name | IP | MAC | Vendor | Hostname | Open ports | First seen | Last seen |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for d in sorted(devices, key=_ip_sort_key):
+        row = "| {on} | {name} | {ip} | {mac} | {vendor} | {host} | {ports} | {first} | {last} |"
         lines.append(
-            "| {on} | {name} | {ip} | {mac} | {vendor} | {host} | {first} | {last} |".format(
+            row.format(
                 on="●" if d.online else "○",
                 name=_md_escape(d.name or d.kind),
                 ip=_md_escape(d.ip),
                 mac=_md_escape(d.mac),
                 vendor=_md_escape(d.vendor),
                 host=_md_escape(d.hostname),
+                ports=_md_escape(ports_summary(services.get(d.id, []))),
                 first=local_str(d.first_seen),
                 last=local_str(d.last_seen),
             )
@@ -99,6 +105,15 @@ def render(store: Store, config: Config, now: datetime | None = None) -> str:
             lines.append(f"- {local_str(d.first_seen)}  {d.label}  {d.ip or '-'}  {d.mac or '-'}")
     lines.append("")
     return "\n".join(lines)
+
+
+def ports_summary(services: list[ServiceRow], limit: int = 8) -> str:
+    if not services:
+        return ""
+    parts = [f"{s.port}/{s.proto}" + (f" {s.name}" if s.name else "") for s in services]
+    if len(parts) > limit:
+        return ", ".join(parts[:limit]) + f", +{len(parts) - limit}"
+    return ", ".join(parts)
 
 
 def _finding_row(store: Store, f: FindingRow) -> str:

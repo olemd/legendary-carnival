@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from lanwatch.models import Finding, FindingStatus, HostObservation, Kind, Severity
-from lanwatch.store import Store
+from lanwatch.store import MIGRATIONS, Store
 
 
 def obs(ip: str, mac: str | None = None, **kw: str) -> HostObservation:
@@ -9,9 +9,9 @@ def obs(ip: str, mac: str | None = None, **kw: str) -> HostObservation:
 
 
 def test_migration_is_idempotent(store: Store) -> None:
-    assert store.schema_version == 1
+    assert store.schema_version == len(MIGRATIONS)
     store.migrate()
-    assert store.schema_version == 1
+    assert store.schema_version == len(MIGRATIONS)
 
 
 def test_record_hosts_new_then_seen(store: Store) -> None:

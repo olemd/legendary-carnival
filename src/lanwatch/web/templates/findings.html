@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% set active = 'findings' %}
+{% block content %}
+<h1>Findings <span class="muted">({{ findings|length }})</span></h1>
+<p class="tabs">{% for st in ['open', 'acked', 'resolved', 'all'] %}
+  <a href="/findings?status={{ st }}" {% if st == status %}style="font-weight:600"{% endif %}>{{ st }}</a>{% endfor %}</p>
+{% if findings %}
+<table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>
+<tbody>{% set back = '/findings?status=' ~ status %}{% include "_finding_rows.html" %}</tbody></table>
+{% else %}<p class="muted">None.</p>{% endif %}
+{% endblock %}

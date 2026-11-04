@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lanwatch.collectors.services import PortObservation, PortSet
 from lanwatch.models import (
     Device,
     Finding,
@@ -20,6 +21,8 @@ from lanwatch.models import (
     FindingStatus,
     HostObservation,
     Kind,
+    ServiceDiff,
+    ServiceRow,
     Severity,
     Snapshot,
     iso,
@@ -93,6 +96,22 @@ MIGRATIONS: list[str] = [
         response   TEXT NOT NULL
     );
     """,
+    # v2: service details, per-device scan bookkeeping, key/value meta
+    """
+    ALTER TABLE services ADD COLUMN extrainfo TEXT;
+    ALTER TABLE services ADD COLUMN tunnel TEXT;
+    ALTER TABLE services ADD COLUMN details TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE device_scans (
+        device_id         INTEGER PRIMARY KEY REFERENCES devices(id),
+        last_inventory_at TEXT,
+        last_deep_at      TEXT,
+        inventory_count   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
 ]
 
 
@@ -104,11 +123,13 @@ class RecordResult:
 
 
 class Store:
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, check_same_thread: bool = True) -> None:
         if isinstance(path, Path):
             path.parent.mkdir(parents=True, exist_ok=True)
         self.path = str(path)
-        self._db = sqlite3.connect(self.path, isolation_level=None)
+        self._db = sqlite3.connect(
+            self.path, isolation_level=None, check_same_thread=check_same_thread, timeout=30
+        )
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         if self.path != ":memory:":
@@ -259,6 +280,146 @@ class Store:
         ).fetchall()
         return [_device(r, int(r["id"]) in online) for r in rows]
 
+    # -- services -----------------------------------------------------------
+
+    def record_services(
+        self,
+        snapshot_id: int,
+        device_id: int,
+        ports: list[PortObservation],
+        scanned: dict[str, PortSet],
+        deep: bool = False,
+    ) -> ServiceDiff:
+        """Upsert open ports for a device; close ports that were scanned but not seen."""
+        ts = iso(now_utc())
+        with self._tx():
+            prior = self._db.execute(
+                "SELECT inventory_count FROM device_scans WHERE device_id = ?", (device_id,)
+            ).fetchone()
+            diff = ServiceDiff(device_id=device_id, first_scan=prior is None)
+            seen: set[tuple[int, str]] = set()
+            for p in ports:
+                if p.state != "open":
+                    continue
+                seen.add((p.port, p.proto))
+                row = self._db.execute(
+                    "SELECT id, state FROM services WHERE device_id = ? AND port = ? AND proto = ?",
+                    (device_id, p.port, p.proto),
+                ).fetchone()
+                details = json.dumps(p.scripts, sort_keys=True)
+                if row is None:
+                    self._db.execute(
+                        """INSERT INTO services(device_id, port, proto, state, name, product,
+                           version, extrainfo, tunnel, details, first_seen, last_seen,
+                           last_snapshot_id)
+                           VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            device_id,
+                            p.port,
+                            p.proto,
+                            p.name,
+                            p.product,
+                            p.version,
+                            p.extrainfo,
+                            p.tunnel,
+                            details,
+                            ts,
+                            ts,
+                            snapshot_id,
+                        ),
+                    )
+                    diff.opened.append((p.port, p.proto))
+                else:
+                    if row["state"] != "open":
+                        diff.opened.append((p.port, p.proto))
+                    self._db.execute(
+                        """UPDATE services SET state = 'open', name = COALESCE(?, name),
+                           product = COALESCE(?, product), version = COALESCE(?, version),
+                           extrainfo = COALESCE(?, extrainfo), tunnel = COALESCE(?, tunnel),
+                           details = CASE WHEN ? = '{}' THEN details ELSE ? END,
+                           last_seen = ?, last_snapshot_id = ? WHERE id = ?""",
+                        (
+                            p.name,
+                            p.product,
+                            p.version,
+                            p.extrainfo,
+                            p.tunnel,
+                            details,
+                            details,
+                            ts,
+                            snapshot_id,
+                            row["id"],
+                        ),
+                    )
+            open_rows = self._db.execute(
+                "SELECT id, port, proto FROM services WHERE device_id = ? AND state = 'open'",
+                (device_id,),
+            ).fetchall()
+            for r in open_rows:
+                key = (int(r["port"]), str(r["proto"]))
+                ps = scanned.get(key[1])
+                if key not in seen and ps is not None and key[0] in ps:
+                    self._db.execute(
+                        "UPDATE services SET state = 'closed', last_snapshot_id = ? WHERE id = ?",
+                        (snapshot_id, r["id"]),
+                    )
+                    diff.closed.append(key)
+            self._db.execute(
+                """INSERT INTO device_scans
+                   (device_id, last_inventory_at, last_deep_at, inventory_count)
+                   VALUES (?, ?, ?, 1)
+                   ON CONFLICT(device_id) DO UPDATE SET
+                     last_inventory_at = excluded.last_inventory_at,
+                     last_deep_at = COALESCE(excluded.last_deep_at, device_scans.last_deep_at),
+                     inventory_count = device_scans.inventory_count + 1""",
+                (device_id, ts, ts if deep else None),
+            )
+        return diff
+
+    def services(self, device_id: int, open_only: bool = True) -> list[ServiceRow]:
+        q = "SELECT * FROM services WHERE device_id = ?"
+        if open_only:
+            q += " AND state = 'open'"
+        rows = self._db.execute(q + " ORDER BY proto, port", (device_id,)).fetchall()
+        return [_service(r) for r in rows]
+
+    def open_services(self) -> dict[int, list[ServiceRow]]:
+        """All open services grouped by device id."""
+        rows = self._db.execute(
+            "SELECT * FROM services WHERE state = 'open' ORDER BY device_id, proto, port"
+        ).fetchall()
+        out: dict[int, list[ServiceRow]] = {}
+        for r in rows:
+            out.setdefault(int(r["device_id"]), []).append(_service(r))
+        return out
+
+    def last_inventory_at(self, device_id: int) -> str | None:
+        row = self._db.execute(
+            "SELECT last_inventory_at FROM device_scans WHERE device_id = ?", (device_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def devices_needing_deep_scan(self, older_than_iso: str) -> list[int]:
+        rows = self._db.execute(
+            """SELECT d.id FROM devices d LEFT JOIN device_scans s ON s.device_id = d.id
+               WHERE s.last_deep_at IS NULL OR s.last_deep_at < ?""",
+            (older_than_iso,),
+        ).fetchall()
+        return [int(r[0]) for r in rows]
+
+    # -- meta ---------------------------------------------------------------
+
+    def meta_get(self, key: str) -> str | None:
+        row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return str(row[0]) if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        self._db.execute(
+            "INSERT INTO meta(key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
     # -- findings -----------------------------------------------------------
 
     def upsert_findings(
@@ -404,6 +565,24 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         first_seen=str(row["first_seen"]),
         last_seen=str(row["last_seen"]),
         online=online,
+    )
+
+
+def _service(row: sqlite3.Row) -> ServiceRow:
+    return ServiceRow(
+        id=int(row["id"]),
+        device_id=int(row["device_id"]),
+        port=int(row["port"]),
+        proto=str(row["proto"]),
+        state=str(row["state"]),
+        name=row["name"],
+        product=row["product"],
+        version=row["version"],
+        extrainfo=row["extrainfo"],
+        tunnel=row["tunnel"],
+        details=json.loads(row["details"] or "{}"),
+        first_seen=str(row["first_seen"]),
+        last_seen=str(row["last_seen"]),
     )
 
 

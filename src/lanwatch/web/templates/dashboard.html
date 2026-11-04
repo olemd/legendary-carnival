@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% set active = 'dashboard' %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="cards">
+  <div class="card"><div class="n">{{ devices_online }}<span class="muted" style="font-size:.6em"> / {{ devices_total }}</span></div><div class="l">devices online / known</div></div>
+  <div class="card"><div class="n">{{ findings_total }}</div><div class="l">open findings</div></div>
+  {% for sev, n in counts.items() if n %}
+  <div class="card"><div class="n">{{ n }}</div><div class="l"><span class="sev sev-{{ sev }}">{{ sev }}</span></div></div>
+  {% endfor %}
+</div>
+<p class="muted">
+  {% for kind, snap in snapshots.items() %}
+    {{ kind }}: {% if snap %}{{ snap.finished_at | local }} ({{ snap.host_count }} hosts){% else %}never{% endif %}{% if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
+
+<h2>Open findings{% if findings_total > findings|length %} <span class="muted">(top {{ findings|length }} of {{ findings_total }})</span>{% endif %}</h2>
+{% if findings %}
+<table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>
+<tbody>{% set back = '/' %}{% include "_finding_rows.html" %}</tbody></table>
+{% else %}<p class="muted">None.</p>{% endif %}
+
+<h2>New devices, last 7 days</h2>
+{% if recent %}
+<table><thead><tr><th>First seen</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th></tr></thead><tbody>
+{% for d in recent %}<tr><td class="muted">{{ d.first_seen | local }}</td><td><a href="/devices/{{ d.id }}">{{ d.label }}</a></td>
+<td class="mono">{{ d.ip or '-' }}</td><td class="mono">{{ d.mac or '-' }}</td><td>{{ d.vendor or '-' }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">None.</p>{% endif %}
+{% endblock %}

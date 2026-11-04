@@ -16,6 +16,12 @@ max_parallel_hosts = 4
 rate_limit_pps = 100
 discovery_backend = "auto"              # auto | arp-scan | nmap | ping
 resolve_hostnames = true
+light_top_ports = 200                   # hourly and new-device scans
+deep_udp_top_ports = 50                 # weekly deep scan, needs root/CAP_NET_RAW; 0 disables
+exclude_ports = [9100]                  # never probed
+version_detection = true
+scripts = ["ssl-cert", "ssh2-enum-algos", "smb-protocols", "vnc-info", "http-title"]
+scan_new_devices_immediately = true
 
 [schedule]
 discovery_interval_s = 300
@@ -44,6 +50,13 @@ git = false                             # commit each overview change in its dir
 log = true
 # report_dir = "/var/lib/lanwatch/reports"
 
+[web]
+enabled = true
+host = "127.0.0.1"                      # anything else requires password
+port = 8321
+# password = "change-me"                # HTTP basic auth, user "lanwatch"
+
 [rules]
 # "inventory.ip-changed" = { enabled = false }
 # "inventory.new-device" = { severity = "high" }
+# "service.database-exposed" = { severity = "info" }

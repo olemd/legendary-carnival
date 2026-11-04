@@ -29,3 +29,24 @@ def test_bad_config_exits_2(tmp_path: Path) -> None:
     f.write_text("[scan]\nprofile = 'nope'\n")
     r = runner.invoke(app, ["--config", str(f), "version"])
     assert r.exit_code == 2
+
+
+def test_devices_and_findings_json(tmp_path: Path) -> None:
+    from lanwatch.config import Config
+    from lanwatch.models import HostObservation
+    from lanwatch.store import Store
+
+    cfg = Config(data_dir=tmp_path)
+    with Store(cfg.store_path) as store:
+        sid = store.begin_snapshot("discovery", "t")
+        store.record_hosts(
+            sid, [HostObservation(ip="10.0.0.1", mac="aa:bb:cc:00:00:01", source="t")]
+        )
+        store.finish_snapshot(sid, 1)
+    r = runner.invoke(app, ["--data-dir", str(tmp_path), "devices", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"mac": "aa:bb:cc:00:00:01"' in r.output
+    r = runner.invoke(app, ["--data-dir", str(tmp_path), "findings", "--json", "--status", "all"])
+    assert r.exit_code == 0 and r.output.strip() == "[]"
+    r = runner.invoke(app, ["--data-dir", str(tmp_path), "services", "1"])
+    assert r.exit_code == 0 and "no open services" in r.output

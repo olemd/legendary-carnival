@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -145,6 +145,43 @@ class FindingRow:
     last_seen: str
     status: FindingStatus
     explanation: str | None
+
+
+@dataclass(slots=True)
+class ServiceRow:
+    id: int
+    device_id: int
+    port: int
+    proto: str
+    state: str
+    name: str | None
+    product: str | None
+    version: str | None
+    extrainfo: str | None
+    tunnel: str | None
+    details: dict[str, Any]
+    first_seen: str
+    last_seen: str
+
+    @property
+    def label(self) -> str:
+        bits = [p for p in (self.product, self.version) if p]
+        base = f"{self.port}/{self.proto}"
+        if self.name:
+            base += f" {self.name}"
+        return base + (f" ({' '.join(bits)})" if bits else "")
+
+    def script(self, script_id: str) -> Any:
+        s = self.details.get(script_id)
+        return s.get("data") if isinstance(s, dict) else None
+
+
+@dataclass(slots=True)
+class ServiceDiff:
+    device_id: int
+    first_scan: bool
+    opened: list[tuple[int, str]] = field(default_factory=list)
+    closed: list[tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
