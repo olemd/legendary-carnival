@@ -184,12 +184,17 @@ def device_facts(d: Device, services: list[ServiceRow]) -> dict[str, Any]:
         if isinstance(title, dict) and title.get("title"):
             entry["http_title"] = str(title["title"])[:80]
         ports.append(entry)
-    return {
+    facts: dict[str, Any] = {
         "vendor_from_mac": d.vendor,
         "hostname": d.hostname,
         "mac_prefix": d.mac[:8] if d.mac else None,
         "open_ports": ports,
     }
+    if d.attrs.get("upnp"):
+        facts["upnp"] = d.attrs["upnp"]
+    if d.attrs.get("mdns"):
+        facts["mdns_services"] = list(d.attrs["mdns"])[:10]
+    return facts
 
 
 async def classify_devices(svc: LlmService, device_ids: list[int], budget: int) -> int:
@@ -203,7 +208,9 @@ async def classify_devices(svc: LlmService, device_ids: list[int], budget: int) 
         if d is None:
             continue
         facts = device_facts(d, svc.store.services(did))
-        if not facts["vendor_from_mac"] and not facts["hostname"] and not facts["open_ports"]:
+        if len(facts) == 4 and not any(
+            (facts["vendor_from_mac"], facts["hostname"], facts["open_ports"])
+        ):
             continue  # nothing to go on
         before = svc.calls
         result = await svc.ask(

@@ -20,7 +20,7 @@ from lanwatch.logging_setup import setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
-from lanwatch.pipeline import run_discovery, run_inventory
+from lanwatch.pipeline import run_discovery, run_infra, run_inventory
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
@@ -99,6 +99,8 @@ def scan(
                 f"{i.closed} closed, {len(i.new_findings)} new findings, "
                 f"{len(i.resolved_findings)} resolved"
             )
+            f = await run_infra(cfg, store)
+            typer.echo(_infra_line(f))
 
     try:
         asyncio.run(_scan())
@@ -129,6 +131,38 @@ def inventory(
         f"{i.devices} devices answered, {i.opened} ports opened, {i.closed} closed, "
         f"{len(i.new_findings)} new findings, {len(i.resolved_findings)} resolved"
     )
+
+
+def _infra_line(f: Any) -> str:
+    return (
+        f"infra: dhcp servers {', '.join(f.dhcp_servers) or '-'}; {f.upnp_devices} upnp devices, "
+        f"{f.igd_mappings} port mappings; {f.ipv6_devices} devices with global IPv6; "
+        f"{len(f.new_findings)} new findings, {len(f.resolved_findings)} resolved"
+    )
+
+
+@app.command()
+def infra(ctx: typer.Context) -> None:
+    """Infra probes now: DHCP servers, mDNS, UPnP (+ router port mappings), IPv6 exposure."""
+    cfg = _state(ctx).loaded.config
+    try:
+        with _open_store(ctx) as store:
+            f = asyncio.run(run_infra(cfg, store))
+            typer.echo(_infra_line(f))
+            for r in store.infra("upnp"):
+                flag = " [IGD]" if r.data.get("is_igd") else ""
+                typer.echo(
+                    f"  upnp {r.key:<15} {r.data.get('friendly_name') or '-'} "
+                    f"{r.data.get('model') or ''}{flag}"
+                )
+                for m in r.data.get("mappings", []):
+                    typer.echo(
+                        f"       {m['external_port']}/{m['protocol']} -> {m['internal_client']}:"
+                        f"{m['internal_port']}  {m.get('description', '')}"
+                    )
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -200,6 +234,7 @@ def run(ctx: typer.Context) -> None:
                     cfg.schedule.deep_interval_s,
                     lambda: run_inventory(cfg, store, deep=True),
                 ),
+                job("infra", cfg.schedule.infra_interval_s, lambda: run_infra(cfg, store)),
             ]
             if cfg.llm.enabled:
                 from lanwatch.llm import hooks as llm_hooks

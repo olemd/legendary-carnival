@@ -32,6 +32,7 @@ log = logging.getLogger("lanwatch.helper")
 MAX_TIMEOUT = 3600
 MAX_ARGS = 1100  # deep scan target lists can be long
 
+_IFACE = r"[A-Za-z][A-Za-z0-9_.:-]{0,31}"
 _FLAGS: dict[str, list[str]] = {
     "nmap": [
         r"-oX",
@@ -41,12 +42,11 @@ _FLAGS: dict[str, list[str]] = {
         r"-sn",
         r"-sV",
         r"-sU",
+        r"-6",
         r"-T[0-5]",
         r"-p-",
         r"--max-rate=\d{1,6}",
         r"--max-hostgroup=\d{1,4}",
-        r"--host-timeout",
-        r"\d{1,4}[smh]",
         r"--top-ports=\d{1,5}",
         r"--exclude-ports=\d{1,5}(,\d{1,5}){0,50}",
         r"--version-intensity=\d",
@@ -56,16 +56,29 @@ _FLAGS: dict[str, list[str]] = {
         r"--plain",
         r"--retry=\d{1,2}",
         r"--interval=\d{1,5}",
-        r"--interface=[A-Za-z0-9_.:-]{1,32}",
+        rf"--interface={_IFACE}",
     ],
-    "ip": [r"-j", r"addr", r"neigh", r"show"],
-    "ping": [r"-c", r"-W", r"\d{1,3}"],
+    "ip": [r"-j", r"-6", r"addr", r"neigh", r"route", r"show"],
+    "ping": [r"-c", r"-W", r"-6", r"\d{1,3}"],
+}
+# Flags that consume the next argument, with the pattern that argument must match.
+_PAIRED: dict[str, dict[str, str]] = {
+    "nmap": {"--host-timeout": r"\d{1,4}[smh]", "-e": _IFACE},
 }
 _TARGET_BINARIES = {"nmap", "arp-scan", "ping"}
+# ping may address the all-nodes multicast group on an interface to prime the IPv6 neighbour table.
+_EXTRA_TARGETS: dict[str, str] = {"ping": rf"ff02::1%{_IFACE}"}
 _COMPILED = {b: [re.compile(f"^(?:{f})$") for f in flags] for b, flags in _FLAGS.items()}
+_COMPILED_PAIRED = {
+    b: {flag: re.compile(f"^(?:{pat})$") for flag, pat in pairs.items()}
+    for b, pairs in _PAIRED.items()
+}
+_COMPILED_EXTRA = {b: re.compile(f"^(?:{p})$") for b, p in _EXTRA_TARGETS.items()}
 
 
 def _is_target(arg: str) -> bool:
+    if "%" in arg:  # scope ids are free-form in ipaddress; only _EXTRA_TARGETS may carry one
+        return False
     try:
         ipaddress.ip_network(arg, strict=False)
         return True
@@ -83,10 +96,24 @@ def validate_argv(argv: list[str]) -> str | None:
     patterns = _COMPILED.get(binary)
     if patterns is None:
         return f"binary not allowed: {binary!r}"
-    for arg in argv[1:]:
+    paired = _COMPILED_PAIRED.get(binary, {})
+    extra = _COMPILED_EXTRA.get(binary)
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg in paired:
+            if i + 1 >= len(argv) or not paired[arg].match(argv[i + 1]):
+                return f"bad value for {arg} in {binary}: {argv[i + 1 : i + 2]!r}"
+            i += 2
+            continue
         if any(p.match(arg) for p in patterns):
+            i += 1
             continue
         if binary in _TARGET_BINARIES and _is_target(arg):
+            i += 1
+            continue
+        if extra is not None and extra.match(arg):
+            i += 1
             continue
         return f"argument not allowed for {binary}: {arg!r}"
     return None

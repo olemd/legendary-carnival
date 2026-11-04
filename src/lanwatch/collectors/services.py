@@ -98,7 +98,7 @@ def _scripts(parent: ET.Element) -> dict[str, Any]:
     return out
 
 
-def parse_nmap_xml_services(xml_text: str) -> ServiceScanResult:
+def parse_nmap_xml_services(xml_text: str, address_type: str = "ipv4") -> ServiceScanResult:
     root = ET.fromstring(xml_text)
     result = ServiceScanResult()
     for si in root.findall("scaninfo"):
@@ -111,7 +111,7 @@ def parse_nmap_xml_services(xml_text: str) -> ServiceScanResult:
             continue
         ip = mac = None
         for addr in host.findall("address"):
-            if addr.get("addrtype") == "ipv4":
+            if addr.get("addrtype") == address_type:
                 ip = addr.get("addr")
             elif addr.get("addrtype") == "mac":
                 mac = normalize_mac(addr.get("addr"))
@@ -165,8 +165,9 @@ def build_nmap_args(targets: list[str], cfg: ScanConfig, deep: bool) -> list[str
         args.append("--exclude-ports=" + ",".join(str(p) for p in cfg.exclude_ports))
     if cfg.version_detection:
         args += ["-sV", f"--version-intensity={VERSION_INTENSITY[cfg.profile]}"]
-    if cfg.scripts:
-        args.append("--script=" + ",".join(cfg.scripts))
+    scripts = [*cfg.scripts, *(["vulners"] if cfg.vulners else [])]
+    if scripts:
+        args.append("--script=" + ",".join(scripts))
     return [*args, *targets]
 
 

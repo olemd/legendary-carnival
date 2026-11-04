@@ -116,11 +116,21 @@ Tjenesteregler leser gjeldende tilstand i store, ikke bare runden som nettopp
 kjørte. Et funn lever nøyaktig så lenge tilstanden gjør, uansett hvilke
 enheter en runde skannet. "Hendelsesfunn" (ny enhet, nye porter) lukkes med ack.
 
-Planlagt i M5:
-- infrastruktur: uventede DHCP-servere, åpne portmappinger i routeren,
-  IPv6-eksponering som omgår NAT-antakelser
-- forbedring: manglende segmentering av IoT, manglende DNS-filtrering,
-  utdaterte versjoner (kun mot lokal, nedlastet database, aldri LLM-gjetting)
+Regler i M5:
+- infrastruktur: flere DHCP-servere (critical), UPnP IGD aktivt (medium), hver
+  aktiv portmapping i routeren (high), IPv6-nåbare tjenester (medium)
+- versjoner: `service.legacy-version` mot kuratert tabell i koden (ingen nett,
+  ingen gjetting, backports gir falske positiver og sies rett ut),
+  `service.known-cves` fra nmap `vulners` (opt-in, eneste feature som snakker
+  med internett)
+- forbedring: IoT-klasse og betrodde enheter på samme /24 (info), bygger på
+  LLM-klassifiseringen men er selv deterministisk
+
+Infra-probes beriker også inventaret: UPnP friendlyName/modell og mDNS-navn
+lagres som enhetsattributter og går inn i LLM-ens klassifiseringsfakta, som
+dermed får ny cache-nøkkel og reklassifiseres.
+
+Ikke dekket ennå: DNS-filtrering, NTP, firmware-sjekk mot produsent.
 
 ## 5. LLM-laget
 
@@ -229,7 +239,7 @@ parsing og LLM-klienter er tynnere, og iterasjonshastighet veier tyngst nå.
 | M2 | service-inventar, regelmotor, 10 regler, web-UI | kjernen |
 | M3 | LLM: klassifisering, forklaring, digest, forslag, eval-harness; podman + root-helper | det som gjør den lesbar |
 | M4 | notify-adaptere (ntfy, webhook, e-post, Home Assistant med sensorer), varslingslogg | drift |
-| M5 | infra-probes, herdingssjekker, versjonsdatabase, forbedringsforslag | dybde |
+| M5 | infra-probes (DHCP, UPnP-mappinger, IPv6, mDNS), versjonstabell + opt-in vulners, flat-nett-regel | dybde |
 | M6 | web-UI utvidelser: historikk/tidslinje, søk, LLM-chat mot inventaret | bekvemmelighet |
 
 Hver milepæl skal være kjørbar og nyttig alene.

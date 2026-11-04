@@ -1,0 +1,194 @@
+"""Infrastructure rules: DHCP, UPnP, IPv6, and segmentation. They read the current infra
+observations and device attributes from the store."""
+
+from __future__ import annotations
+
+import ipaddress
+from typing import Any
+
+from lanwatch.models import Device, Finding, Kind, Severity
+from lanwatch.rules.base import Rule, RuleContext
+
+IOT_KINDS = {"iot", "camera", "media", "smart_home_hub", "printer", "game_console"}
+TRUSTED_KINDS = {"workstation", "laptop", "server", "nas", "virtual_machine"}
+
+
+class RogueDhcpRule(Rule):
+    id = "net.rogue-dhcp"
+    kind = Kind.SECURITY
+    default_severity = Severity.CRITICAL
+    description = (
+        "More than one DHCP server answers on the segment. Clients may get a wrong gateway or DNS."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        rows = ctx.store.infra("dhcp")
+        by_iface: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            by_iface.setdefault(str(r.data.get("interface", "?")), []).append(r.data)
+        out: list[Finding] = []
+        for iface, offers in by_iface.items():
+            servers = sorted({str(o["server"]) for o in offers})
+            if len(servers) < 2:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"Multiple DHCP servers on {iface}: {', '.join(servers)}",
+                    key_parts=[iface, *servers],
+                    evidence={"interface": iface, "servers": servers, "offers": offers},
+                )
+            )
+        return out
+
+
+class UpnpIgdRule(Rule):
+    id = "router.upnp-igd"
+    kind = Kind.SECURITY
+    default_severity = Severity.MEDIUM
+    description = (
+        "The router accepts UPnP IGD requests: any LAN device can open ports from the internet "
+        "to itself without asking."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("upnp"):
+            if not r.data.get("is_igd"):
+                continue
+            dev = ctx.store.device_by_ip(r.key)
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"UPnP IGD enabled on {dev.label if dev else r.key} ({r.key})",
+                    key_parts=[r.key],
+                    device_id=dev.id if dev else None,
+                    evidence={
+                        "address": r.key,
+                        "friendly_name": r.data.get("friendly_name"),
+                        "model": r.data.get("model"),
+                        "external_ip": r.data.get("external_ip"),
+                        "mapping_count": len(r.data.get("mappings", [])),
+                    },
+                )
+            )
+        return out
+
+
+class UpnpMappingsRule(Rule):
+    id = "router.upnp-mappings"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "Active port forwards exist on the router (via UPnP). Each one is internet exposure."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("upnp"):
+            mappings = [m for m in r.data.get("mappings", []) if m.get("enabled", True)]
+            if not mappings:
+                continue
+            for m in mappings:
+                client = str(m.get("internal_client", ""))
+                dev = ctx.store.device_by_ip(client)
+                target = f"{dev.label} ({client})" if dev else client
+                out.append(
+                    self.finding(
+                        ctx,
+                        title=(
+                            f"Port forward {m.get('external_port')}/{m.get('protocol')} -> "
+                            f"{target}:{m.get('internal_port')}"
+                            + (f" [{m['description']}]" if m.get("description") else "")
+                        ),
+                        key_parts=[
+                            r.key,
+                            str(m.get("external_port")),
+                            str(m.get("protocol")),
+                            client,
+                        ],
+                        device_id=dev.id if dev else None,
+                        evidence={"router": r.key, **m},
+                    )
+                )
+        return out
+
+
+class Ipv6ExposedRule(Rule):
+    id = "net.ipv6-global-exposed"
+    kind = Kind.SECURITY
+    default_severity = Severity.MEDIUM
+    description = (
+        "Device has a globally routable IPv6 address with open services. Unless the router "
+        "firewalls inbound IPv6, these are reachable from the internet."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for d in ctx.store.devices():
+            open_by_addr = d.attrs.get("ipv6_open") or {}
+            if not isinstance(open_by_addr, dict) or not open_by_addr:
+                continue
+            ports = sorted({p for ps in open_by_addr.values() for p in ps})
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"IPv6-reachable services on {d.label}: {', '.join(ports[:6])}",
+                    key_parts=[d.key],
+                    device_id=d.id,
+                    evidence={"addresses": sorted(open_by_addr), "open_ports": ports},
+                )
+            )
+        return out
+
+
+class FlatNetworkRule(Rule):
+    id = "improvement.flat-network"
+    kind = Kind.IMPROVEMENT
+    default_severity = Severity.INFO
+    description = (
+        "IoT-class devices share a subnet with workstations or servers. A separate VLAN "
+        "limits what a compromised gadget can reach."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        groups: dict[str, dict[str, list[Device]]] = {}
+        for d in ctx.store.devices():
+            if not d.ip or not d.kind:
+                continue
+            try:
+                net = str(ipaddress.ip_network(f"{d.ip}/24", strict=False))
+            except ValueError:
+                continue
+            bucket = (
+                "iot" if d.kind in IOT_KINDS else "trusted" if d.kind in TRUSTED_KINDS else None
+            )
+            if bucket:
+                groups.setdefault(net, {}).setdefault(bucket, []).append(d)
+        out: list[Finding] = []
+        for net, buckets in groups.items():
+            iot, trusted = buckets.get("iot", []), buckets.get("trusted", [])
+            if not iot or not trusted:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"{len(iot)} IoT-class and {len(trusted)} trusted devices share {net}",
+                    key_parts=[net],
+                    evidence={
+                        "subnet": net,
+                        "iot": [f"{d.label} ({d.ip})" for d in iot][:20],
+                        "trusted": [f"{d.label} ({d.ip})" for d in trusted][:20],
+                    },
+                )
+            )
+        return out
+
+
+RULES: list[Rule] = [
+    RogueDhcpRule(),
+    UpnpIgdRule(),
+    UpnpMappingsRule(),
+    Ipv6ExposedRule(),
+    FlatNetworkRule(),
+]

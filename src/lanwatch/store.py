@@ -20,6 +20,7 @@ from lanwatch.models import (
     FindingRow,
     FindingStatus,
     HostObservation,
+    InfraRow,
     Kind,
     NotificationRow,
     ServiceDiff,
@@ -128,6 +129,19 @@ MIGRATIONS: list[str] = [
         title   TEXT NOT NULL,
         ok      INTEGER NOT NULL,
         error   TEXT
+    );
+    """,
+    # v5: free-form device attributes (upnp, mdns, ipv6) and infra observations
+    """
+    ALTER TABLE devices ADD COLUMN attrs TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE infra (
+        kind        TEXT NOT NULL,
+        key         TEXT NOT NULL,
+        data        TEXT NOT NULL,
+        first_seen  TEXT NOT NULL,
+        last_seen   TEXT NOT NULL,
+        snapshot_id INTEGER,
+        PRIMARY KEY (kind, key)
     );
     """,
 ]
@@ -273,6 +287,15 @@ class Store:
 
     def device(self, device_id: int) -> Device | None:
         row = self._db.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        return _device(row, int(row["id"]) in self._online_ids()) if row else None
+
+    def device_by_ip(self, ip: str) -> Device | None:
+        """Most recently seen device with this IP (IPs move; identity is the MAC)."""
+        if not ip:
+            return None
+        row = self._db.execute(
+            "SELECT * FROM devices WHERE ip = ? ORDER BY last_seen DESC LIMIT 1", (ip,)
+        ).fetchone()
         return _device(row, int(row["id"]) in self._online_ids()) if row else None
 
     def device_by_key(self, key: str) -> Device | None:
@@ -436,6 +459,60 @@ class Store:
             (older_than_iso,),
         ).fetchall()
         return [int(r[0]) for r in rows]
+
+    # -- device attributes & infra ------------------------------------------
+
+    def merge_device_attrs(self, device_id: int, attrs: dict[str, Any]) -> bool:
+        row = self._db.execute("SELECT attrs FROM devices WHERE id = ?", (device_id,)).fetchone()
+        if row is None:
+            return False
+        current = json.loads(row["attrs"] or "{}")
+        merged = {**current, **attrs}
+        if merged == current:
+            return False
+        self._db.execute(
+            "UPDATE devices SET attrs = ? WHERE id = ?",
+            (json.dumps(merged, sort_keys=True), device_id),
+        )
+        return True
+
+    def replace_infra(
+        self, kind: str, entries: dict[str, dict[str, Any]], snapshot_id: int
+    ) -> None:
+        """Current-state semantics: entries of this kind not in `entries` are removed."""
+        ts = iso(now_utc())
+        with self._tx():
+            for key, data in entries.items():
+                self._db.execute(
+                    """INSERT INTO infra(kind, key, data, first_seen, last_seen, snapshot_id)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(kind, key) DO UPDATE SET data = excluded.data,
+                         last_seen = excluded.last_seen, snapshot_id = excluded.snapshot_id""",
+                    (kind, key, json.dumps(data, sort_keys=True), ts, ts, snapshot_id),
+                )
+            if entries:
+                placeholders = ",".join("?" * len(entries))
+                self._db.execute(
+                    f"DELETE FROM infra WHERE kind = ? AND key NOT IN ({placeholders})",
+                    (kind, *entries.keys()),
+                )
+            else:
+                self._db.execute("DELETE FROM infra WHERE kind = ?", (kind,))
+
+    def infra(self, kind: str) -> list[InfraRow]:
+        rows = self._db.execute(
+            "SELECT * FROM infra WHERE kind = ? ORDER BY key", (kind,)
+        ).fetchall()
+        return [
+            InfraRow(
+                kind=str(r["kind"]),
+                key=str(r["key"]),
+                data=json.loads(r["data"]),
+                first_seen=str(r["first_seen"]),
+                last_seen=str(r["last_seen"]),
+            )
+            for r in rows
+        ]
 
     # -- notifications ------------------------------------------------------
 
@@ -625,6 +702,7 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         first_seen=str(row["first_seen"]),
         last_seen=str(row["last_seen"]),
         online=online,
+        attrs=json.loads(row["attrs"] or "{}"),
     )
 
 

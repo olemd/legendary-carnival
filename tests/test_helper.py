@@ -39,6 +39,17 @@ def test_validate_allows_what_lanwatch_generates() -> None:
     )
     assert validate_argv(["ip", "-j", "neigh", "show"]) is None
     assert validate_argv(["ping", "-c", "1", "-W", "1", "10.0.0.1"]) is None
+    assert validate_argv(["ping", "-6", "-c", "1", "-W", "1", "ff02::1%eth0"]) is None
+    assert validate_argv(["ip", "-j", "-6", "neigh", "show"]) is None
+    assert validate_argv(["ip", "-j", "route", "show"]) is None
+    assert (
+        validate_argv(["nmap", "-oX", "-", "-e", "eth0", "--script=broadcast-dhcp-discover"])
+        is None
+    )
+    assert (
+        validate_argv(["nmap", "-6", "-oX", "-", "-n", "-Pn", "--top-ports=100", "2001:db8::1"])
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -54,6 +65,11 @@ def test_validate_allows_what_lanwatch_generates() -> None:
         ["arp-scan", "--file=/etc/hosts"],
         ["ip", "link", "set", "eth0", "down"],
         ["ping", "-f", "10.0.0.1"],
+        ["ping", "-c", "1", "ff02::1%eth0; id"],
+        ["nmap", "-e"],
+        ["nmap", "-e", "../etc"],
+        ["nmap", "--host-timeout", "forever", "10.0.0.1"],
+        ["nmap", "eth0"],
         [],
     ],
 )

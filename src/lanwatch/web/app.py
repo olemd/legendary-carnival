@@ -68,7 +68,14 @@ def create_app(config: Config) -> FastAPI:
             findings_total=len(open_f),
             counts=counts,
             devices_by_id={d.id: d for d in devices},
-            snapshots={k: s.latest_snapshot(k) for k in ("discovery", "inventory", "deep")},
+            snapshots={
+                k: s.latest_snapshot(k) for k in ("discovery", "inventory", "deep", "infra")
+            },
+            infra_summary={
+                "dhcp": sorted({str(r.data.get("server")) for r in s.infra("dhcp")}),
+                "igd": [r for r in s.infra("upnp") if r.data.get("is_igd")],
+                "mappings": sum(len(r.data.get("mappings", [])) for r in s.infra("upnp")),
+            },
             recent=s.devices_first_seen_since(_days_ago(7)),
             digest=_latest_digest(config, s),
         )
@@ -129,6 +136,20 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/overview", response_class=HTMLResponse, dependencies=deps)
     def overview_page(request: Request, s: StoreDep) -> HTMLResponse:
         return page(request, "overview.html", markdown=render(s, config))
+
+    @app.get("/infra", response_class=HTMLResponse, dependencies=deps)
+    def infra_page(request: Request, s: StoreDep) -> HTMLResponse:
+        upnp = s.infra("upnp")
+        return page(
+            request,
+            "infra.html",
+            dhcp=s.infra("dhcp"),
+            upnp=upnp,
+            igds=[r for r in upnp if r.data.get("is_igd")],
+            ipv6=[d for d in s.devices() if d.attrs.get("ipv6")],
+            devices_by_ip={d.ip: d for d in s.devices() if d.ip},
+            snapshot=s.latest_snapshot("infra"),
+        )
 
     @app.get("/notifications", response_class=HTMLResponse, dependencies=deps)
     def notifications_page(request: Request, s: StoreDep) -> HTMLResponse:

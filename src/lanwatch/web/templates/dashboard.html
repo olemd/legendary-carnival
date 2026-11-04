@@ -14,6 +14,9 @@
   {% endfor %}
 </p>
 
+<p class="muted">Infra: DHCP {{ infra_summary.dhcp | join(', ') if infra_summary.dhcp else 'not probed' }} ·
+  UPnP IGD {{ 'yes' if infra_summary.igd else 'no' }}{% if infra_summary.mappings %}, <a href="/infra">{{ infra_summary.mappings }} port mapping{{ 's' if infra_summary.mappings != 1 }}</a>{% endif %}</p>
+
 {% if digest %}
 <div class="digest"><div class="day">Digest {{ digest[0] }} · <a href="/digest">all digests</a></div>{{ digest[1] }}</div>
 {% endif %}

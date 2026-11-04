@@ -11,6 +11,9 @@
       {% if device.kind_confidence is not none %}<span class="muted">{{ (device.kind_confidence * 100) | round | int }}% confidence</span>{% endif %}
       {% else %}-{% endif %}</td></tr>
   <tr><th>Description</th><td>{{ device.description or '-' }}</td></tr>
+  {% if device.attrs.upnp %}<tr><th>UPnP</th><td>{{ device.attrs.upnp.friendly_name }} <span class="muted">{{ device.attrs.upnp.manufacturer }} {{ device.attrs.upnp.model }}</span></td></tr>{% endif %}
+  {% if device.attrs.mdns %}<tr><th>mDNS</th><td class="mono">{{ device.attrs.mdns | join(', ') }}</td></tr>{% endif %}
+  {% if device.attrs.ipv6 %}<tr><th>IPv6</th><td class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</td></tr>{% endif %}
   <tr><th>First seen</th><td>{{ device.first_seen | local }}</td></tr>
   <tr><th>Last seen</th><td>{{ device.last_seen | local }}</td></tr>
   <tr><th>Last service scan</th><td>{{ last_inventory | local }}</td></tr>

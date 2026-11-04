@@ -96,6 +96,30 @@ def render(store: Store, config: Config, now: datetime | None = None) -> str:
             lines.append(_finding_row(store, f))
         lines.append("")
 
+    dhcp = store.infra("dhcp")
+    upnp = store.infra("upnp")
+    if dhcp or upnp:
+        lines.append("## Infrastructure")
+        lines.append("")
+        if dhcp:
+            servers = ", ".join(sorted({str(r.data.get("server")) for r in dhcp}))
+            warn = "  **(more than one!)**" if len(dhcp) > 1 else ""
+            lines.append(f"- DHCP servers: {servers}{warn}")
+        for r in upnp:
+            if r.data.get("is_igd"):
+                n = len(r.data.get("mappings", []))
+                lines.append(
+                    f"- UPnP IGD: {r.data.get('friendly_name') or r.key} ({r.key}), "
+                    f"external IP {r.data.get('external_ip') or '-'}, {n} port mapping(s)"
+                )
+                for m in r.data.get("mappings", []):
+                    desc = f" {m['description']}" if m.get("description") else ""
+                    lines.append(
+                        f"  - {m.get('external_port')}/{m.get('protocol')} -> "
+                        f"{m.get('internal_client')}:{m.get('internal_port')}{desc}"
+                    )
+        lines.append("")
+
     lines.append("## New devices, last 7 days")
     lines.append("")
     if not recent:

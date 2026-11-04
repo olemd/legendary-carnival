@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any
 
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.discovery import select_backend
+from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.services import nmap_available, scan_services
+from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
@@ -130,6 +133,101 @@ async def run_inventory(
         new_findings=rules.new_ids,
         resolved_findings=rules.resolved_ids,
     )
+
+
+@dataclass(slots=True)
+class InfraOutcome:
+    snapshot_id: int
+    dhcp_servers: list[str] = field(default_factory=list)
+    upnp_devices: int = 0
+    igd_mappings: int = 0
+    ipv6_devices: int = 0
+    devices_enriched: int = 0
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def run_infra(config: Config, store: Store, executor: Executor | None = None) -> InfraOutcome:
+    """DHCP/mDNS broadcast probes, UPnP discovery and IGD mappings, IPv6 exposure."""
+    ex = executor or make_executor(config.scan.helper_socket)
+    ifaces = await list_interfaces(ex)
+    subnets = select_subnets(ifaces, config.network)
+    iface_names = sorted({s.interface for s in subnets if s.interface})
+    bind_ips = [ip for ip, _ in self_observations(ifaces, subnets)]
+    _, root = await ex.which("nmap")
+    snapshot_id = store.begin_snapshot("infra", ex.name)
+    out = InfraOutcome(snapshot_id=snapshot_id)
+
+    probes = await run_probes(ex, iface_names, config.scan, root)
+    if probes.probed_dhcp:
+        store.replace_infra(
+            "dhcp", {f"{o.interface}/{o.server}": o.as_dict() for o in probes.dhcp}, snapshot_id
+        )
+        out.dhcp_servers = sorted({o.server for o in probes.dhcp})
+    enriched: set[int] = set()
+    for ip, names in probes.mdns.items():
+        d = store.device_by_ip(ip)
+        if d and store.merge_device_attrs(d.id, {"mdns": names}):
+            enriched.add(d.id)
+    if config.scan.ipv6:
+        for mac, addrs in probes.ipv6.items():
+            d = store.device_by_key(mac)
+            if d is None:
+                continue
+            open_ports = {a: probes.ipv6_open[a] for a in addrs if a in probes.ipv6_open}
+            if store.merge_device_attrs(d.id, {"ipv6": addrs, "ipv6_open": open_ports}):
+                enriched.add(d.id)
+        out.ipv6_devices = len(probes.ipv6)
+
+    if config.scan.upnp:
+        try:
+            upnp = await discover_upnp(bind_ips)
+        except Exception:
+            log.exception("upnp discovery failed")
+            upnp = []
+        entries: dict[str, dict[str, Any]] = {}
+        for u in upnp:
+            entries[u.addr] = {
+                **u.info(),
+                "location": u.location,
+                "is_igd": u.is_igd,
+                "external_ip": u.external_ip,
+                "mappings": [m.as_dict() for m in u.mappings],
+            }
+            d = store.device_by_ip(u.addr)
+            if d and store.merge_device_attrs(d.id, {"upnp": u.info()}):
+                enriched.add(d.id)
+        store.replace_infra("upnp", entries, snapshot_id)
+        out.upnp_devices = len(upnp)
+        out.igd_mappings = sum(len(u.mappings) for u in upnp)
+    store.finish_snapshot(snapshot_id, len(enriched))
+    out.devices_enriched = len(enriched)
+
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    log.info(
+        "infra done: %d dhcp servers, %d upnp devices, %d port mappings, %d ipv6 devices, "
+        "%d new findings, %d resolved",
+        len(out.dhcp_servers),
+        out.upnp_devices,
+        out.igd_mappings,
+        out.ipv6_devices,
+        len(rules.new_ids),
+        len(rules.resolved_ids),
+    )
+    # Re-classify enriched devices: new facts (UPnP model, mDNS names) change the cache key.
+    await llm_hooks.after_round(config, store, sorted(enriched), rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
 
 
 def _excluded(h: HostObservation, excludes: list[str]) -> bool:

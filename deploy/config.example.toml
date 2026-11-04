@@ -23,6 +23,15 @@ version_detection = true
 scripts = ["ssl-cert", "ssh2-enum-algos", "smb-protocols", "vnc-info", "http-title"]
 scan_new_devices_immediately = true
 # helper_socket = "/run/lanwatch/helper.sock"   # rootless container: forward to lanwatch-helper
+# Infra probes, every schedule.infra_interval_s: DHCP servers + mDNS (nmap broadcast
+# scripts, need root/CAP_NET_RAW/helper), UPnP incl. router port mappings, IPv6 exposure.
+upnp = true
+ipv6 = true
+ipv6_top_ports = 100
+# The only feature that talks to the internet: nmap's vulners script matches reported
+# versions against vulners.com. Off by default. Version matching ignores distro backports.
+vulners = false
+vulners_min_cvss = 7.0
 
 [schedule]
 discovery_interval_s = 300

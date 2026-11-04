@@ -8,11 +8,12 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 
 ## Status
 
-M4. Discovery, service inventory (nmap), ten deterministic rules, change detection,
-`overview.md`, web UI, a local LLM (Ollama) that classifies devices, explains findings
-in your language, writes a daily digest and suggests improvements, and notifications via
-ntfy, webhook, e-mail and Home Assistant. Runs bare, in rootful podman, or rootless
-podman with a small root helper (see `deploy/README.md`).
+M5. Discovery, service inventory (nmap), infra probes (DHCP, UPnP port mappings, IPv6,
+mDNS), 17 deterministic rules, change detection, `overview.md`, web UI, a local LLM
+(Ollama) that classifies devices, explains findings in your language, writes a daily
+digest and suggests improvements, and notifications via ntfy, webhook, e-mail and Home
+Assistant. Runs bare, in rootful podman, or rootless podman with a small root helper
+(see `deploy/README.md`).
 
 ## Quick start
 
@@ -35,6 +36,14 @@ structural suggestions (`lanwatch suggest`). Output is JSON-schema constrained, 
 cached on input, and references to ids not in the input are dropped. If Ollama is down,
 scanning continues and the LLM catches up later. `lanwatch llm eval` scores a model on a
 device-classification golden set in `evals/`.
+
+Infra probes (every 15 min, `lanwatch infra`): which DHCP servers answer on each segment
+(two is a critical finding), UPnP devices and, for the router, every active port forward
+(each one is a finding), devices with globally routable IPv6 addresses that expose
+services, and mDNS service names. UPnP and mDNS facts also feed the LLM's device
+classification. Version checks: a curated table of support thresholds ships with the code
+(no network, no guessing); optionally nmap's `vulners` script (`scan.vulners = true`, the
+one feature that calls out to the internet).
 
 Notifications: all channels off by default. Enable one or more under `[notify]`: ntfy,
 generic webhook, e-mail (SMTP), Home Assistant (a notify service plus `sensor.lanwatch_*`

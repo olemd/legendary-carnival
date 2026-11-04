@@ -7,14 +7,14 @@ from dataclasses import dataclass, field
 
 from lanwatch.config import Config
 from lanwatch.models import Finding
-from lanwatch.rules import inventory, services
+from lanwatch.rules import infra, inventory, services, versions
 from lanwatch.rules.base import Rule, RuleContext
 
 log = logging.getLogger(__name__)
 
 
 def all_rules() -> list[Rule]:
-    return [*inventory.RULES, *services.RULES]
+    return [*inventory.RULES, *services.RULES, *versions.RULES, *infra.RULES]
 
 
 @dataclass(slots=True)

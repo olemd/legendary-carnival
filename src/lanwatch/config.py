@@ -99,6 +99,14 @@ class ScanConfig(StrictModel):
     # Forward privileged commands to lanwatch-helper (root) over this unix socket.
     # Needed for rootless containers. Unset = run commands locally.
     helper_socket: Path | None = None
+    # Infra probes (every schedule.infra_interval_s): DHCP servers, mDNS, UPnP, IPv6.
+    upnp: bool = True
+    ipv6: bool = True
+    ipv6_top_ports: int = Field(default=100, ge=10, le=65535)
+    # nmap "vulners" script: matches service versions against vulners.com. This is the
+    # one feature that talks to the internet, hence off by default.
+    vulners: bool = False
+    vulners_min_cvss: float = Field(default=7.0, ge=0.0, le=10.0)
 
 
 class ScheduleConfig(StrictModel):

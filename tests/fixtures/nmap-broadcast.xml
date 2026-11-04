@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -oX - -e eth0 --script=broadcast-dhcp-discover,broadcast-dns-service-discovery" start="1" version="7.95">
+<prescript>
+<script id="broadcast-dhcp-discover" output="...">
+<table key="Response 1 of 2">
+<elem key="Interface">eth0</elem>
+<elem key="IP Offered">192.168.1.200</elem>
+<elem key="DHCP Message Type">DHCPOFFER</elem>
+<elem key="Server Identifier">192.168.1.1</elem>
+<elem key="Subnet Mask">255.255.255.0</elem>
+<table key="Router"><elem>192.168.1.1</elem></table>
+<table key="Domain Name Server"><elem>192.168.1.1</elem><elem>1.1.1.1</elem></table>
+<elem key="Domain Name">lan</elem>
+</table>
+<table key="Response 2 of 2">
+<elem key="Interface">eth0</elem>
+<elem key="IP Offered">192.168.1.77</elem>
+<elem key="DHCP Message Type">DHCPOFFER</elem>
+<elem key="Server Identifier">192.168.1.66</elem>
+<table key="Router"><elem>192.168.1.66</elem></table>
+</table>
+</script>
+<script id="broadcast-dns-service-discovery" output="...">
+<table key="192.168.1.40">
+<table key="5000/tcp"><elem>_http._tcp.local</elem></table>
+<table key="445/tcp"><elem>_smb._tcp.local</elem></table>
+</table>
+<table key="192.168.1.33">
+<table key="22/tcp"><elem>_ssh._tcp.local</elem></table>
+</table>
+</script>
+</prescript>
+</nmaprun>

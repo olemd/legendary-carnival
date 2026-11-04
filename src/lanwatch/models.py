@@ -128,6 +128,7 @@ class Device:
     first_seen: str
     last_seen: str
     online: bool
+    attrs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -184,6 +185,15 @@ class ServiceDiff:
     first_scan: bool
     opened: list[tuple[int, str]] = field(default_factory=list)
     closed: list[tuple[int, str]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class InfraRow:
+    kind: str
+    key: str
+    data: dict[str, Any]
+    first_seen: str
+    last_seen: str
 
 
 @dataclass(slots=True)
