@@ -24,6 +24,44 @@ def have(binary: str) -> bool:
     return shutil.which(binary) is not None
 
 
+# Bit number of CAP_NET_RAW in the kernel's capability masks (linux/capability.h).
+_CAP_NET_RAW = 13
+
+
+def ambient_net_raw(status_text: str) -> bool:
+    """Whether CAP_NET_RAW is in the ambient set of a /proc/<pid>/status dump.
+
+    Ambient, not effective: the scans run in child processes (nmap, arp-scan), and only the
+    ambient set survives exec of a binary that has no file capabilities of its own."""
+    for line in status_text.splitlines():
+        if line.startswith("CapAmb:"):
+            try:
+                return bool((int(line.split(":", 1)[1], 16) >> _CAP_NET_RAW) & 1)
+            except ValueError:
+                return False
+    return False
+
+
+def privileged() -> bool:
+    """Can child processes open raw sockets? True for root, and for a non-root process
+    that was started with CAP_NET_RAW as an ambient capability (systemd
+    AmbientCapabilities=), which is how the packaged helper runs."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        return ambient_net_raw(Path("/proc/self/status").read_text())
+    except OSError:
+        return False
+
+
+def _child_env(binary: str) -> dict[str, str] | None:
+    """nmap decides on raw-socket mode by uid alone; NMAP_PRIVILEGED tells it to trust the
+    capabilities instead. Root needs no hint, and other binaries get the plain environment."""
+    if binary == "nmap" and os.geteuid() != 0 and privileged():
+        return {**os.environ, "NMAP_PRIVILEGED": "1"}
+    return None
+
+
 async def run_cmd(args: list[str], timeout: float, stdin: bytes | None = None) -> CmdResult:
     """Run a command; returns (rc, stdout, stderr). rc -1 on timeout, -2 if missing."""
     try:
@@ -32,6 +70,7 @@ async def run_cmd(args: list[str], timeout: float, stdin: bytes | None = None) -
             stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_child_env(args[0]),
         )
     except FileNotFoundError:
         return -2, "", f"{args[0]}: not found"
@@ -51,7 +90,7 @@ class Executor(Protocol):
     async def run(self, args: list[str], timeout: float) -> CmdResult: ...
 
     async def which(self, binary: str) -> tuple[bool, bool]:
-        """(binary available, runs with root privileges)."""
+        """(binary available, runs with raw-socket privileges)."""
         ...
 
 
@@ -62,7 +101,7 @@ class LocalExecutor:
         return await run_cmd(args, timeout)
 
     async def which(self, binary: str) -> tuple[bool, bool]:
-        return have(binary), os.geteuid() == 0
+        return have(binary), privileged()
 
 
 class HelperExecutor:

@@ -24,7 +24,7 @@ import re
 import signal
 from pathlib import Path
 
-from lanwatch.collectors.base import have, run_cmd
+from lanwatch.collectors.base import have, privileged, run_cmd
 from lanwatch.logging_setup import setup_logging
 
 log = logging.getLogger("lanwatch.helper")
@@ -127,7 +127,8 @@ async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, o
         binary = payload.get("binary")
         if not isinstance(binary, str) or binary not in _FLAGS:
             return {"error": "unknown binary"}
-        return {"available": have(binary), "root": os.geteuid() == 0}
+        # The key is called "root" for wire compatibility; it means raw-socket privilege.
+        return {"available": have(binary), "root": privileged()}
     if op == "run":
         argv = payload.get("argv")
         if not isinstance(argv, list):
@@ -194,8 +195,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--log-level", default="info")
     a = p.parse_args(argv)
     setup_logging(a.log_level)
-    if os.geteuid() != 0:
-        log.warning("not running as root: raw-socket scans will be unavailable")
+    if not privileged():
+        log.warning("neither root nor CAP_NET_RAW: raw-socket scans will be unavailable")
     asyncio.run(_serve(a.socket, a.group, a.concurrency))
 
 
