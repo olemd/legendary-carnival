@@ -66,3 +66,26 @@ def test_subnet_validation() -> None:
 def test_digest_time_must_be_24h() -> None:
     with pytest.raises(ConfigError):
         load_config(None, {"schedule": {"digest_time": "7am"}}, environ={})
+
+
+def test_examples_in_the_packaged_default_config_are_valid() -> None:
+    """/etc/lanwatch/config.toml ships as comments only. Every commented-out setting in it
+    is something a person will uncomment and expect to work, so check that they all do."""
+    import re
+    import tomllib
+    from pathlib import Path
+
+    from lanwatch.config import Config
+
+    path = Path(__file__).parent.parent / "debian" / "config.toml"
+    text = path.read_text()
+    assert tomllib.loads(text) == {}  # as shipped: nothing set, built-in defaults apply
+
+    setting = re.compile(r"^# (\[[a-z_.]+\]|[a-z_]+ = .+)$")
+    uncommented = "\n".join(line[2:] for line in text.splitlines() if setting.match(line))
+    data = tomllib.loads(uncommented)
+    # The sections people look for when they want to turn something on.
+    assert {"web", "llm", "scan", "firmware", "decoy"} <= set(data)
+    cfg = Config.model_validate(data)
+    assert cfg.firmware.online is True and cfg.scan.dns_filter_check is True
+    assert cfg.decoy.ports == [23, 1433, 3389, 5555]
