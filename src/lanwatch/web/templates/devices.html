@@ -7,7 +7,7 @@
 <tr>
   <td><span class="state {{ 'on' if d.online }}">{{ 'online' if d.online else 'offline' }}</span></td>
   <td><a href="/devices/{{ d.id }}">{{ d.name or d.hostname or d.vendor or d.key }}</a>
-      {% if d.kind %}<br><span class="kind">{{ d.kind }}</span>{% endif %}</td>
+      {% if d.kind or d.watch %}<br>{% endif %}{% if d.kind %}<span class="kind">{{ d.kind }}</span>{% endif %}{% if d.watch %} <span class="kind" title="A finding is raised when this device goes offline">watched</span>{% endif %}</td>
   <td class="mono">{{ d.ip or '-' }}</td>
   <td><span class="mono">{{ d.mac or '-' }}</span>{% if d.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}</td>
   <td>{{ d.vendor or '-' }}</td>

@@ -64,4 +64,39 @@ class IpChangedRule(Rule):
         return out
 
 
-RULES: list[Rule] = [NewDeviceRule(), IpChangedRule()]
+class WatchedOfflineRule(Rule):
+    id = "inventory.watched-offline"
+    kind = Kind.PROBLEM
+    default_severity = Severity.HIGH
+    description = (
+        "A device you asked to be told about has stopped answering discovery. Set per device "
+        "on its page; resolves by itself when the device is back."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        threshold = ctx.config.network.watch_offline_rounds
+        out: list[Finding] = []
+        for d in ctx.store.devices():
+            if not d.watch:
+                continue
+            missed = ctx.store.missed_rounds(d.id)
+            if missed < threshold:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"Watched device offline: {d.label}",
+                    key_parts=[d.key],
+                    device_id=d.id,
+                    evidence={
+                        "ip": d.ip,
+                        "mac": d.mac,
+                        "last_seen": d.last_seen,
+                        "missed_rounds": missed,
+                    },
+                )
+            )
+        return out
+
+
+RULES: list[Rule] = [NewDeviceRule(), IpChangedRule(), WatchedOfflineRule()]

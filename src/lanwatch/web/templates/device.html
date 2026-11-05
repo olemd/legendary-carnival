@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% set active = 'devices' %}
 {% block title %}{{ device.label }} · lanwatch{% endblock %}
 {% block content %}
-<h1>{{ device.label }} <span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span></h1>
+<h1>{{ device.label }} <span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span>{% if device.watch %} <span class="kind">watched</span>{% endif %}</h1>
 <dl class="facts">
   <dt>IP</dt><dd class="mono">{{ device.ip or '-' }}</dd>
   <dt>MAC</dt><dd><span class="mono">{{ device.mac or '-' }}</span>{% if device.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}
@@ -30,6 +30,8 @@
   <datalist id="kinds">{% for k in kinds %}<option value="{{ k }}">{% endfor %}</datalist>
   <label for="d-desc">Description</label>
   <input id="d-desc" type="text" name="description" value="{{ device.description or '' }}" maxlength="200">
+  <span></span>
+  <label class="check"><input type="checkbox" name="watch" value="true"{% if device.watch %} checked{% endif %}> Raise a finding when this device goes offline</label>
   <div class="edit-actions"><button class="primary">Save</button>
     <span class="muted">Kind and description normally come from the LLM. Changing them pins your values; clear both to hand them back.</span></div>
 </form>

@@ -55,6 +55,9 @@ class NetworkConfig(StrictModel):
     # Auto-detected subnets wider than this prefix are skipped with a warning.
     max_auto_prefix: int = Field(default=22, ge=8, le=32)
     exclude_hosts: list[str] = Field(default_factory=list)
+    # A watched device is reported offline after missing this many discovery rounds in a
+    # row. One missed round is common (a dropped ARP reply), so the default waits for two.
+    watch_offline_rounds: int = Field(default=2, ge=1, le=20)
     # Container bridges and VPN overlays are not LAN segments: nothing to discover there,
     # and arp-scan cannot run on point-to-point interfaces such as wg0 or tailscale0.
     exclude_interfaces: list[str] = Field(

@@ -164,12 +164,14 @@ def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
         name: Annotated[str, Form()] = "",
         kind: Annotated[str, Form()] = "",
         description: Annotated[str, Form()] = "",
+        watch: Annotated[bool, Form()] = False,  # an unticked checkbox is simply not sent
     ) -> RedirectResponse:
         ok = s.edit_device(
             device_id,
             name=name.strip()[:60] or None,
             kind=kind.strip().lower()[:40] or None,
             description=description.strip()[:200] or None,
+            watch=watch,
         )
         if not ok:
             raise HTTPException(404)

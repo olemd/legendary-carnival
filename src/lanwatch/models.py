@@ -139,6 +139,8 @@ class Device:
     attrs: dict[str, Any] = field(default_factory=dict)
     # Kind and description were set by a person; the LLM classification leaves them alone.
     kind_manual: bool = False
+    # A person asked to be told when this device drops off the network.
+    watch: bool = False
 
     @property
     def label(self) -> str:

@@ -172,10 +172,13 @@ def test_device_edit_merge_and_forget(config: Config) -> None:
     assert ">private<" in page  # the fixture's aa:bb:cc... addresses are locally administered
 
     form = {"name": "Router", "kind": "Router", "description": "Gateway in the hall"}
-    r = client.post("/devices/1/edit", data=form, follow_redirects=False)
+    r = client.post("/devices/1/edit", data={**form, "watch": "true"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/devices/1"
     page = client.get("/devices/1").text
     assert "Gateway in the hall" in page and "set by you" in page and ">router<" in page
+    assert ">watched<" in page and ">watched<" in client.get("/devices").text
+    client.post("/devices/1/edit", data=form)  # checkbox unticked: no longer watched
+    assert ">watched<" not in client.get("/devices/1").text
     assert client.post("/devices/999/edit", data=form).status_code == 404
 
     assert client.post("/devices/1/merge", data={"other": "1"}).status_code == 404

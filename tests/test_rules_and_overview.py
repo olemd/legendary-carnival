@@ -107,3 +107,43 @@ def test_overview_renders_and_writes_only_on_change(
     path = update(store, config)
     assert path == config.overview_path and path.exists()
     assert update(store, config) is None  # unchanged content -> no rewrite
+
+
+def test_watched_device_offline_raises_and_resolves(store: Store, config: Config) -> None:
+    engine = Engine(config)
+    nas = HostObservation(ip="10.0.0.5", mac="00:11:32:00:00:05", hostname="nas", source="t")
+    tv = HostObservation(ip="10.0.0.6", mac="a4:77:33:00:00:06", hostname="tv", source="t")
+    engine.run(_round(store, config, [nas, tv]))
+    nas_dev = store.device_by_key("00:11:32:00:00:05")
+    assert nas_dev is not None
+    store.edit_device(nas_dev.id, name="NAS", kind=None, description=None, watch=True)
+
+    def offline_findings() -> list[str]:
+        return [
+            f.title
+            for f in store.findings(FindingStatus.OPEN)
+            if f.rule_id == "inventory.watched-offline"
+        ]
+
+    # One missed round is not an outage; the default waits for two in a row.
+    engine.run(_round(store, config, [tv]))
+    assert offline_findings() == []
+    result = engine.run(_round(store, config, [tv]))
+    assert offline_findings() == ["Watched device offline: NAS"]
+    assert len(result.new_ids) == 1  # new finding, so it is notified like any other
+    f = store.finding(result.new_ids[0])
+    assert f is not None and f.severity is Severity.HIGH and f.evidence["missed_rounds"] == 2
+
+    # Still gone: same finding, no new one. The unwatched TV never raises anything.
+    assert engine.run(_round(store, config, [])).new_ids == []
+    assert offline_findings() == ["Watched device offline: NAS"]
+
+    # Back: resolves by itself.
+    result = engine.run(_round(store, config, [nas, tv]))
+    assert offline_findings() == [] and len(result.resolved_ids) == 1
+
+    # Unwatched again: going away is nobody's business.
+    store.set_device_watch(nas_dev.id, False)
+    for _ in range(3):
+        engine.run(_round(store, config, [tv]))
+    assert offline_findings() == []

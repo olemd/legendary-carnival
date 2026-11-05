@@ -172,6 +172,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE findings ADD COLUMN accepted INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE findings ADD COLUMN note TEXT;
     """,
+    # v9: devices whose absence should raise a finding
+    """
+    ALTER TABLE devices ADD COLUMN watch INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 
@@ -420,7 +424,13 @@ class Store:
         return cur.rowcount > 0
 
     def edit_device(
-        self, device_id: int, *, name: str | None, kind: str | None, description: str | None
+        self,
+        device_id: int,
+        *,
+        name: str | None,
+        kind: str | None,
+        description: str | None,
+        watch: bool | None = None,
     ) -> bool:
         """Apply a person's edit of name, kind and description. False for an unknown device.
 
@@ -431,6 +441,8 @@ class Store:
             return False
         if name != row["name"]:
             self.set_device_name(device_id, name)
+        if watch is not None:
+            self.set_device_watch(device_id, watch)
         if (kind, description) != (row["kind"], row["description"]):
             manual = bool(kind or description)
             self._db.execute(
@@ -446,6 +458,34 @@ class Store:
                     data={"kind": kind, "previous": row["kind"], "by": "user"},
                 )
         return True
+
+    def set_device_watch(self, device_id: int, watch: bool) -> bool:
+        cur = self._db.execute(
+            "UPDATE devices SET watch = ? WHERE id = ? AND watch != ?",
+            (int(watch), device_id, int(watch)),
+        )
+        if cur.rowcount > 0:
+            self.add_event(
+                "device.watch", "Watching for outages" if watch else "No longer watched", device_id
+            )
+        return cur.rowcount > 0
+
+    def missed_rounds(self, device_id: int, look_back: int = 20) -> int:
+        """How many of the most recent finished discovery rounds, counting back from the
+        newest, the device did not answer in. 0 means it answered in the newest round."""
+        rows = self._db.execute(
+            """SELECT EXISTS(SELECT 1 FROM sightings
+                             WHERE snapshot_id = s.id AND device_id = ?) AS seen
+               FROM snapshots s WHERE s.kind = 'discovery' AND s.finished_at IS NOT NULL
+               ORDER BY s.id DESC LIMIT ?""",
+            (device_id, look_back),
+        ).fetchall()
+        missed = 0
+        for r in rows:
+            if r["seen"]:
+                break
+            missed += 1
+        return missed
 
     def delete_device(self, device_id: int) -> bool:
         """Forget a device and everything recorded about it. Timeline events stay, without
@@ -1164,6 +1204,7 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         online=online,
         attrs=json.loads(row["attrs"] or "{}"),
         kind_manual=bool(row["kind_manual"]),
+        watch=bool(row["watch"]),
     )
 
 

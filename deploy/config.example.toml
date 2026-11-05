@@ -8,6 +8,7 @@
 subnets = "auto"                        # or ["192.168.1.0/24", "10.0.0.0/24"]
 max_auto_prefix = 22                    # auto-detected subnets wider than this are skipped
 exclude_hosts = []                      # IPs or MACs never recorded
+watch_offline_rounds = 2                # a watched device is "offline" after this many missed rounds
 exclude_interfaces = ["lo", "docker*", "veth*", "br-*", "virbr*", "tun*", "tap*", "wg*", "tailscale*"]
 
 [scan]
