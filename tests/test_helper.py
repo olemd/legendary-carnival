@@ -138,6 +138,24 @@ async def test_helper_executor_roundtrip(tmp_path: Path) -> None:
         await HelperExecutor(tmp_path / "missing.sock").which("nmap")
 
 
+async def test_helper_executor_takes_a_reply_of_any_size(tmp_path: Path) -> None:
+    """A service scan of a couple of dozen devices is hundreds of kilobytes of XML, all on
+    the one line the helper answers with; asyncio's default line limit is 64 KiB."""
+    sock = tmp_path / "h.sock"
+    xml = "<host/>" * 60_000  # 420 kB
+
+    async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readline()
+        writer.write(json.dumps({"rc": 0, "stdout": xml, "stderr": ""}).encode() + b"\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(on_client, path=str(sock))
+    async with server:
+        result = await HelperExecutor(sock).run(["nmap", "-sV", "10.0.0.1"], timeout=5)
+    assert result == (0, xml, "")
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [

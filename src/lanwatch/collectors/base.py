@@ -148,7 +148,10 @@ class HelperExecutor:
         try:
             writer.write(json.dumps(payload).encode() + b"\n")
             await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), timeout=timeout + 10)
+            # Everything up to end-of-file, not readline(): the helper answers once and
+            # hangs up, and a line may be no longer than the stream's buffer limit
+            # (64 KiB by default), which the XML of one service scan easily exceeds.
+            line = await asyncio.wait_for(reader.read(), timeout=timeout + 10)
         finally:
             writer.close()
         if not line:

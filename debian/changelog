@@ -1,9 +1,13 @@
 lanwatch (0.4.2) unstable; urgency=medium
 
+  * Service scans no longer fail with "ValueError: Separator is found, but
+    chunk is longer than limit". The result of a scan comes back from the
+    helper as one line, and lanwatch read it with a 64 KiB limit that a scan
+    of more than a few devices exceeds.
   * Web UI: the edit form on a device's page kept its fields outside the box
     on anything wider than a phone. They are back inside.
 
- -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 23:17:52 +0100
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 23:25:40 +0100
 
 lanwatch (0.4.1) unstable; urgency=medium
 
