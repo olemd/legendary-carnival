@@ -49,6 +49,24 @@ def test_select_subnets_auto_defaults() -> None:
     assert self_observations(ifaces, subs) == [("192.168.1.10", "aa:bb:cc:dd:ee:ff")]
 
 
+def test_tailscale_interface_is_not_scanned_by_default() -> None:
+    # A Tailscale node has a /32 overlay address on tailscale0: narrow enough to pass the
+    # prefix check, but there is no LAN behind it and arp-scan fails on the interface.
+    tailscale = {
+        "ifname": "tailscale0",
+        "flags": ["POINTOPOINT", "MULTICAST", "NOARP", "UP", "LOWER_UP"],
+        "link_type": "none",
+        "addr_info": [{"family": "inet", "local": "100.126.220.79", "prefixlen": 32}],
+    }
+    ifaces = parse_ip_addr_json([*json.loads(fixture_text("ip-addr.json")), tailscale])
+    assert [str(s) for s in select_subnets(ifaces, NetworkConfig())] == ["192.168.1.0/24 via eth0"]
+    # Without the default exclusion it would have been picked up.
+    everything = NetworkConfig(exclude_interfaces=["lo", "docker*", "wg*"])
+    assert "100.126.220.79/32 via tailscale0" in [
+        str(s) for s in select_subnets(ifaces, everything)
+    ]
+
+
 def test_select_subnets_explicit_and_wide() -> None:
     ifaces = parse_ip_addr_json(json.loads(fixture_text("ip-addr.json")))
     cfg = NetworkConfig(subnets=["10.10.0.0/16", "172.16.5.0/24"], max_auto_prefix=16)
