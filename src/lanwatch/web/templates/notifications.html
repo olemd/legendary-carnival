@@ -1,14 +1,14 @@
 {% extends "base.html" %}{% set active = 'notifications' %}
 {% block content %}
 <h1>Notifications</h1>
-<p class="muted">Channels enabled: {{ channels | join(', ') if channels else 'none (see [notify] in config)' }}.
+<p class="lede">Channels enabled: {{ channels | join(', ') if channels else 'none (see [notify] in config)' }}.
 Threshold: {{ config.notify.min_severity.value }}. Test with <code>lanwatch notify --test</code>.</p>
 {% if rows %}
-<table><thead><tr><th>Time</th><th>Channel</th><th>Event</th><th>Title</th><th>Result</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Time</th><th>Channel</th><th>Event</th><th>Title</th><th>Result</th></tr></thead><tbody>
 {% for r in rows %}
-<tr><td class="muted">{{ r.ts | local }}</td><td>{{ r.channel }}</td><td class="muted">{{ r.kind }}</td>
-<td>{{ r.title }}</td><td>{% if r.ok %}<span style="color:var(--ok)">ok</span>{% else %}<span style="color:var(--critical)">failed</span> <span class="muted">{{ r.error }}</span>{% endif %}</td></tr>
+<tr><td class="ev">{{ r.ts | local }}</td><td>{{ r.channel }}</td><td class="muted">{{ r.kind }}</td>
+<td>{{ r.title }}</td><td>{% if r.ok %}<span class="result-ok">ok</span>{% else %}<span class="result-failed">failed</span> <span class="muted">{{ r.error }}</span>{% endif %}</td></tr>
 {% endfor %}
-</tbody></table>
-{% else %}<p class="muted">Nothing sent yet.</p>{% endif %}
+</tbody></table></div>
+{% else %}<p class="empty">Nothing sent yet.</p>{% endif %}
 {% endblock %}

@@ -336,7 +336,8 @@ def test_web_pages_and_chat_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert "No matches" in client.get("/search?q=zzz").text
     assert "Named Router" in client.get("/devices/1").text  # History section
     dash = client.get("/").text
-    assert "Recent events" in dash and "Hosts online, last 7 days" in dash and "<polyline" in dash
+    assert "Recent events" in dash and "<polyline" in dash
+    assert "Hosts online over the last 7 days" in dash
     assert client.get("/chat").status_code == 200
 
     assert client.post("/api/chat", json={"question": ""}).status_code == 400

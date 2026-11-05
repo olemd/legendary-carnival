@@ -1,31 +1,31 @@
 {% extends "base.html" %}{% set active = 'devices' %}
 {% block title %}{{ device.label }} · lanwatch{% endblock %}
 {% block content %}
-<h1><span class="dot {{ 'on' if device.online }}"></span>{{ device.label }}</h1>
-<table style="width:auto">
-  <tr><th>IP</th><td class="mono">{{ device.ip or '-' }}</td></tr>
-  <tr><th>MAC</th><td class="mono">{{ device.mac or '-' }}</td></tr>
-  <tr><th>Vendor</th><td>{{ device.vendor or '-' }}</td></tr>
-  <tr><th>Hostname</th><td>{{ device.hostname or '-' }}</td></tr>
-  <tr><th>Kind</th><td>{% if device.kind %}<span class="kind">{{ device.kind }}</span>
+<h1>{{ device.label }} <span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span></h1>
+<dl class="facts">
+  <dt>IP</dt><dd class="mono">{{ device.ip or '-' }}</dd>
+  <dt>MAC</dt><dd class="mono">{{ device.mac or '-' }}</dd>
+  <dt>Vendor</dt><dd>{{ device.vendor or '-' }}</dd>
+  <dt>Hostname</dt><dd>{{ device.hostname or '-' }}</dd>
+  <dt>Kind</dt><dd>{% if device.kind %}<span class="kind">{{ device.kind }}</span>
       {% if device.kind_confidence is not none %}<span class="muted">{{ (device.kind_confidence * 100) | round | int }}% confidence</span>{% endif %}
-      {% else %}-{% endif %}</td></tr>
-  <tr><th>Description</th><td>{{ device.description or '-' }}</td></tr>
-  {% if device.attrs.upnp %}<tr><th>UPnP</th><td>{{ device.attrs.upnp.friendly_name }} <span class="muted">{{ device.attrs.upnp.manufacturer }} {{ device.attrs.upnp.model }}</span></td></tr>{% endif %}
-  {% if device.attrs.mdns %}<tr><th>mDNS</th><td class="mono">{{ device.attrs.mdns | join(', ') }}</td></tr>{% endif %}
-  {% if device.attrs.ipv6 %}<tr><th>IPv6</th><td class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</td></tr>{% endif %}
-  <tr><th>First seen</th><td>{{ device.first_seen | local }}</td></tr>
-  <tr><th>Last seen</th><td>{{ device.last_seen | local }}</td></tr>
-  <tr><th>Last service scan</th><td>{{ last_inventory | local }}</td></tr>
-  <tr><th>Name</th><td>
+      {% else %}-{% endif %}</dd>
+  <dt>Description</dt><dd>{{ device.description or '-' }}</dd>
+  {% if device.attrs.upnp %}<dt>UPnP</dt><dd>{{ device.attrs.upnp.friendly_name }} <span class="muted">{{ device.attrs.upnp.manufacturer }} {{ device.attrs.upnp.model }}</span></dd>{% endif %}
+  {% if device.attrs.mdns %}<dt>mDNS</dt><dd class="mono">{{ device.attrs.mdns | join(', ') }}</dd>{% endif %}
+  {% if device.attrs.ipv6 %}<dt>IPv6</dt><dd class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</dd>{% endif %}
+  <dt>First seen</dt><dd>{{ device.first_seen | local }}</dd>
+  <dt>Last seen</dt><dd>{{ device.last_seen | local }}</dd>
+  <dt>Last service scan</dt><dd>{{ last_inventory | local }}</dd>
+  <dt><label for="device-name">Name</label></dt><dd>
     <form class="inline" method="post" action="/devices/{{ device.id }}/name">
-      <input type="text" name="name" value="{{ device.name or '' }}" placeholder="give it a name"> <button>save</button>
-    </form></td></tr>
-</table>
+      <input id="device-name" type="text" name="name" value="{{ device.name or '' }}" placeholder="give it a name"> <button class="primary">Save</button>
+    </form></dd>
+</dl>
 
 <h2>Services</h2>
 {% if services %}
-<table><thead><tr><th>Port</th><th>State</th><th>Service</th><th>Product</th><th>Details</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Port</th><th>State</th><th>Service</th><th>Product</th><th>Details</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>
 {% for s in services %}
 <tr>
   <td class="mono">{{ s.port }}/{{ s.proto }}</td>
@@ -33,23 +33,23 @@
   <td>{{ s.name or '-' }}{% if s.tunnel %} <span class="muted">({{ s.tunnel }})</span>{% endif %}</td>
   <td>{{ s.product or '' }} {{ s.version or '' }} <span class="muted">{{ s.extrainfo or '' }}</span></td>
   <td>{% if s.details %}<details><summary>{{ s.details|length }} script{{ 's' if s.details|length != 1 }}</summary><pre>{{ s.details | tojson(indent=2) }}</pre></details>{% else %}-{% endif %}</td>
-  <td class="muted">{{ s.first_seen | local }}</td>
-  <td class="muted">{{ s.last_seen | local }}</td>
+  <td class="ev">{{ s.first_seen | local }}</td>
+  <td class="ev">{{ s.last_seen | local }}</td>
 </tr>
 {% endfor %}
-</tbody></table>
-{% else %}<p class="muted">No service scan yet.</p>{% endif %}
+</tbody></table></div>
+{% else %}<p class="empty">No service scan yet.</p>{% endif %}
 
 <h2>History</h2>
 {% if events %}
-<table><tbody>
+<div class="tbl"><table><thead><tr><th>Time</th><th>Kind</th><th>Event</th></tr></thead><tbody>
 {% for e in events %}<tr><td class="ev">{{ e.ts | local }}</td><td class="muted mono">{{ e.kind }}</td><td>{{ e.summary }}</td></tr>{% endfor %}
-</tbody></table>
-{% else %}<p class="muted">No events recorded.</p>{% endif %}
+</tbody></table></div>
+{% else %}<p class="empty">No events recorded.</p>{% endif %}
 
 <h2>Findings</h2>
 {% if findings %}
-<table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th></th></tr></thead>
-<tbody>{% set back = '/devices/' ~ device.id %}{% set devices_by_id = {device.id: device} %}{% include "_finding_rows.html" %}</tbody></table>
-{% else %}<p class="muted">None.</p>{% endif %}
+<div class="tbl"><table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th><span class="vh">Action</span></th></tr></thead>
+<tbody>{% set back = '/devices/' ~ device.id %}{% set devices_by_id = {device.id: device} %}{% include "_finding_rows.html" %}</tbody></table></div>
+{% else %}<p class="empty">None.</p>{% endif %}
 {% endblock %}

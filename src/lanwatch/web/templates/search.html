@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Search{% if q %} <span class="muted">“{{ q }}”</span>{% endif %}</h1>
-{% if not q %}<p class="muted">Search by IP, MAC, hostname, name, vendor, kind, port, product, finding text or id.</p>{% endif %}
+{% if not q %}<p class="empty">Search by IP, MAC, hostname, name, vendor, kind, port, product, finding text or id.</p>{% endif %}
 {% if res.devices %}
 <h2>Devices</h2>
-<table><tbody>{% for d in res.devices %}<tr><td><span class="dot {{ 'on' if d.online }}"></span><a href="/devices/{{ d.id }}">{{ d.label }}</a></td>
-<td class="mono">{{ d.ip or '-' }}</td><td class="mono">{{ d.mac or '-' }}</td><td>{{ d.vendor or '' }}</td><td>{% if d.kind %}<span class="kind">{{ d.kind }}</span>{% endif %} {{ d.description or '' }}</td></tr>{% endfor %}</tbody></table>
+<div class="tbl"><table><tbody>{% for d in res.devices %}<tr><td><span class="state {{ 'on' if d.online }}">{{ 'online' if d.online else 'offline' }}</span></td><td><a href="/devices/{{ d.id }}">{{ d.label }}</a></td>
+<td class="mono">{{ d.ip or '-' }}</td><td class="mono">{{ d.mac or '-' }}</td><td>{{ d.vendor or '' }}</td><td>{% if d.kind %}<span class="kind">{{ d.kind }}</span>{% endif %} {{ d.description or '' }}</td></tr>{% endfor %}</tbody></table></div>
 {% endif %}
 {% if res.services %}
 <h2>Services</h2>
-<table><tbody>{% for s in res.services %}{% set d = devices_by_id.get(s.device_id) %}<tr><td>{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a>{% endif %}</td><td class="mono">{{ s.label }}</td></tr>{% endfor %}</tbody></table>
+<div class="tbl"><table><tbody>{% for s in res.services %}{% set d = devices_by_id.get(s.device_id) %}<tr><td>{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a>{% endif %}</td><td class="mono">{{ s.label }}</td></tr>{% endfor %}</tbody></table></div>
 {% endif %}
 {% if res.findings %}
 <h2>Findings</h2>
-<table><tbody>{% for f in res.findings %}<tr><td><span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span></td><td class="muted">{{ f.status.value }}</td><td>{{ f.title }}</td><td class="mono muted">{{ f.id }}</td></tr>{% endfor %}</tbody></table>
+<div class="tbl"><table><tbody>{% for f in res.findings %}<tr><td><span class="sev sev-{{ f.severity.value }}">{{ f.severity.value }}</span></td><td class="muted">{{ f.status.value }}</td><td>{{ f.title }}</td><td class="mono muted">{{ f.id }}</td></tr>{% endfor %}</tbody></table></div>
 {% endif %}
-{% if q and not (res.devices or res.services or res.findings) %}<p class="muted">No matches.</p>{% endif %}
+{% if q and not (res.devices or res.services or res.findings) %}<p class="empty">No matches.</p>{% endif %}
 {% endblock %}

@@ -1,42 +1,42 @@
 {% extends "base.html" %}{% set active = 'infra' %}
 {% block content %}
 <h1>Infrastructure</h1>
-<p class="muted">Last probe: {% if snapshot %}{{ snapshot.finished_at | local }}{% else %}never{% endif %}.
+<p class="lede">Last probe: {% if snapshot %}{{ snapshot.finished_at | local }}{% else %}never{% endif %}.
 Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch infra</code>.</p>
 
 <h2>DHCP servers</h2>
 {% if dhcp %}
-<table><thead><tr><th>Interface</th><th>Server</th><th>Offers</th><th>Router</th><th>DNS</th><th>Domain</th><th>First seen</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Interface</th><th>Server</th><th>Offers</th><th>Router</th><th>DNS</th><th>Domain</th><th>First seen</th></tr></thead><tbody>
 {% for r in dhcp %}<tr><td>{{ r.data.interface }}</td><td class="mono">{{ r.data.server }}</td><td class="mono">{{ r.data.offered_ip }}</td>
-<td class="mono">{{ r.data.router }}</td><td class="mono">{{ r.data.dns | join(', ') }}</td><td>{{ r.data.domain }}</td><td class="muted">{{ r.first_seen | local }}</td></tr>{% endfor %}
-</tbody></table>
-{% if dhcp | length > 1 %}<p><span class="sev sev-critical">critical</span> more than one DHCP server is answering.</p>{% endif %}
-{% else %}<p class="muted">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}
+<td class="mono">{{ r.data.router }}</td><td class="mono">{{ r.data.dns | join(', ') }}</td><td>{{ r.data.domain }}</td><td class="ev">{{ r.first_seen | local }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% if dhcp | length > 1 %}<p class="note"><span class="sev sev-critical">critical</span> More than one DHCP server is answering.</p>{% endif %}
+{% else %}<p class="empty">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}
 
 <h2>UPnP</h2>
 {% if upnp %}
-<table><thead><tr><th>Address</th><th>Name</th><th>Manufacturer / model</th><th>Type</th><th>IGD</th><th>External IP</th><th>Mappings</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Address</th><th>Name</th><th>Manufacturer / model</th><th>Type</th><th>IGD</th><th>External IP</th><th>Mappings</th></tr></thead><tbody>
 {% for r in upnp %}{% set d = devices_by_ip.get(r.key) %}
 <tr><td class="mono">{% if d %}<a href="/devices/{{ d.id }}">{{ r.key }}</a>{% else %}{{ r.key }}{% endif %}</td><td>{{ r.data.friendly_name or '-' }}</td>
 <td>{{ r.data.manufacturer }} {{ r.data.model }}</td><td class="muted">{{ r.data.device_type }}</td><td>{{ 'yes' if r.data.is_igd else '' }}</td>
 <td class="mono">{{ r.data.external_ip or '' }}</td><td>{{ r.data.mappings | length if r.data.is_igd else '' }}</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% for r in igds if r.data.mappings %}
 <h3>Port mappings on {{ r.data.friendly_name or r.key }}</h3>
-<table><thead><tr><th>External</th><th>Protocol</th><th>Internal</th><th>Description</th><th>Enabled</th><th>Lease</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>External</th><th>Protocol</th><th>Internal</th><th>Description</th><th>Enabled</th><th>Lease</th></tr></thead><tbody>
 {% for m in r.data.mappings %}{% set d = devices_by_ip.get(m.internal_client) %}
 <tr><td class="mono">{{ m.remote_host or '*' }}:{{ m.external_port }}</td><td>{{ m.protocol }}</td>
 <td class="mono">{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a> {% endif %}{{ m.internal_client }}:{{ m.internal_port }}</td>
 <td>{{ m.description }}</td><td>{{ 'yes' if m.enabled else 'no' }}</td><td class="muted">{{ m.lease_seconds or 'permanent' }}</td></tr>{% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% endfor %}
-{% else %}<p class="muted">No UPnP devices answered.</p>{% endif %}
+{% else %}<p class="empty">No UPnP devices answered.</p>{% endif %}
 
 <h2>IPv6</h2>
 {% if ipv6 %}
-<table><thead><tr><th>Device</th><th>Global addresses</th><th>Open ports</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Device</th><th>Global addresses</th><th>Open ports</th></tr></thead><tbody>
 {% for d in ipv6 %}<tr><td><a href="/devices/{{ d.id }}">{{ d.label }}</a></td><td class="mono">{{ d.attrs.ipv6 | join(', ') }}</td>
 <td class="mono">{% for a, ps in (d.attrs.ipv6_open or {}).items() %}{{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% else %}-{% endfor %}</td></tr>{% endfor %}
-</tbody></table>
-{% else %}<p class="muted">No devices with global IPv6 addresses seen.</p>{% endif %}
+</tbody></table></div>
+{% else %}<p class="empty">No devices with global IPv6 addresses seen.</p>{% endif %}
 {% endblock %}

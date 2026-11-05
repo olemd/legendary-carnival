@@ -1,18 +1,18 @@
 {% extends "base.html" %}{% set active = 'timeline' %}
 {% block content %}
 <h1>Timeline</h1>
-<p class="tabs">
-  <a href="/timeline" {% if not kind %}style="font-weight:600"{% endif %}>all</a>
-  {% for k in kinds %}<a href="/timeline?kind={{ k }}" {% if k == kind %}style="font-weight:600"{% endif %}>{{ k }}</a>{% endfor %}
+<nav class="tabs" aria-label="Filter events">
+  <a href="/timeline"{% if not kind %} aria-current="page"{% endif %}>all</a>
+  {% for k in kinds %}<a href="/timeline?kind={{ k }}"{% if k == kind %} aria-current="page"{% endif %}>{{ k }}</a>{% endfor %}
   {% if not kind %}· <a href="/timeline?presence={{ 'false' if presence else 'true' }}">{{ 'hide' if presence else 'show' }} presence</a>{% endif %}
-  {% if device %}· device #{{ device }} <a href="/timeline">×</a>{% endif %}
-</p>
+  {% if device %}· device #{{ device }} <a href="/timeline" aria-label="Clear device filter">×</a>{% endif %}
+</nav>
 {% if rows %}
-<table><thead><tr><th>Time</th><th>Kind</th><th>Event</th><th>Device</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Time</th><th>Kind</th><th>Event</th><th>Device</th></tr></thead><tbody>
 {% for e in rows %}{% set d = devices_by_id.get(e.device_id) %}
 <tr><td class="ev">{{ e.ts | local }}</td><td class="muted mono">{{ e.kind }}</td>
 <td>{{ e.summary }}{% if e.finding_id %} <a class="muted" href="/findings?status=all">#</a>{% endif %}</td>
 <td>{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a> <a class="muted" href="/timeline?device={{ d.id }}">filter</a>{% else %}-{% endif %}</td></tr>{% endfor %}
-</tbody></table>
-{% else %}<p class="muted">No events.</p>{% endif %}
+</tbody></table></div>
+{% else %}<p class="empty">No events.</p>{% endif %}
 {% endblock %}

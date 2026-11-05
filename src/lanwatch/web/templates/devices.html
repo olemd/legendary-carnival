@@ -1,11 +1,11 @@
 {% extends "base.html" %}{% set active = 'devices' %}
 {% block content %}
-<h1>Devices <span class="muted">({{ rows|length }})</span></h1>
-<table><thead><tr><th></th><th>Name</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Hostname</th><th>Open ports</th><th>Findings</th><th>Last seen</th></tr></thead>
+<h1>Devices <span class="count">{{ rows|length }}</span></h1>
+<div class="tbl"><table><thead><tr><th>State</th><th>Name</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Hostname</th><th>Open ports</th><th>Findings</th><th>Last seen</th></tr></thead>
 <tbody>
 {% for d, ports in rows %}
 <tr>
-  <td><span class="dot {{ 'on' if d.online }}" title="{{ 'online' if d.online else 'offline' }}"></span></td>
+  <td><span class="state {{ 'on' if d.online }}">{{ 'online' if d.online else 'offline' }}</span></td>
   <td><a href="/devices/{{ d.id }}">{{ d.name or d.hostname or d.vendor or d.key }}</a>
       {% if d.kind %}<br><span class="kind">{{ d.kind }}</span>{% endif %}</td>
   <td class="mono">{{ d.ip or '-' }}</td>
@@ -14,8 +14,8 @@
   <td>{{ d.hostname or '-' }}</td>
   <td class="mono">{{ ports or '-' }}</td>
   <td>{% if open_by_dev.get(d.id) %}<a href="/devices/{{ d.id }}">{{ open_by_dev[d.id] }}</a>{% else %}-{% endif %}</td>
-  <td class="muted">{{ d.last_seen | local }}</td>
+  <td class="ev">{{ d.last_seen | local }}</td>
 </tr>
 {% endfor %}
-</tbody></table>
+</tbody></table></div>
 {% endblock %}

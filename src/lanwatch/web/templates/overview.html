@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% set active = 'overview' %}
 {% block content %}
 <h1>Overview <a class="muted" style="font-size:.7em;font-weight:400" href="/api/overview.md">raw markdown</a></h1>
-<p class="muted">The same file lanwatch keeps at <code>{{ config.overview_path }}</code>.</p>
+<p class="lede">The same file lanwatch keeps at <code>{{ config.overview_path }}</code>.</p>
 <pre>{{ markdown }}</pre>
 {% endblock %}

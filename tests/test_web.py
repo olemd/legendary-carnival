@@ -48,7 +48,7 @@ def test_pages_and_actions(config: Config, tmp_path: Path) -> None:
     client = TestClient(create_app(config))
 
     r = client.get("/")
-    assert r.status_code == 200 and "Dashboard" in r.text and "open findings" in r.text
+    assert r.status_code == 200 and "Dashboard" in r.text and "Open findings" in r.text
     assert "Cleartext remote access" in r.text
 
     r = client.get("/devices")

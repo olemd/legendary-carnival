@@ -2,13 +2,13 @@
 {% block content %}
 <h1>Digest</h1>
 {% if days %}
-<p class="tabs">{% for d in days %}<a href="/digest?day={{ d }}" {% if d == chosen %}style="font-weight:600"{% endif %}>{{ d }}</a>{% endfor %}</p>
+<nav class="tabs" aria-label="Digest day">{% for d in days %}<a href="/digest?day={{ d }}"{% if d == chosen %} aria-current="page"{% endif %}>{{ d }}</a>{% endfor %}</nav>
 <pre>{{ text }}</pre>
 {% else %}
-<p class="muted">No digest yet. One is written daily at {{ config.schedule.digest_time }}, or run <code>lanwatch digest</code>.</p>
+<p class="empty">No digest yet. One is written daily at {{ config.schedule.digest_time }}, or run <code>lanwatch digest</code>.</p>
 {% endif %}
 
 <h2>Improvement suggestions</h2>
 {% if suggestions %}<pre>{{ suggestions }}</pre>
-{% else %}<p class="muted">None yet. Run <code>lanwatch suggest</code>.</p>{% endif %}
+{% else %}<p class="empty">None yet. Run <code>lanwatch suggest</code>.</p>{% endif %}
 {% endblock %}

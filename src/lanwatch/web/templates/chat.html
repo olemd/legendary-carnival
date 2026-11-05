@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% set active = 'chat' %}
 {% block content %}
 <h1>Chat</h1>
-<p class="muted">Ask about your network. The local LLM ({{ config.llm.model }}) reads the inventory through tools; what it looked up is shown under each answer. With actions enabled it can acknowledge findings, name devices and start scans when you ask it to.</p>
+<p class="lede">Ask about your network. The local LLM ({{ config.llm.model }}) reads the inventory through tools; what it looked up is shown under each answer. With actions enabled it can acknowledge findings, name devices and start scans when you ask it to.</p>
 <div class="chat">
-  <div id="log"></div>
-  <form id="f"><textarea id="q" placeholder="e.g. Which devices expose SSH? What changed this week? Acknowledge the TLS finding on the router."></textarea>
-  <p><button id="send">Ask</button> <button type="button" id="clear">Clear</button>
-  <label class="muted"><input type="checkbox" id="actions" checked> allow actions</label> <span id="status" class="muted"></span></p></form>
+  <div id="log" aria-live="polite"></div>
+  <form id="f"><label class="vh" for="q">Your question</label><textarea id="q" placeholder="e.g. Which devices expose SSH? What changed this week? Acknowledge the TLS finding on the router."></textarea>
+  <div class="row"><button id="send" class="primary">Ask</button> <button type="button" id="clear">Clear</button>
+  <label class="muted"><input type="checkbox" id="actions" checked> allow actions</label> <span id="status" class="muted" role="status"></span></div></form>
 </div>
 <script>
 const log = document.getElementById('log'), q = document.getElementById('q'), status = document.getElementById('status');
@@ -15,7 +15,7 @@ try { history = JSON.parse(sessionStorage.getItem('lanwatch.chat') || '[]'); } c
 function add(role, text, tools) {
   const d = document.createElement('div'); d.className = 'msg ' + (role === 'user' ? 'user' : 'bot'); d.textContent = text;
   if (tools && tools.length) {
-    const t = document.createElement('div'); t.className = 'muted mono'; t.style.fontSize = '.8em'; t.style.marginTop = '.4rem';
+    const t = document.createElement('div'); t.className = 'tools mono';
     t.textContent = 'tools: ' + tools.map(x => x.name + '(' + Object.entries(x.arguments).map(([k, v]) => k + '=' + JSON.stringify(v)).join(', ') + ')' + (x.ok ? '' : ' ✗')).join('; ');
     d.appendChild(t);
   }
