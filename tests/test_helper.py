@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import signal
@@ -21,23 +22,32 @@ from lanwatch.collectors.base import (
 )
 from lanwatch.collectors.services import build_nmap_args, build_nmap_udp_args
 from lanwatch.config import ScanConfig
-from lanwatch.helper import _serve, handle_request, systemd_socket_fd, validate_argv
+from lanwatch.helper import (
+    Policies,
+    Policy,
+    _serve,
+    handle_request,
+    parse_attached,
+    systemd_socket_fd,
+    validate_argv,
+)
+from tests.conftest import HELPER_POLICY, fixture_text, helper_refusal
 
 
 def test_validate_allows_what_lanwatch_generates() -> None:
     cfg = ScanConfig()
-    assert validate_argv(build_nmap_args(["10.0.0.1", "10.0.0.2"], cfg, deep=False)) is None
+    assert helper_refusal(build_nmap_args(["10.0.0.1", "10.0.0.2"], cfg, deep=False)) is None
     assert (
-        validate_argv(build_nmap_args(["10.0.0.0/24"], ScanConfig(profile="thorough"), True))
+        helper_refusal(build_nmap_args(["10.0.0.0/24"], ScanConfig(profile="thorough"), True))
         is None
     )
-    assert validate_argv(build_nmap_udp_args(["10.0.0.1"], cfg)) is None
+    assert helper_refusal(build_nmap_udp_args(["10.0.0.1"], cfg)) is None
     assert (
-        validate_argv(["nmap", "-sn", "-oX", "-", "-T2", "--max-rate=100", "192.168.1.0/24"])
+        helper_refusal(["nmap", "-sn", "-oX", "-", "-T2", "--max-rate=100", "192.168.1.0/24"])
         is None
     )
     assert (
-        validate_argv(
+        helper_refusal(
             [
                 "arp-scan",
                 "--plain",
@@ -49,17 +59,17 @@ def test_validate_allows_what_lanwatch_generates() -> None:
         )
         is None
     )
-    assert validate_argv(["ip", "-j", "neigh", "show"]) is None
-    assert validate_argv(["ping", "-c", "1", "-W", "1", "10.0.0.1"]) is None
-    assert validate_argv(["ping", "-6", "-c", "1", "-W", "1", "ff02::1%eth0"]) is None
-    assert validate_argv(["ip", "-j", "-6", "neigh", "show"]) is None
-    assert validate_argv(["ip", "-j", "route", "show"]) is None
+    assert helper_refusal(["ip", "-j", "neigh", "show"]) is None
+    assert helper_refusal(["ping", "-c", "1", "-W", "1", "10.0.0.1"]) is None
+    assert helper_refusal(["ping", "-6", "-c", "1", "-W", "1", "ff02::1%eth0"]) is None
+    assert helper_refusal(["ip", "-j", "-6", "neigh", "show"]) is None
+    assert helper_refusal(["ip", "-j", "route", "show"]) is None
     assert (
-        validate_argv(["nmap", "-oX", "-", "-e", "eth0", "--script=broadcast-dhcp-discover"])
+        helper_refusal(["nmap", "-oX", "-", "-e", "eth0", "--script=broadcast-dhcp-discover"])
         is None
     )
     assert (
-        validate_argv(["nmap", "-6", "-oX", "-", "-n", "-Pn", "--top-ports=100", "2001:db8::1"])
+        helper_refusal(["nmap", "-6", "-oX", "-", "-n", "-Pn", "--top-ports=100", "2001:db8::1"])
         is None
     )
 
@@ -86,19 +96,21 @@ def test_validate_allows_what_lanwatch_generates() -> None:
     ],
 )
 def test_validate_rejects(argv: list[str]) -> None:
-    assert validate_argv(argv) is not None
+    assert helper_refusal(argv) is not None
 
 
 async def test_handle_request_ops() -> None:
     sem = asyncio.Semaphore(1)
-    assert "error" in await handle_request("nope", sem)
-    assert "error" in await handle_request({"op": "run", "argv": ["bash"]}, sem)
-    assert "error" in await handle_request({"op": "which", "binary": "bash"}, sem)
-    r = await handle_request({"op": "which", "binary": "nmap"}, sem)
+    assert "error" in await handle_request("nope", sem, HELPER_POLICY)
+    assert "error" in await handle_request({"op": "run", "argv": ["bash"]}, sem, HELPER_POLICY)
+    assert "error" in await handle_request({"op": "which", "binary": "bash"}, sem, HELPER_POLICY)
+    r = await handle_request({"op": "which", "binary": "nmap"}, sem, HELPER_POLICY)
     assert set(r) == {"available", "root"}
     # A missing allowed binary is reported through rc, not as a refusal.
     r = await handle_request(
-        {"op": "run", "argv": ["arp-scan", "--plain", "10.0.0.0/24"], "timeout": 5}, sem
+        {"op": "run", "argv": ["arp-scan", "--plain", "10.0.0.0/24"], "timeout": 5},
+        sem,
+        HELPER_POLICY,
     )
     assert "rc" in r
 
@@ -109,7 +121,7 @@ async def test_helper_executor_roundtrip(tmp_path: Path) -> None:
 
     async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         payload = json.loads(await reader.readline())
-        writer.write(json.dumps(await handle_request(payload, sem)).encode() + b"\n")
+        writer.write(json.dumps(await handle_request(payload, sem, HELPER_POLICY)).encode() + b"\n")
         await writer.drain()
         writer.close()
 
@@ -190,7 +202,7 @@ async def test_which_reports_raw_socket_privilege(
     monkeypatch.setattr(base, "privileged", lambda: value)
     monkeypatch.setattr(helper, "privileged", lambda: value)
     assert (await LocalExecutor().which("nmap"))[1] is value
-    r = await handle_request({"op": "which", "binary": "nmap"}, asyncio.Semaphore(1))
+    r = await handle_request({"op": "which", "binary": "nmap"}, asyncio.Semaphore(1), HELPER_POLICY)
     assert r["root"] is value
 
 
@@ -294,7 +306,8 @@ async def test_helper_cancels_the_command_when_its_client_disconnects(
     listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listening.bind(str(path))
     listening.listen()
-    serving = asyncio.create_task(_serve(path, None, 1, listening))
+    policies = Policies(nets=HELPER_POLICY.nets)  # the test target is not a real attached network
+    serving = asyncio.create_task(_serve(path, None, 1, listening, policies))
 
     # What lanwatch.service does when it is stopped or killed mid-scan: the request is out,
     # no reply has come, and the connection closes.
@@ -311,3 +324,72 @@ async def test_helper_cancels_the_command_when_its_client_disconnects(
     present, _ = await HelperExecutor(path).which("ping")
     assert present is True
     await _stop_serving(serving)
+
+
+def test_only_lanwatchs_own_nmap_scripts_run() -> None:
+    reason = helper_refusal(
+        ["nmap", "-oX", "-", "--script=ssl-cert,http-vuln-cve2017-5638", "10.0.0.1"]
+    )
+    assert reason is not None and "http-vuln-cve2017-5638" in reason
+    assert "--allow-script http-vuln-cve2017-5638" in reason  # says how to allow it
+    # nmap script categories are names too, and they are not on the list.
+    for category in ("vuln", "exploit", "brute", "dos", "default", "all"):
+        assert helper_refusal(["nmap", f"--script={category}", "10.0.0.1"]) is not None
+    extended = Policy(HELPER_POLICY.scripts | {"http-headers"}, HELPER_POLICY.nets)
+    assert validate_argv(["nmap", "--script=ssl-cert,http-headers", "10.0.0.1"], extended) is None
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "8.8.8.8",  # the internet
+        "192.168.2.0/24",  # a neighbouring network this host is not on
+        "192.168.0.0/16",  # wider than the attached /24, so it reaches beyond it
+        "0.0.0.0/0",
+        "2a00:1450::1",
+        "::/0",
+    ],
+)
+def test_targets_outside_attached_networks_are_refused(target: str) -> None:
+    for argv in (
+        ["nmap", "-sn", target],
+        ["arp-scan", "--plain", target],
+        ["ping", "-c", "1", target],
+    ):
+        reason = helper_refusal(argv)
+        assert reason is not None and "outside the networks" in reason, argv
+    # ...unless the administrator allowed that network on the helper.
+    wider = Policy(
+        HELPER_POLICY.scripts, (*HELPER_POLICY.nets, ipaddress.ip_network(target, False))
+    )
+    assert validate_argv(["nmap", "-sn", target], wider) is None
+
+
+def test_no_known_networks_means_no_targets() -> None:
+    # `ip` unavailable or unparsable: refuse rather than fall back to "anything goes".
+    assert validate_argv(["nmap", "-sn", "10.0.0.1"], Policy(HELPER_POLICY.scripts, ())) is not None
+    assert parse_attached("garbage") == () and parse_attached([{"addr_info": [{}]}]) == ()
+
+
+def test_attached_networks_come_from_every_address() -> None:
+    nets = {str(n) for n in parse_attached(json.loads(fixture_text("ip-addr.json")))}
+    assert {"192.168.1.0/24", "10.8.0.0/24", "127.0.0.0/8"} <= nets
+    v6 = parse_attached(
+        [{"addr_info": [{"family": "inet6", "local": "2001:db8::5", "prefixlen": 64}]}]
+    )
+    assert [str(n) for n in v6] == ["2001:db8::/64"]
+
+
+async def test_policies_refresh_attached_networks(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = [(ipaddress.ip_network("10.0.0.0/24"),), (ipaddress.ip_network("10.1.0.0/24"),)]
+
+    async def fake_attached() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+        return seen.pop(0)
+
+    monkeypatch.setattr(helper, "attached_networks", fake_attached)
+    extra = ipaddress.ip_network("172.16.5.0/24")
+    policies = Policies(scripts=["http-headers"], nets=[extra], ttl=0)
+    first = await policies.current()
+    assert "http-headers" in first.scripts and "ssl-cert" in first.scripts
+    assert [str(n) for n in first.nets] == ["10.0.0.0/24", "172.16.5.0/24"]
+    assert [str(n) for n in (await policies.current()).nets] == ["10.1.0.0/24", "172.16.5.0/24"]

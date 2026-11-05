@@ -53,8 +53,11 @@ root on the host network namespace, which is exactly why the capability set is m
 
 The container runs as you, with no capabilities. A small root daemon on the host
 (`lanwatch-helper`) executes only allowlisted `nmap`, `arp-scan`, `ip` and `ping`
-invocations whose arguments are validated against patterns; targets must be IP
-addresses or CIDRs. No shell, no file arguments, no script args.
+invocations whose arguments are validated against patterns. Only the nmap scripts lanwatch
+itself uses may run, and targets must lie inside networks the host has an address in;
+extend either with `--allow-script NAME` / `--allow-net CIDR` on the helper (or
+`LANWATCH_HELPER_ALLOW_SCRIPTS` / `LANWATCH_HELPER_ALLOW_NETS`). No shell, no file
+arguments, no script args.
 
 ```sh
 # host: helper

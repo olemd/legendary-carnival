@@ -81,7 +81,7 @@ gateway=$(ip -4 route show default | awk '{ print $3; exit }')
 as_service_user "$PY" - "$SOCK" "$gateway" <<'PYEOF' || fail "scan through the helper failed"
 import asyncio, sys
 from pathlib import Path
-from lanwatch.collectors.base import HelperExecutor
+from lanwatch.collectors.base import CommandError, HelperExecutor
 
 async def main() -> None:
     ex = HelperExecutor(Path(sys.argv[1]))
@@ -92,6 +92,14 @@ async def main() -> None:
         rc, out, err = await ex.run(["nmap", "-oX", "-", "-n", "-Pn", *flags, target], 300)
         assert rc == 0 and "<nmaprun" in out and "<port " in out, (flags, rc, err[-400:])
         print("nmap", *flags, target, "-> ok")
+    # The helper is the privilege boundary: nothing beyond this LAN, no other scripts.
+    for argv in (["nmap", "-sn", "8.8.8.8"], ["nmap", "--script=vuln", target]):
+        try:
+            await ex.run(argv, 30)
+        except CommandError as e:
+            print(*argv, "-> refused:", str(e)[:70])
+        else:
+            raise AssertionError(f"helper ran {argv}")
 
 asyncio.run(main())
 PYEOF

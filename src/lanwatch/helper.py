@@ -11,7 +11,11 @@ Protocol: one JSON object per line over a unix socket.
   anything else, or an argv outside the allowlist    -> {"error": "..."}
 
 The allowlist is the whole security model: only four binaries, only flags lanwatch itself
-generates, targets must parse as IP addresses or networks. No shell, no files, no script args.
+generates, only the nmap scripts lanwatch uses, and only targets inside networks this host
+is directly attached to. No shell, no files, no script args. Whoever controls the client
+can therefore at most make this host scan its own LAN with the scripts it already runs.
+Anything more (another script, a routed subnet) has to be allowed here, on the privileged
+side, with --allow-script / --allow-net.
 """
 
 from __future__ import annotations
@@ -28,10 +32,13 @@ import re
 import signal
 import socket
 import sys
-from collections.abc import Mapping
+import time
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from lanwatch.collectors.base import have, privileged, run_cmd
+from lanwatch.config import ScanConfig
 from lanwatch.logging_setup import setup_logging
 
 log = logging.getLogger("lanwatch.helper")
@@ -83,17 +90,87 @@ _COMPILED_PAIRED = {
 _COMPILED_EXTRA = {b: re.compile(f"^(?:{p})$") for b, p in _EXTRA_TARGETS.items()}
 
 
-def _is_target(arg: str) -> bool:
-    if "%" in arg:  # scope ids are free-form in ipaddress; only _EXTRA_TARGETS may carry one
-        return False
+Net = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+# Every nmap script lanwatch can ask for with its default configuration: the service-scan
+# scripts, the optional vulners lookup and the two broadcast probes.
+DEFAULT_SCRIPTS = frozenset(
+    {
+        *ScanConfig().scripts,
+        "vulners",
+        "broadcast-dhcp-discover",
+        "broadcast-dns-service-discovery",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Policy:
+    """The part of the allowlist that depends on this installation rather than on fixed
+    patterns: which nmap scripts may run, and which networks may be scanned."""
+
+    scripts: frozenset[str]
+    nets: tuple[Net, ...]
+
+    def allows_target(self, target: Net) -> bool:
+        return any(
+            target.version == net.version and target.subnet_of(net)  # type: ignore[arg-type]
+            for net in self.nets
+        )
+
+
+def parse_attached(data: object) -> tuple[Net, ...]:
+    """The networks of every address in `ip -j addr show` output, IPv4 and IPv6."""
+    nets: list[Net] = []
+    for iface in data if isinstance(data, list) else []:
+        for a in iface.get("addr_info", []) if isinstance(iface, dict) else []:
+            try:
+                nets.append(ipaddress.ip_interface(f"{a['local']}/{a['prefixlen']}").network)
+            except (KeyError, TypeError, ValueError):
+                continue
+    return tuple(dict.fromkeys(nets))
+
+
+async def attached_networks() -> tuple[Net, ...]:
+    """Networks this host has an address in. Empty when `ip` is unavailable: the helper then
+    refuses every target rather than guess (fail closed)."""
+    rc, out, _ = await run_cmd(["ip", "-j", "addr", "show"], 10)
+    if rc != 0:
+        return ()
     try:
-        ipaddress.ip_network(arg, strict=False)
-        return True
+        return parse_attached(json.loads(out))
     except ValueError:
-        return False
+        return ()
 
 
-def validate_argv(argv: list[str]) -> str | None:
+class Policies:
+    """Hands out the current Policy. Attached networks are re-read at most every `ttl`
+    seconds, so a new address or VLAN is picked up without restarting the helper."""
+
+    def __init__(self, scripts: Iterable[str] = (), nets: Iterable[Net] = (), ttl: float = 30):
+        self._scripts = DEFAULT_SCRIPTS | frozenset(scripts)
+        self._extra = tuple(nets)
+        self._ttl = ttl
+        self._attached: tuple[Net, ...] = ()
+        self._read_at = float("-inf")
+
+    async def current(self) -> Policy:
+        if time.monotonic() - self._read_at > self._ttl:
+            self._attached = await attached_networks()
+            self._read_at = time.monotonic()
+        return Policy(self._scripts, (*self._attached, *self._extra))
+
+
+def _target(arg: str) -> Net | None:
+    if "%" in arg:  # scope ids are free-form in ipaddress; only _EXTRA_TARGETS may carry one
+        return None
+    try:
+        return ipaddress.ip_network(arg, strict=False)
+    except ValueError:
+        return None
+
+
+def validate_argv(argv: list[str], policy: Policy) -> str | None:
     """Return None when argv is allowed, else the reason it is not."""
     if not argv or not all(isinstance(a, str) for a in argv):
         return "argv must be a non-empty list of strings"
@@ -114,9 +191,22 @@ def validate_argv(argv: list[str]) -> str | None:
             i += 2
             continue
         if any(p.match(arg) for p in patterns):
+            if arg.startswith("--script="):
+                for name in arg.removeprefix("--script=").split(","):
+                    if name not in policy.scripts:
+                        return (
+                            f"nmap script not allowed: {name!r}"
+                            f" (start lanwatch-helper with --allow-script {name})"
+                        )
             i += 1
             continue
-        if binary in _TARGET_BINARIES and _is_target(arg):
+        target = _target(arg) if binary in _TARGET_BINARIES else None
+        if target is not None:
+            if not policy.allows_target(target):
+                return (
+                    f"target {arg} is outside the networks this host is attached to"
+                    f" (start lanwatch-helper with --allow-net {target})"
+                )
             i += 1
             continue
         if extra is not None and extra.match(arg):
@@ -126,7 +216,9 @@ def validate_argv(argv: list[str]) -> str | None:
     return None
 
 
-async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, object]:
+async def handle_request(
+    payload: object, sem: asyncio.Semaphore, policy: Policy
+) -> dict[str, object]:
     if not isinstance(payload, dict):
         return {"error": "request must be a JSON object"}
     op = payload.get("op")
@@ -140,7 +232,7 @@ async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, o
         argv = payload.get("argv")
         if not isinstance(argv, list):
             return {"error": "argv must be a list"}
-        reason = validate_argv(argv)
+        reason = validate_argv(argv, policy)
         if reason:
             log.warning("refused: %s", reason)
             return {"error": reason}
@@ -155,12 +247,12 @@ async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, o
 
 
 async def _answer_while_connected(
-    payload: object, sem: asyncio.Semaphore, reader: asyncio.StreamReader
+    payload: object, sem: asyncio.Semaphore, policy: Policy, reader: asyncio.StreamReader
 ) -> dict[str, object] | None:
     """Handle one request, but stop (and kill the command) if the client hangs up first.
     A client sends one line and then only waits, so end-of-file on its side means it has
     gone: stopped, restarted or killed. Returns None in that case."""
-    work = asyncio.create_task(handle_request(payload, sem))
+    work = asyncio.create_task(handle_request(payload, sem, policy))
     hangup = asyncio.create_task(reader.read(1))
     try:
         await asyncio.wait({work, hangup}, return_when=asyncio.FIRST_COMPLETED)
@@ -194,11 +286,13 @@ async def _serve(
     group: str | None,
     concurrency: int,
     inherited: socket.socket | None = None,
+    policies: Policies | None = None,
 ) -> None:
     """Serve until SIGINT/SIGTERM. With `inherited` (a listening socket from systemd) the
     socket path, its permissions and its lifetime belong to systemd and are left alone;
     otherwise the helper creates and removes the socket itself."""
     sem = asyncio.Semaphore(concurrency)
+    policies = policies or Policies()
 
     async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -208,7 +302,7 @@ async def _serve(
             except ValueError:
                 payload = None
             reply = (
-                await _answer_while_connected(payload, sem, reader)
+                await _answer_while_connected(payload, sem, await policies.current(), reader)
                 if payload is not None
                 else {"error": "bad JSON"}
             )
@@ -254,6 +348,12 @@ async def _serve(
     log.info("stopped")
 
 
+def _env_list(name: str) -> list[str]:
+    """A comma- or space-separated environment variable as a list (a systemd drop-in with
+    Environment= is the easy way to extend the packaged helper)."""
+    return [x for x in re.split(r"[,\s]+", os.environ.get(name, "")) if x]
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="lanwatch-helper", description=__doc__.split("\n", 2)[0])
     p.add_argument(
@@ -269,8 +369,32 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--concurrency", type=int, default=2)
     p.add_argument("--log-level", default="info")
+    p.add_argument(
+        "--allow-script",
+        action="append",
+        default=_env_list("LANWATCH_HELPER_ALLOW_SCRIPTS"),
+        metavar="NAME",
+        help="also allow this nmap script (repeatable; or LANWATCH_HELPER_ALLOW_SCRIPTS=a,b)."
+        " Needed for scripts added to scan.scripts in the lanwatch config",
+    )
+    p.add_argument(
+        "--allow-net",
+        action="append",
+        default=_env_list("LANWATCH_HELPER_ALLOW_NETS"),
+        metavar="CIDR",
+        help="also allow targets in this network (repeatable; or LANWATCH_HELPER_ALLOW_NETS)."
+        " Needed for routed subnets listed in network.subnets",
+    )
     a = p.parse_args(argv)
     setup_logging(a.log_level)
+    bad = [n for n in a.allow_script if not re.fullmatch(r"[a-z0-9-]+", n)]
+    if bad:
+        p.error(f"not an nmap script name: {', '.join(bad)}")
+    try:
+        nets = [ipaddress.ip_network(n, strict=False) for n in a.allow_net]
+    except ValueError as e:
+        p.error(f"--allow-net: {e}")
+    policies = Policies(a.allow_script, nets)
     if not privileged():
         log.warning("neither root nor CAP_NET_RAW: raw-socket scans will be unavailable")
     fd = systemd_socket_fd(os.environ, os.getpid())
@@ -278,7 +402,7 @@ def main(argv: list[str] | None = None) -> None:
     # The variables are addressed to this process only; keep them away from nmap and friends.
     for var in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
         os.environ.pop(var, None)
-    asyncio.run(_serve(a.socket, a.group, a.concurrency, inherited))
+    asyncio.run(_serve(a.socket, a.group, a.concurrency, inherited, policies))
 
 
 if __name__ == "__main__":

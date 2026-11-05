@@ -17,13 +17,12 @@ from lanwatch.collectors.infra import (
 )
 from lanwatch.collectors.services import PortObservation, PortSet
 from lanwatch.config import Config, ScanConfig
-from lanwatch.helper import validate_argv
 from lanwatch.models import FindingStatus, HostObservation
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.engine import Engine
 from lanwatch.rules.versions import version_tuple
 from lanwatch.store import Store
-from tests.conftest import fixture_text
+from tests.conftest import fixture_text, helper_refusal
 
 SOAP_MAPPING = """<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
 <u:GetGenericPortMappingEntryResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
@@ -61,8 +60,8 @@ def test_ipv6_neigh_and_args() -> None:
     ]
     assert parse_ipv6_neigh(data) == {"aa:bb:cc:00:00:01": ["2a01:4f8::10", "2a01:4f8::11"]}
     cfg = ScanConfig()
-    assert validate_argv(build_ipv6_scan_args(["2001:db8::10"], cfg)) is None
-    assert validate_argv(build_broadcast_args("eth0", cfg)) is None
+    assert helper_refusal(build_ipv6_scan_args(["2001:db8::10"], cfg)) is None
+    assert helper_refusal(build_broadcast_args("eth0", cfg)) is None
 
 
 async def test_upnp_description_and_mappings() -> None:

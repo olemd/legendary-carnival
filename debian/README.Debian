@@ -33,10 +33,19 @@ Services and privileges
   lanwatch-helper.service  user lanwatch-helper, CAP_NET_RAW only. Runs nmap, arp-scan,
                            ip and ping on behalf of lanwatch.service.
 
-Nothing runs as root. The helper accepts only command lines that match an allowlist of
-those four programs and their flags; targets must be IP addresses or networks. Within
-that, it will run any nmap script by name against any address, so it limits what a
-compromised lanwatch.service could do to network scanning rather than preventing it.
+Nothing runs as root. The helper accepts only command lines that match an allowlist: those
+four programs, the flags lanwatch generates, the nmap scripts lanwatch uses, and targets
+inside networks this machine has an address in. A compromised lanwatch.service could
+therefore at most make this machine scan its own LAN with the scripts it already runs.
+
+If you add scripts to scan.scripts or list routed subnets in network.subnets, allow them
+on the helper as well, otherwise it refuses those scans (the Status page shows the error):
+
+  sudo systemctl edit lanwatch-helper
+      [Service]
+      Environment=LANWATCH_HELPER_ALLOW_SCRIPTS=http-headers,ftp-anon
+      Environment=LANWATCH_HELPER_ALLOW_NETS=10.20.0.0/24
+  sudo systemctl restart lanwatch-helper
 
 Logs: journalctl -u lanwatch -u lanwatch-helper
 
