@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from lanwatch.config import Config
 from lanwatch.llm.client import LlmError, LlmUnavailable, OllamaClient
 from lanwatch.llm.prompts import load_prompt, render
+from lanwatch.logging_setup import with_heartbeat
 from lanwatch.models import Device, FindingRow, FindingStatus, ServiceRow, iso, local_str, now_utc
 from lanwatch.rules.engine import all_rules
 from lanwatch.store import Store
@@ -140,7 +141,11 @@ class LlmService:
         last_error = ""
         for attempt in range(2):
             try:
-                result = await self.client.chat_json(system, user, schema)
+                result = await with_heartbeat(
+                    self.client.chat_json(system, user, schema),
+                    f"LLM {prompt_name} ({self.config.llm.model})",
+                    log,
+                )
             except LlmUnavailable as e:
                 self.unavailable = str(e)
                 log.warning("LLM unavailable, skipping LLM tasks this round: %s", e)

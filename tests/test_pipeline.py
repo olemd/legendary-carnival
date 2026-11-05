@@ -38,7 +38,12 @@ async def test_run_discovery_end_to_end(
         Interface("eth0", "aa:bb:cc:dd:ee:ff", [ipaddress.IPv4Interface("192.168.1.10/24")]),
     ]
     backend = FakeBackend()
-    backend.hosts = [HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="fake")]
+    backend.hosts = [
+        HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="fake"),
+        # nmap lists the scanning machine too, without a MAC; it must not become a second
+        # device next to the one known from the interface list.
+        HostObservation(ip="192.168.1.10", source="fake"),
+    ]
 
     async def fake_ifaces(ex: object = None) -> list[Interface]:
         return ifaces
@@ -49,6 +54,10 @@ async def test_run_discovery_end_to_end(
     async def no_nmap(ex: object) -> bool:
         return False
 
+    async def gateways(ex: object = None) -> list[str]:
+        return ["192.168.1.1"]  # not this machine's real routing table
+
+    monkeypatch.setattr(pipeline, "default_gateways", gateways)
     monkeypatch.setattr(pipeline, "list_interfaces", fake_ifaces)
     monkeypatch.setattr(pipeline, "select_backend", fake_select)
     monkeypatch.setattr(pipeline, "nmap_available", no_nmap)
@@ -57,8 +66,11 @@ async def test_run_discovery_end_to_end(
     first = await pipeline.run_discovery(config, store)
     assert first.baseline and first.backend == "fake"
     assert first.subnets == ["192.168.1.0/24 via eth0"]
-    assert first.hosts == 2  # gateway + this host itself
+    assert first.hosts == 2  # gateway + this host itself, once
     assert config.overview_path.exists()
+    assert store.device_by_key("ip:192.168.1.10") is None
+    assert store.meta_get("net.pin.192.168.1.1") == "aa:bb:cc:00:00:01"  # gateway pinned
+    assert not [f for f in store.findings() if f.rule_id == "net.ip-conflict"]
 
     backend.hosts.append(HostObservation(ip="192.168.1.99", mac="aa:bb:cc:00:00:99", source="fake"))
     backend.hosts.append(HostObservation(ip="192.168.1.50", mac="aa:bb:cc:00:00:50", source="fake"))

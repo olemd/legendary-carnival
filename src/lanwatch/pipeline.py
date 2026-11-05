@@ -97,14 +97,18 @@ async def run_inventory(
 
     log.info("%s scan of %d devices (%s profile)", kind, len(ips), config.scan.profile)
     snapshot_id = store.begin_snapshot(kind, "nmap")
+    log.debug("targets: %s", ", ".join(ips))
     result = await scan_services(ex, ips, config.scan, deep=deep)
     by_ip = {h.ip: h for h in result.hosts}
     diffs: dict[int, ServiceDiff] = {}
     for d in targets.values():
         host = by_ip.get(d.ip or "")
         if host is None:
+            log.debug("%s (%s): no answer", d.ip, d.label)
             continue  # host did not answer this time; leave its services as they were
         diffs[d.id] = store.record_services(snapshot_id, d.id, host.ports, result.scanned, deep)
+        open_ports = [f"{p.port}/{p.proto}" for p in host.ports if p.state == "open"]
+        log.debug("%s (%s): %s", d.ip, d.label, ", ".join(open_ports) or "no open ports")
     store.finish_snapshot(snapshot_id, len(diffs))
 
     ctx = RuleContext(
@@ -274,14 +278,18 @@ async def run_discovery(
 
     snapshot_id = store.begin_snapshot("discovery", backend.name)
     hosts = await backend.discover(ex, subnets, config.scan)
-    for ip, mac in self_observations(ifaces, subnets):
-        hosts.append(HostObservation(ip=ip, mac=mac, source="self"))
+    # This machine knows its own MAC addresses; a scan that reports it at all (nmap does,
+    # without a MAC) would otherwise make it a second device on the same IP.
+    own = dict(self_observations(ifaces, subnets))
+    hosts = [h for h in hosts if h.ip not in own]
+    hosts.extend(HostObservation(ip=ip, mac=mac, source="self") for ip, mac in own.items())
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
 
     is_baseline = store.finished_snapshot_count("discovery") == 0
     previous = store.latest_snapshot("discovery")
     rec = store.record_hosts(snapshot_id, hosts)
     store.finish_snapshot(snapshot_id, len(rec.seen_device_ids))
+    log.debug("answered: %s", ", ".join(sorted(h.ip for h in hosts)) or "nobody")
     # Note who holds the gateway and the other addresses the network depends on, so the
     # rules can tell when that changes.
     gateways = await default_gateways(ex)

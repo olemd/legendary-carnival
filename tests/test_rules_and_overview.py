@@ -176,6 +176,11 @@ def test_two_devices_answering_for_one_ip(store: Store, config: Config) -> None:
     engine.run(_round(store, config, [printer, laptop]))
     assert _open_titles(store, "net.ip-conflict") == []
 
+    # The same address seen once with and once without a MAC is not two devices.
+    no_mac = HostObservation(ip="10.0.0.20", source="t")
+    engine.run(_round(store, config, [printer, laptop, no_mac]))
+    assert _open_titles(store, "net.ip-conflict") == []
+
 
 def test_gateway_answering_from_another_mac(store: Store, config: Config) -> None:
     import json

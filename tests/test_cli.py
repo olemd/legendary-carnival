@@ -50,3 +50,28 @@ def test_devices_and_findings_json(tmp_path: Path) -> None:
     assert r.exit_code == 0 and r.output.strip() == "[]"
     r = runner.invoke(app, ["--data-dir", str(tmp_path), "services", "1"])
     assert r.exit_code == 0 and "no open services" in r.output
+
+
+def test_verbose_before_or_after_the_command(tmp_path: Path) -> None:
+    import logging
+
+    lanwatch_log = logging.getLogger("lanwatch")
+    base = ["--data-dir", str(tmp_path)]
+    try:
+        # After the command, where people look for it. `digest` with the LLM off returns
+        # at once, but only after the option has been applied.
+        r = runner.invoke(
+            app, [*base, "digest", "--verbose"], env={"LANWATCH_LLM__ENABLED": "false"}
+        )
+        assert r.exit_code in (0, 1), r.output
+        assert lanwatch_log.level == logging.DEBUG
+
+        # A new invocation without it is quiet again.
+        runner.invoke(app, [*base, "version"])
+        assert lanwatch_log.level == logging.NOTSET
+
+        # Before the command works for every command.
+        runner.invoke(app, ["-v", *base, "version"])
+        assert lanwatch_log.level == logging.DEBUG
+    finally:
+        lanwatch_log.setLevel(logging.NOTSET)

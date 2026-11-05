@@ -393,3 +393,63 @@ async def test_policies_refresh_attached_networks(monkeypatch: pytest.MonkeyPatc
     assert "http-headers" in first.scripts and "ssl-cert" in first.scripts
     assert [str(n) for n in first.nets] == ["10.0.0.0/24", "172.16.5.0/24"]
     assert [str(n) for n in (await policies.current()).nets] == ["10.1.0.0/24", "172.16.5.0/24"]
+
+
+async def test_heartbeat_reports_start_progress_and_end_only_when_verbose(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from lanwatch import logging_setup
+    from lanwatch.logging_setup import with_heartbeat
+
+    monkeypatch.setattr(logging_setup, "HEARTBEAT_S", 0.02)
+    log = logging.getLogger("lanwatch.test-heartbeat")
+
+    async def slow_scan() -> str:
+        await asyncio.sleep(0.07)
+        return "done"
+
+    # Normal mode: just the result, nothing logged.
+    with caplog.at_level(logging.INFO, logger=log.name):
+        assert await with_heartbeat(slow_scan(), "nmap 10.0.0.1", log) == "done"
+    assert caplog.records == []
+
+    with caplog.at_level(logging.DEBUG, logger=log.name):
+        assert await with_heartbeat(slow_scan(), "nmap 10.0.0.1", log) == "done"
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages[0] == "started: nmap 10.0.0.1"
+    assert any(m.startswith("still running after") for m in messages[1:-1])
+    assert messages[-1].startswith("finished in") and messages[-1].endswith("nmap 10.0.0.1")
+
+    # Cancelling the wait cancels the work too (this is how a stopped scan dies).
+    cancelled = asyncio.Event()
+
+    async def scan_for_ages() -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    with caplog.at_level(logging.DEBUG, logger=log.name):
+        waiting = asyncio.create_task(with_heartbeat(scan_for_ages(), "nmap", log))
+        await asyncio.sleep(0.03)
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+
+async def test_verbose_shows_the_command_a_local_executor_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    _fake_binary(tmp_path, "nmap")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with caplog.at_level(logging.DEBUG, logger="lanwatch.collectors.base"):
+        await LocalExecutor().run(["nmap", "-sn", "10.0.0.0/24"], 5)
+    messages = [r.getMessage() for r in caplog.records]
+    assert "started: nmap -sn 10.0.0.0/24" in messages
+    assert any(m.startswith("finished in") for m in messages)

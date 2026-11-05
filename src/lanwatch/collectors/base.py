@@ -11,9 +11,17 @@ import shutil
 from pathlib import Path
 from typing import Protocol
 
+from lanwatch.logging_setup import with_heartbeat
+
 log = logging.getLogger(__name__)
 
 CmdResult = tuple[int, str, str]
+
+
+def _shown(args: list[str], limit: int = 240) -> str:
+    """A command line for the log, cut short when the target list is long."""
+    text = " ".join(args)
+    return text if len(text) <= limit else text[:limit] + f" … ({len(args)} arguments)"
 
 
 class CommandError(RuntimeError):
@@ -103,7 +111,7 @@ class LocalExecutor:
     name = "local"
 
     async def run(self, args: list[str], timeout: float) -> CmdResult:
-        return await run_cmd(args, timeout)
+        return await with_heartbeat(run_cmd(args, timeout), _shown(args), log)
 
     async def which(self, binary: str) -> tuple[bool, bool]:
         return have(binary), privileged()
@@ -140,7 +148,8 @@ class HelperExecutor:
         return reply
 
     async def run(self, args: list[str], timeout: float) -> CmdResult:
-        r = await self._request({"op": "run", "argv": args, "timeout": timeout}, timeout)
+        request = self._request({"op": "run", "argv": args, "timeout": timeout}, timeout)
+        r = await with_heartbeat(request, f"(via helper) {_shown(args)}", log)
         return int(str(r.get("rc", -3))), str(r.get("stdout", "")), str(r.get("stderr", ""))
 
     async def which(self, binary: str) -> tuple[bool, bool]:

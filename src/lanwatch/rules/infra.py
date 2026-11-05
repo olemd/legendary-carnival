@@ -233,8 +233,11 @@ class IpConflictRule(Rule):
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
         infra = infrastructure_ips(ctx.store)
         out: list[Finding] = []
-        for ip, holders in ctx.store.ip_holders().items():
-            if len(holders) < 2:
+        for ip, answers in ctx.store.ip_holders().items():
+            # Only answers that came with a MAC address can show two different devices; a
+            # host seen without one (a ping sweep, a routed subnet) proves nothing.
+            holders = [(did, mac) for did, mac in answers if mac]
+            if len({mac for _, mac in holders}) < 2:
                 continue
             role = infra.get(ip)
             who = [_who(ctx, did, mac) for did, mac in holders]

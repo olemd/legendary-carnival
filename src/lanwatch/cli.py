@@ -16,7 +16,7 @@ import typer
 
 from lanwatch import __version__
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
-from lanwatch.logging_setup import setup_logging
+from lanwatch.logging_setup import set_verbose, setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
@@ -38,6 +38,19 @@ class State:
     loaded: LoadedConfig
 
 
+# Offered both before the command (`lanwatch -v scan`) and on the commands that can take
+# minutes (`lanwatch scan --verbose`), since that is where people look for it.
+VerboseOpt = Annotated[
+    bool,
+    typer.Option(
+        "--verbose",
+        "-v",
+        help="Show each command and LLM call as it starts and finishes, per-device results,"
+        " and a sign of life every 30 seconds while waiting.",
+    ),
+]
+
+
 def _state(ctx: typer.Context) -> State:
     st = ctx.obj
     assert isinstance(st, State)
@@ -57,8 +70,11 @@ def main(
     data_dir: Annotated[Path | None, typer.Option(help="Override data_dir.")] = None,
     log_level: Annotated[str, typer.Option(help="debug, info, warning, error")] = "info",
     log_format: Annotated[str, typer.Option(help="text or json")] = "text",
+    verbose: VerboseOpt = False,
 ) -> None:
     setup_logging(log_level, "json" if log_format == "json" else "text")
+    if verbose:
+        set_verbose()
     overrides: dict[str, Any] = {}
     if data_dir is not None:
         overrides["data_dir"] = str(data_dir)
@@ -79,8 +95,11 @@ def scan(
     ctx: typer.Context,
     discovery_only: Annotated[bool, typer.Option(help="Skip the service inventory.")] = False,
     deep: Annotated[bool, typer.Option(help="Full port range instead of top ports.")] = False,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Run one discovery round plus a service inventory of online devices, then exit."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
 
     async def _scan() -> None:
@@ -118,8 +137,11 @@ def inventory(
     deep: Annotated[
         bool, typer.Option(help="Full port range, plus UDP top ports as root.")
     ] = False,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Service inventory (nmap) of online devices, without a discovery round first."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     try:
         with _open_store(ctx) as store:
@@ -142,8 +164,10 @@ def _infra_line(f: Any) -> str:
 
 
 @app.command()
-def infra(ctx: typer.Context) -> None:
+def infra(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
     """Infra probes now: DHCP servers, mDNS, UPnP (+ router port mappings), IPv6 exposure."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     try:
         with _open_store(ctx) as store:
@@ -195,8 +219,10 @@ def web(ctx: typer.Context) -> None:
 
 
 @app.command()
-def run(ctx: typer.Context) -> None:
+def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
     """Run continuously: discovery, inventory, deep scans and the web UI in one process."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     log.info("lanwatch %s starting, data_dir=%s", __version__, cfg.data_dir)
 
@@ -395,8 +421,11 @@ def explain(
     ctx: typer.Context,
     finding_id: str,
     refresh: Annotated[bool, typer.Option(help="Ignore the stored explanation.")] = False,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Explain one finding with the local LLM (and store the explanation)."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import after_round
 
@@ -421,8 +450,11 @@ def explain(
 def classify(
     ctx: typer.Context,
     device_ids: Annotated[list[int] | None, typer.Argument(help="Default: all devices.")] = None,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Classify devices with the local LLM (kind + one-line description)."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import after_round
 
@@ -441,8 +473,10 @@ def classify(
 
 
 @app.command()
-def digest(ctx: typer.Context) -> None:
+def digest(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
     """Write today's digest now (open findings + last 24h) and print it."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import catch_up, write_digest
 
@@ -457,8 +491,10 @@ def digest(ctx: typer.Context) -> None:
 
 
 @app.command()
-def suggest(ctx: typer.Context) -> None:
+def suggest(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
     """Ask the local LLM for structural improvements based on the whole inventory."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import write_suggestions
 
@@ -476,9 +512,12 @@ def ask(
     question: list[str],
     no_actions: Annotated[bool, typer.Option("--no-actions", help="Read-only tools only.")] = False,
     quiet: Annotated[bool, typer.Option("-q", help="Hide the tool trace.")] = False,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Ask the local LLM about the network. It reads the inventory through tools and can
     act (ack, name, scan) when you ask it to."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.hooks import ask as _ask
 
@@ -599,8 +638,11 @@ def llm_eval(
     file: Annotated[
         Path | None, typer.Option(help="JSONL golden set (overrides suite path).")
     ] = None,
+    verbose: VerboseOpt = False,
 ) -> None:
     """Score a model on lanwatch's own tasks: device classification and tool-calling chat."""
+    if verbose:
+        set_verbose()
     cfg = _state(ctx).loaded.config
     if model:
         cfg = cfg.model_copy(update={"llm": cfg.llm.model_copy(update={"model": model})})
