@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import httpx2
 
 from lanwatch.config import LlmConfig
 
@@ -49,10 +49,12 @@ class LlmStatus:
 
 
 class OllamaClient:
-    def __init__(self, cfg: LlmConfig, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(self, cfg: LlmConfig, client: httpx2.AsyncClient | None = None) -> None:
         self.cfg = cfg
         self.base_url = cfg.base_url.rstrip("/")
-        self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(cfg.timeout_s, connect=5))
+        self._client = client or httpx2.AsyncClient(
+            timeout=httpx2.Timeout(cfg.timeout_s, connect=5)
+        )
         self._think_supported: bool | None = None
         self.tools_supported: bool | None = None
 
@@ -68,12 +70,12 @@ class OllamaClient:
             try:
                 v = await self._client.get(f"{self.base_url}/api/version", timeout=5)
                 version = str(v.json().get("version")) if v.is_success else None
-            except httpx.HTTPError:
+            except httpx2.HTTPError:
                 pass
             wanted = self.cfg.model
             present = wanted in models or f"{wanted}:latest" in models
             return LlmStatus(True, version, models, present)
-        except (httpx.HTTPError, ValueError) as e:
+        except (httpx2.HTTPError, ValueError) as e:
             return LlmStatus(False, None, [], False, error=str(e))
 
     async def chat_json(
@@ -136,11 +138,11 @@ class OllamaClient:
                 )
             r.raise_for_status()
             data = r.json()
-        except httpx.ConnectError as e:
+        except httpx2.ConnectError as e:
             raise LlmUnavailable(f"cannot reach {self.base_url}: {e}") from e
-        except httpx.TimeoutException as e:
+        except httpx2.TimeoutException as e:
             raise LlmError(f"LLM timeout after {self.cfg.timeout_s}s") from e
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             raise LlmError(f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}") from e
         except ValueError as e:
             raise LlmError(f"LLM returned non-JSON body: {e}") from e

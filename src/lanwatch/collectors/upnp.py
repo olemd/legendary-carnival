@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import httpx
+import httpx2
 
 log = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ def parse_mapping_response(xml_text: str) -> PortMapping | None:
         return None
 
 
-async def fetch_mappings(client: httpx.AsyncClient, d: UpnpDevice) -> None:
+async def fetch_mappings(client: httpx2.AsyncClient, d: UpnpDevice) -> None:
     if not d.control_url or not d.service_type:
         return
     body, headers = _soap("GetExternalIPAddress", d.service_type, {})
@@ -244,7 +244,7 @@ async def fetch_mappings(client: httpx.AsyncClient, d: UpnpDevice) -> None:
         r = await client.post(d.control_url, content=body, headers=headers)
         if r.is_success:
             d.external_ip = _text(_find(ET.fromstring(r.text), "NewExternalIPAddress")) or None
-    except (httpx.HTTPError, ET.ParseError):
+    except (httpx2.HTTPError, ET.ParseError):
         pass
     for index in range(MAX_MAPPINGS):
         body, headers = _soap(
@@ -252,7 +252,7 @@ async def fetch_mappings(client: httpx.AsyncClient, d: UpnpDevice) -> None:
         )
         try:
             r = await client.post(d.control_url, content=body, headers=headers)
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             log.debug("upnp mapping query failed at %d: %s", index, e)
             break
         if not r.is_success:
@@ -276,14 +276,14 @@ async def discover_upnp(bind_ips: list[str], timeout: float = 3.0) -> list[UpnpD
         except OSError as e:
             log.warning("ssdp on %s failed: %s", ip, e)
     devices: list[UpnpDevice] = []
-    async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
+    async with httpx2.AsyncClient(timeout=5, follow_redirects=False) as client:
         for r in responses.values():
             host = urlparse(r.location).hostname or r.addr
             try:
                 resp = await client.get(r.location)
                 resp.raise_for_status()
                 d = parse_device_description(resp.text, r.location, host)
-            except (httpx.HTTPError, ET.ParseError) as e:
+            except (httpx2.HTTPError, ET.ParseError) as e:
                 log.debug("upnp description %s failed: %s", r.location, e)
                 d = UpnpDevice(addr=host, location=r.location)
             d.server = r.server[:80]

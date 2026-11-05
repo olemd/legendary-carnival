@@ -35,4 +35,4 @@ def setup_logging(level: str = "info", fmt: Literal["text", "json"] = "text") ->
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)

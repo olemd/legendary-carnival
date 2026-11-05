@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
+import httpx2
 
 from lanwatch.config import Config
 from lanwatch.models import FindingRow, FindingStatus, Severity, local_str
@@ -26,8 +26,8 @@ from lanwatch.store import Store
 log = logging.getLogger(__name__)
 
 
-def _make_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=15)
+def _make_client() -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(timeout=15)
 
 
 def channels(config: Config) -> list[Channel]:

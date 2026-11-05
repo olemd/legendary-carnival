@@ -213,7 +213,7 @@ report_dir = "/var/lib/lanwatch/reports"
 | pydantic | typede observasjoner og JSON-schema til LLM gratis |
 | typer | CLI |
 | sqlite3 (stdlib) | ingen tjeneste, én fil, enkel backup |
-| httpx | Ollama-klient |
+| httpx2 | Ollama-klient |
 | eksterne verktøy via subprocess | `arp-scan`, `nmap` (XML), `ssh-audit`, `miniupnpc`. Modne, ikke verdt å reimplementere |
 | pytest + opptak av XML-output | tester uten nett |
 | ruff + mypy strict | |

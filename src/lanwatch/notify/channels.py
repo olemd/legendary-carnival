@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Any, Protocol
 
-import httpx
+import httpx2
 
 from lanwatch.config import (
     EmailConfig,
@@ -53,7 +53,7 @@ class Channel(Protocol):
     name: str
     min_severity: Severity | None
 
-    async def send(self, n: Notification, client: httpx.AsyncClient) -> None: ...
+    async def send(self, n: Notification, client: httpx2.AsyncClient) -> None: ...
 
 
 NTFY_PRIORITY = {
@@ -72,7 +72,7 @@ class NtfyChannel:
         self.cfg = cfg
         self.min_severity = cfg.min_severity
 
-    async def send(self, n: Notification, client: httpx.AsyncClient) -> None:
+    async def send(self, n: Notification, client: httpx2.AsyncClient) -> None:
         headers = {
             "Title": n.title,
             "Priority": NTFY_PRIORITY.get(n.severity, "3") if n.severity else "3",
@@ -93,7 +93,7 @@ class WebhookChannel:
         self.cfg = cfg
         self.min_severity = cfg.min_severity
 
-    async def send(self, n: Notification, client: httpx.AsyncClient) -> None:
+    async def send(self, n: Notification, client: httpx2.AsyncClient) -> None:
         r = await client.post(self.cfg.url, json=n.payload(), headers=self.cfg.headers)
         r.raise_for_status()
 
@@ -110,7 +110,7 @@ class HomeAssistantChannel:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.cfg.token}", "Content-Type": "application/json"}
 
-    async def send(self, n: Notification, client: httpx.AsyncClient) -> None:
+    async def send(self, n: Notification, client: httpx2.AsyncClient) -> None:
         domain, _, service = self.cfg.service.partition(".")
         r = await client.post(
             f"{self.cfg.url.rstrip('/')}/api/services/{domain}/{service}",
@@ -119,7 +119,7 @@ class HomeAssistantChannel:
         )
         r.raise_for_status()
 
-    async def publish_state(self, summary: dict[str, Any], client: httpx.AsyncClient) -> None:
+    async def publish_state(self, summary: dict[str, Any], client: httpx2.AsyncClient) -> None:
         """sensor.lanwatch_* entities via the states API (dashboard-friendly, not persisted
         across HA restarts; HA re-creates them on the next update)."""
         base = f"{self.cfg.url.rstrip('/')}/api/states/"
@@ -170,5 +170,5 @@ class EmailChannel:
                 s.login(self.cfg.username, self.cfg.password or "")
             s.send_message(msg)
 
-    async def send(self, n: Notification, client: httpx.AsyncClient) -> None:
+    async def send(self, n: Notification, client: httpx2.AsyncClient) -> None:
         await asyncio.to_thread(self._send_sync, n)

@@ -385,29 +385,29 @@ def test_cli_timeline_search_ask(tmp_path: Path) -> None:
 def test_tools_unsupported_falls_back_to_context(store: Store, tmp_path: Path) -> None:
     import asyncio
 
-    import httpx
+    import httpx2
 
     config = Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, chat_num_ctx=4096))
     _seed_chat(store)
     seen: list[dict[str, Any]] = []
 
-    def handle(req: httpx.Request) -> httpx.Response:
+    def handle(req: httpx2.Request) -> httpx2.Response:
         body = json.loads(req.content)
         seen.append(body)
         if "tools" in body:
-            return httpx.Response(
+            return httpx2.Response(
                 400, json={"error": "registry.ollama.ai/x does not support tools"}
             )
         system = body["messages"][0]["content"]
         if "Full inventory (tools unavailable)" not in system:
             # the client's own retry without tools; answer_question discards this reply
-            return httpx.Response(200, json={"message": {"role": "assistant", "content": "plain"}})
+            return httpx2.Response(200, json={"message": {"role": "assistant", "content": "plain"}})
         assert "OpenSSH 9.2" in system
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"message": {"role": "assistant", "content": "From the list: h1."}}
         )
 
-    client = OllamaClient(config.llm, httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    client = OllamaClient(config.llm, httpx2.AsyncClient(transport=httpx2.MockTransport(handle)))
     svc = LlmService(config, store, client)
     ans = asyncio.run(answer_question(svc, "Who runs ssh?"))
     assert ans is not None and ans.text == "From the list: h1." and ans.tools == []

@@ -5,7 +5,7 @@ import smtplib
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from lanwatch.config import (
@@ -27,17 +27,17 @@ from lanwatch.store import Store
 
 class Recorder:
     def __init__(self, fail_paths: set[str] | None = None) -> None:
-        self.calls: list[httpx.Request] = []
+        self.calls: list[httpx2.Request] = []
         self.fail_paths = fail_paths or set()
 
-    def transport(self) -> httpx.MockTransport:
-        def handle(req: httpx.Request) -> httpx.Response:
+    def transport(self) -> httpx2.MockTransport:
+        def handle(req: httpx2.Request) -> httpx2.Response:
             self.calls.append(req)
             if req.url.path in self.fail_paths:
-                return httpx.Response(500, text="boom")
-            return httpx.Response(200, json={})
+                return httpx2.Response(500, text="boom")
+            return httpx2.Response(200, json={})
 
-        return httpx.MockTransport(handle)
+        return httpx2.MockTransport(handle)
 
 
 def _finding(fid: str, sev: Severity, title: str = "t") -> Finding:
@@ -67,7 +67,7 @@ async def test_ntfy_channel_headers() -> None:
         NtfyConfig(enabled=True, topic="lan", token="tok", url="https://ntfy.example/")
     )
     n = ch.Notification("finding.new", "Title", "Body", Severity.CRITICAL)
-    async with httpx.AsyncClient(transport=rec.transport()) as client:
+    async with httpx2.AsyncClient(transport=rec.transport()) as client:
         await c.send(n, client)
     req = rec.calls[0]
     assert str(req.url) == "https://ntfy.example/lan"
@@ -94,7 +94,7 @@ async def test_webhook_payload_and_ha_calls() -> None:
         explanation=None,
     )
     n = ch.Notification("finding.new", "T", "B", Severity.MEDIUM, [row])
-    async with httpx.AsyncClient(transport=rec.transport()) as client:
+    async with httpx2.AsyncClient(transport=rec.transport()) as client:
         await ch.WebhookChannel(
             WebhookConfig(enabled=True, url="http://hook/x", headers={"X-A": "1"})
         ).send(n, client)
@@ -166,7 +166,7 @@ async def test_email_channel(monkeypatch: pytest.MonkeyPatch) -> None:
     c = ch.EmailChannel(
         EmailConfig(enabled=True, smtp_host="mail", username="u", password="p", to=["a@b", "c@d"])
     )
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         await c.send(ch.Notification("digest", "Sub", "Hello", None), client)
     assert sent["host"] == ("mail", 587) and sent["tls"] and sent["login"] == ("u", "p")
     assert sent["msg"]["To"] == "a@b, c@d" and sent["msg"]["Subject"] == "Sub"
@@ -177,7 +177,7 @@ async def test_dispatch_filters_batches_and_records(
 ) -> None:
     rec = Recorder(fail_paths={"/x"})
     monkeypatch.setattr(
-        dispatch, "_make_client", lambda: httpx.AsyncClient(transport=rec.transport())
+        dispatch, "_make_client", lambda: httpx2.AsyncClient(transport=rec.transport())
     )
     config = notify_config(
         tmp_path,
@@ -223,7 +223,7 @@ async def test_ha_sensors_published_every_round(
 ) -> None:
     rec = Recorder()
     monkeypatch.setattr(
-        dispatch, "_make_client", lambda: httpx.AsyncClient(transport=rec.transport())
+        dispatch, "_make_client", lambda: httpx2.AsyncClient(transport=rec.transport())
     )
     config = notify_config(tmp_path, home_assistant=HomeAssistantConfig(enabled=True, token="T"))
     await dispatch.after_round(config, store, [], [])

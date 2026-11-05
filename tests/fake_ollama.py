@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-import httpx
+import httpx2
 
 Handler = Callable[[str, str, dict[str, Any]], dict[str, Any] | str]
 # Tool-aware handler: gets the full message list and tool specs, returns either a text
@@ -22,25 +22,25 @@ class FakeOllama:
         self.reject_think = False
         self.tool_handler: ToolHandler | None = None
 
-    def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self._handle)
+    def transport(self) -> httpx2.MockTransport:
+        return httpx2.MockTransport(self._handle)
 
-    def client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=self.transport())
+    def client(self) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=self.transport())
 
-    def _handle(self, request: httpx.Request) -> httpx.Response:
+    def _handle(self, request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": m} for m in self.models]})
+            return httpx2.Response(200, json={"models": [{"name": m} for m in self.models]})
         if request.url.path == "/api/version":
-            return httpx.Response(200, json={"version": "0.0-fake"})
+            return httpx2.Response(200, json={"version": "0.0-fake"})
         if request.url.path != "/api/chat":
-            return httpx.Response(404)
+            return httpx2.Response(404)
         body = json.loads(request.content)
         self.requests.append(body)
         if self.reject_think and "think" in body:
-            return httpx.Response(400, json={"error": "model does not support thinking"})
+            return httpx2.Response(400, json={"error": "model does not support thinking"})
         if body["model"] not in self.models:
-            return httpx.Response(404, json={"error": "model not found"})
+            return httpx2.Response(404, json={"error": "model not found"})
         message: dict[str, Any]
         if body.get("tools") and self.tool_handler is not None:
             out = self.tool_handler(body["messages"], body["tools"])
@@ -66,7 +66,7 @@ class FakeOllama:
                 "role": "assistant",
                 "content": out if isinstance(out, str) else json.dumps(out),
             }
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "message": message,

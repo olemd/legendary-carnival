@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from lanwatch.collectors import upnp
@@ -68,13 +68,13 @@ def test_ipv6_neigh_and_args() -> None:
 async def test_upnp_description_and_mappings() -> None:
     calls: list[tuple[str, str]] = []
 
-    def handle(req: httpx.Request) -> httpx.Response:
+    def handle(req: httpx2.Request) -> httpx2.Response:
         action = req.headers.get("SOAPAction", "")
         calls.append((req.url.path, action))
         if req.url.path == "/desc.xml":
-            return httpx.Response(200, text=fixture_text("upnp-igd.xml"))
+            return httpx2.Response(200, text=fixture_text("upnp-igd.xml"))
         if "GetExternalIPAddress" in action:
-            return httpx.Response(200, text=SOAP_EXT_IP)
+            return httpx2.Response(200, text=SOAP_EXT_IP)
         if "GetGenericPortMappingEntry" in action:
             idx = int(req.content.decode().split("<NewPortMappingIndex>")[1].split("<")[0])
             rows = [
@@ -83,9 +83,11 @@ async def test_upnp_description_and_mappings() -> None:
             ]
             if idx < len(rows):
                 e, i, c, d = rows[idx]
-                return httpx.Response(200, text=SOAP_MAPPING.format(ext=e, int=i, client=c, desc=d))
-            return httpx.Response(500, text=SOAP_ERR)
-        return httpx.Response(404)
+                return httpx2.Response(
+                    200, text=SOAP_MAPPING.format(ext=e, int=i, client=c, desc=d)
+                )
+            return httpx2.Response(500, text=SOAP_ERR)
+        return httpx2.Response(404)
 
     r = upnp.parse_ssdp_response(
         b"HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.1:5000/desc.xml\r\n"
@@ -95,7 +97,7 @@ async def test_upnp_description_and_mappings() -> None:
     assert r and r.location == "http://192.168.1.1:5000/desc.xml" and r.server == "Linux UPnP/1.0"
     assert upnp.parse_ssdp_response(b"NOTIFY * HTTP/1.1\r\n", "x") is None
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         resp = await client.get(r.location)
         d = upnp.parse_device_description(resp.text, r.location, "192.168.1.1")
         assert d.is_igd and d.friendly_name == "Home Router" and d.model == "AC-3000 v2"
