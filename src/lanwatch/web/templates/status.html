@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Status · lanwatch{% endblock %}
+{% block content %}
+<h1>Status</h1>
+
+<h2>Scans</h2>
+{% if has_scheduler %}
+<div class="tbl"><table><thead><tr><th>Job</th><th>Schedule</th><th>State</th><th>Last completed</th><th>Last attempt</th><th>Next run</th><th><span class="vh">Action</span></th></tr></thead><tbody>
+{% for j in jobs %}
+<tr>
+  <td><strong>{{ j.name }}</strong></td>
+  <td class="muted">{{ j.schedule }}</td>
+  <td>{% if j.running_for is not none %}<span class="state on">running</span> <span class="muted">for {{ j.running_for | duration }}</span>{% else %}<span class="state">idle</span>{% endif %}</td>
+  <td class="ev">{{ (j.last_completed | local) if j.last_completed else 'never' }}</td>
+  <td>{% if j.last_error %}<span class="result-failed">failed</span>{% if j.failures > 1 %} <span class="muted">({{ j.failures }} in a row)</span>{% endif %}<br><span class="muted mono">{{ j.last_error }}</span>
+      {% elif j.last_duration_s is not none %}<span class="result-ok">ok</span> <span class="muted">took {{ j.last_duration_s | duration }}</span>
+      {% else %}<span class="muted">not since this start</span>{% endif %}</td>
+  <td class="muted">{% if j.running_for is not none %}-{% elif j.next_in_s < 1 %}queued{% else %}in {{ j.next_in_s | duration }}{% endif %}</td>
+  <td><form class="inline" method="post" action="/scan/{{ j.name }}"><button{% if j.running_for is not none %} disabled{% endif %}>Run now</button></form></td>
+</tr>
+{% endfor %}
+</tbody></table></div>
+<p class="muted">Jobs run one at a time. “Run now” queues the job behind whatever is running.</p>
+{% else %}
+<p class="empty">This process only serves the web UI (<code>lanwatch web</code>). Scans are run by <code>lanwatch run</code> or from the command line.</p>
+{% endif %}
+
+<section class="tiles" aria-label="System" style="margin-top:1.4rem">
+  <div class="tile">
+    <div class="tile-label">Scan privileges</div>
+    <dl class="kv">
+      <dt>Runs via</dt><dd>{% if capability.via == 'helper' %}helper <span class="muted mono">{{ capability.socket }}</span>{% else %}this process{% endif %}</dd>
+      {% if capability.error %}
+      <dt>Problem</dt><dd><span class="result-failed">unreachable</span> <span class="muted">{{ capability.error }}</span></dd>
+      {% else %}
+      <dt>Raw sockets</dt><dd>{% if capability.raw %}<span class="result-ok">yes</span>{% else %}<span class="result-failed">no</span> <span class="muted">ARP discovery, UDP scans and DHCP/mDNS probes are skipped</span>{% endif %}</dd>
+      <dt>nmap</dt><dd>{% if capability.nmap %}<span class="result-ok">installed</span>{% else %}<span class="result-failed">missing</span> <span class="muted">no service inventory</span>{% endif %}</dd>
+      <dt>arp-scan</dt><dd>{% if capability.arp_scan %}<span class="result-ok">installed</span>{% else %}<span class="muted">missing, discovery falls back to nmap</span>{% endif %}</dd>
+      {% endif %}
+    </dl>
+  </div>
+  <div class="tile">
+    <div class="tile-label">Local LLM</div>
+    <dl class="kv">
+      {% if not config.llm.enabled %}<dt>State</dt><dd class="muted">disabled in config</dd>
+      {% else %}
+      <dt>Server</dt><dd class="mono">{{ config.llm.base_url }}</dd>
+      <dt>Reachable</dt><dd>{% if llm.reachable %}<span class="result-ok">yes</span>{% if llm.version %} <span class="muted">Ollama {{ llm.version }}</span>{% endif %}{% else %}<span class="result-failed">no</span> <span class="muted">{{ llm.error }}</span>{% endif %}</dd>
+      <dt>Model</dt><dd><span class="mono">{{ config.llm.model }}</span> {% if llm.reachable %}{% if llm.model_present %}<span class="result-ok">present</span>{% else %}<span class="result-failed">not pulled</span>{% endif %}{% endif %}</dd>
+      {% endif %}
+    </dl>
+  </div>
+  <div class="tile">
+    <div class="tile-label">This instance</div>
+    <dl class="kv">
+      <dt>Version</dt><dd>{{ version }}</dd>
+      <dt>Data</dt><dd class="mono">{{ config.data_dir }}</dd>
+      <dt>Database</dt><dd>{{ '%.1f' | format(db_bytes / 1048576) }} MB <span class="muted">· {{ devices_total }} devices</span></dd>
+      <dt>Networks</dt><dd>{{ config.network.subnets if config.network.subnets is string else config.network.subnets | join(', ') }}</dd>
+    </dl>
+  </div>
+</section>
+{% if has_scheduler %}
+<script>
+// Reload when a scan starts or finishes, so the table above is never stale for long.
+(() => {
+  const shown = {{ (scan.job if scan else '') | tojson }};
+  setInterval(async () => {
+    try {
+      const r = await fetch('/api/status'); if (!r.ok) return;
+      const j = await r.json();
+      if ((j.running ? j.running.job : '') !== shown) location.reload();
+    } catch (e) { /* server restarting; try again next time */ }
+  }, 5000);
+})();
+</script>
+{% endif %}
+{% endblock %}

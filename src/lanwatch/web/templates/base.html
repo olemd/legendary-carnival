@@ -52,18 +52,22 @@ a:hover { text-decoration-thickness:2px }
 .vh { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap }
 
 /* App bar */
-header { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; align-items:center;
+header { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:.4rem .8rem; align-items:center;
   padding:.55rem 1.2rem; background:var(--surface); border-bottom:1px solid var(--line); box-shadow:var(--shadow) }
 .brand { display:inline-flex; align-items:center; gap:.5rem; font-weight:700; font-size:1.05rem; letter-spacing:.01em; color:var(--fg); text-decoration:none }
 .brand svg { width:1.6rem; height:1.6rem; flex:none }
 header nav { display:flex; flex-wrap:wrap; gap:.15rem; flex:1 1 auto }
-header nav a { padding:.3rem .65rem; border-radius:999px; color:var(--fg2); text-decoration:none; font-weight:500 }
+header nav a { padding:.3rem .55rem; border-radius:999px; color:var(--fg2); text-decoration:none; font-weight:500 }
 header nav a:hover { background:var(--sunken); color:var(--fg) }
 header nav a[aria-current] { background:var(--accent); color:var(--on-accent); font-weight:600 }
+.scanning { display:inline-flex; align-items:center; gap:.45rem; padding:.2rem .7rem; border-radius:999px; border:1px solid var(--accent);
+  color:var(--accent); font-size:.85rem; font-weight:600; text-decoration:none; white-space:nowrap }
+.scanning[hidden] { display:none }
+.scanning::before { content:""; width:.55rem; height:.55rem; border-radius:50%; background:currentColor }
 header form.search { position:relative; margin-left:auto }
 header form.search::before { content:""; position:absolute; left:.6rem; top:50%; width:.9rem; height:.9rem; translate:0 -50%;
   background:var(--muted); -webkit-mask:var(--i-search) center/contain no-repeat; mask:var(--i-search) center/contain no-repeat; pointer-events:none }
-header input[type=search] { width:14rem; max-width:100%; padding-left:1.9rem }
+header input[type=search] { width:10rem; max-width:100%; padding-left:1.9rem }
 header .ver { color:var(--muted); font-size:.8rem }
 
 main { padding:1.4rem 1.2rem 3rem; max-width:1400px; margin:0 auto }
@@ -142,7 +146,7 @@ svg.spark circle { fill:var(--accent); stroke:var(--surface); stroke-width:2 }
 /* Controls. 1.9rem keeps every target above the 24px minimum of WCAG 2.2. */
 button, input[type=text], input[type=search], textarea { font:inherit; color:var(--fg); background:var(--surface); border:1px solid var(--line); border-radius:7px }
 input[type=text], input[type=search] { min-height:1.9rem; padding:.2rem .6rem }
-button { min-height:1.9rem; padding:.2rem .8rem; font-size:.88rem; font-weight:500; cursor:pointer; border-color:color-mix(in srgb, var(--fg2) 35%, var(--line)) }
+button { min-height:1.9rem; padding:.2rem .8rem; font-size:.88rem; font-weight:500; cursor:pointer; white-space:nowrap; border-color:color-mix(in srgb, var(--fg2) 35%, var(--line)) }
 button:hover { background:var(--sunken) }
 button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600 }
 button.primary:hover { filter:brightness(1.08) }
@@ -165,6 +169,8 @@ details > summary:hover { color:var(--fg) }
 .chat .row { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin:.5rem 0 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .scanning::before { animation:pulse 1.6s ease-in-out infinite }
+  @keyframes pulse { 50% { opacity:.25 } }
   header nav a, .tabs a, button, tbody tr > * { transition:background-color .12s, border-color .12s, color .12s }
 }
 @media (max-width: 640px) {
@@ -188,10 +194,14 @@ details > summary:hover { color:var(--fg) }
     {% for key, href, label in [
       ('dashboard', '/', 'Dashboard'), ('devices', '/devices', 'Devices'), ('findings', '/findings', 'Findings'),
       ('infra', '/infra', 'Infra'), ('overview', '/overview', 'Overview'), ('digest', '/digest', 'Digest'),
-      ('timeline', '/timeline', 'Timeline'), ('notifications', '/notifications', 'Notifications'), ('chat', '/chat', 'Chat')] %}
+      ('timeline', '/timeline', 'Timeline'), ('notifications', '/notifications', 'Notifications'), ('chat', '/chat', 'Chat'),
+      ('status', '/status', 'Status')] %}
     <a href="{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
   </nav>
+  {% if has_scheduler %}
+  <a id="scan-chip" class="scanning" href="/status"{% if not scan %} hidden{% endif %}><span role="status">{% if scan %}Scanning: {{ scan.job }}{% endif %}</span></a>
+  {% endif %}
   <form class="search" action="/search" method="get" role="search">
     <label class="vh" for="q-search">Search devices, services and findings</label>
     <input id="q-search" type="search" name="q" placeholder="Search…" value="{{ q or '' }}">
@@ -201,5 +211,21 @@ details > summary:hover { color:var(--fg) }
 <main id="main">
 {% block content %}{% endblock %}
 </main>
+{% if has_scheduler %}
+<script>
+// Keeps the header's scan indicator current without reloading the page.
+(() => {
+  const chip = document.getElementById('scan-chip'), text = chip.firstElementChild;
+  setInterval(async () => {
+    try {
+      const r = await fetch('/api/status'); if (!r.ok) return;
+      const j = await r.json(), label = j.running ? 'Scanning: ' + j.running.job : '';
+      if (text.textContent !== label) text.textContent = label;
+      chip.hidden = !j.running;
+    } catch (e) { /* server restarting; try again next time */ }
+  }, 10000);
+})();
+</script>
+{% endif %}
 </body>
 </html>

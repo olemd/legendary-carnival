@@ -10,6 +10,7 @@ from lanwatch.config import Config, WebConfig
 from lanwatch.models import HostObservation
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.engine import Engine
+from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
 from tests.conftest import fixture_text
@@ -103,3 +104,60 @@ def test_config_rejects_open_bind_without_password(tmp_path: Path) -> None:
         load_config(None, {"web": {"host": "0.0.0.0"}}, environ={})
     cfg = load_config(None, {"web": {"host": "0.0.0.0", "password": "x"}}, environ={}).config
     assert cfg.web.port == 8321
+
+
+async def _noop() -> None:
+    return None
+
+
+def test_status_page_without_a_scheduler_is_read_only(config: Config) -> None:
+    client = TestClient(create_app(config))
+    r = client.get("/status")
+    assert r.status_code == 200 and "only serves the web UI" in r.text
+    assert "Run now" not in r.text and "Scan privileges" in r.text
+    assert "disabled in config" in r.text  # the LLM tile; the fixture turns the LLM off
+    assert client.get("/api/status").json() == {"scheduler": False, "running": None}
+    assert client.post("/scan/discovery").status_code == 409
+    assert 'id="scan-chip"' not in client.get("/").text
+
+
+def test_status_page_shows_jobs_and_run_now_queues_one(config: Config) -> None:
+    import time
+
+    jobs = [Job("discovery", 300, _noop), Job("inventory", 3600, _noop)]
+    for j in jobs:
+        j.next_due = time.monotonic() + 1000
+    jobs[1].running_since = time.time() - 125  # as if an inventory scan were in progress
+    jobs[0].last_error = "CommandError: helper socket /run/lanwatch/helper.sock: refused"
+    jobs[0].failures = 2
+    client = TestClient(create_app(config, Scheduler(jobs)))
+
+    r = client.get("/status")
+    assert r.status_code == 200 and "Run now" in r.text
+    assert "every 5 min" in r.text and "every 60 min" in r.text
+    assert "running" in r.text and "for 2 min" in r.text
+    assert "helper socket" in r.text and "2 in a row" in r.text
+    assert client.get("/api/status").json()["running"]["job"] == "inventory"
+    assert "Scanning: inventory" in client.get("/").text  # the header indicator
+
+    r = client.post("/scan/discovery", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/status"
+    assert jobs[0].next_due <= time.monotonic()  # due now
+    assert client.post("/scan/nonsense").status_code == 404
+
+
+def test_cross_site_posts_are_refused(config: Config) -> None:
+    import time
+
+    job = Job("discovery", 300, _noop)
+    job.next_due = time.monotonic() + 1000
+    client = TestClient(create_app(config, Scheduler([job])))
+    # What a browser sends when another site's page submits a form to lanwatch.
+    r = client.post("/scan/discovery", headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    r = client.post("/scan/discovery", headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+    assert job.next_due > time.monotonic()  # nothing was triggered
+    # The UI's own forms, and clients that are not browsers, still work.
+    ok = {"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"}
+    assert client.post("/scan/discovery", headers=ok, follow_redirects=False).status_code == 303

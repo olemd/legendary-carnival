@@ -4,10 +4,13 @@ Bound to loopback by default. Binding wider requires web.password (HTTP basic au
 """
 
 import secrets
+import time
 from collections.abc import Iterator
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from fastapi import Body, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -15,20 +18,25 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from lanwatch import __version__
+from lanwatch.collectors.base import CommandError, make_executor
 from lanwatch.config import Config
 from lanwatch.models import FindingStatus, Severity, local_str
 from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
+from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 
 TEMPLATES = Path(__file__).parent / "templates"
 SEVERITY_ORDER = [s.value for s in Severity]
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
+    """`scheduler` is the one running in this process (`lanwatch run`). Without it
+    (`lanwatch web`) the UI is read-only as far as scanning goes."""
     app = FastAPI(title="lanwatch", version=__version__, docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES))
     templates.env.filters["local"] = local_str
+    templates.env.filters["duration"] = _duration
     basic = HTTPBasic(auto_error=False)
 
     def auth(creds: Annotated[HTTPBasicCredentials | None, Depends(basic)]) -> None:
@@ -44,12 +52,40 @@ def create_app(config: Config) -> FastAPI:
         with Store(config.store_path, check_same_thread=False) as s:
             yield s
 
+    def same_origin(request: Request) -> None:
+        """Refuse cross-site form posts. A browser attaches the basic-auth credentials to
+        every request for this origin, including one that a page on another site submits,
+        but it also says where the request came from. Clients that are not browsers send
+        neither header and are let through: they hold the password themselves."""
+        site = request.headers.get("sec-fetch-site")
+        if site is not None and site not in ("same-origin", "none"):
+            raise HTTPException(403, "cross-site request refused")
+        origin = request.headers.get("origin")
+        if origin is not None and urlparse(origin).netloc != request.headers.get("host"):
+            raise HTTPException(403, "cross-site request refused")
+
     StoreDep = Annotated[Store, Depends(store)]
     deps = [Depends(auth)]
+    write_deps = [Depends(auth), Depends(same_origin)]
+
+    def scan_state() -> dict[str, Any] | None:
+        """The job the scheduler is running right now, if any."""
+        job = scheduler.running if scheduler is not None else None
+        if job is None or job.running_since is None:
+            return None
+        return {"job": job.name, "seconds": int(time.time() - job.running_since)}
 
     def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
         return templates.TemplateResponse(
-            request, name, {"version": __version__, "config": config, **ctx}
+            request,
+            name,
+            {
+                "version": __version__,
+                "config": config,
+                "scan": scan_state(),
+                "has_scheduler": scheduler is not None,
+                **ctx,
+            },
         )
 
     # -- pages --------------------------------------------------------------
@@ -109,7 +145,7 @@ def create_app(config: Config) -> FastAPI:
             events=s.events(device_id=device_id, limit=50),
         )
 
-    @app.post("/devices/{device_id}/name", dependencies=deps)
+    @app.post("/devices/{device_id}/name", dependencies=write_deps)
     def set_name(
         s: StoreDep, device_id: int, name: Annotated[str, Form()] = ""
     ) -> RedirectResponse:
@@ -127,7 +163,7 @@ def create_app(config: Config) -> FastAPI:
             request, "findings.html", findings=findings, status=status, devices_by_id=devices
         )
 
-    @app.post("/findings/{finding_id}/ack", dependencies=deps)
+    @app.post("/findings/{finding_id}/ack", dependencies=write_deps)
     def ack(
         s: StoreDep, finding_id: str, back: Annotated[str, Form()] = "/findings"
     ) -> RedirectResponse:
@@ -178,7 +214,7 @@ def create_app(config: Config) -> FastAPI:
     def chat_page(request: Request) -> HTMLResponse:
         return page(request, "chat.html")
 
-    @app.post("/api/chat", dependencies=deps)
+    @app.post("/api/chat", dependencies=write_deps)
     async def api_chat(s: StoreDep, body: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
         from lanwatch.llm.hooks import ask
 
@@ -236,7 +272,43 @@ def create_app(config: Config) -> FastAPI:
             suggestions=_read_report(config, "suggestions.md"),
         )
 
+    @app.get("/status", response_class=HTMLResponse, dependencies=deps)
+    async def status_page(request: Request, s: StoreDep) -> HTMLResponse:
+        llm = None
+        if config.llm.enabled:
+            from lanwatch.llm.client import OllamaClient
+
+            client = OllamaClient(config.llm)
+            try:
+                llm = await client.status()
+            finally:
+                await client.aclose()
+        db = config.store_path
+        return page(
+            request,
+            "status.html",
+            active="status",
+            jobs=_job_rows(scheduler, s) if scheduler is not None else [],
+            capability=await _scan_capability(config),
+            llm=llm,
+            db_bytes=db.stat().st_size if db.is_file() else 0,
+            devices_total=len(s.devices()),
+        )
+
+    @app.post("/scan/{name}", dependencies=write_deps)
+    def scan_now(name: str) -> RedirectResponse:
+        if scheduler is None:
+            raise HTTPException(409, "no scheduler in this process (started with `lanwatch web`)")
+        if not scheduler.trigger(name):
+            raise HTTPException(404)
+        return RedirectResponse("/status", status_code=303)
+
     # -- api ----------------------------------------------------------------
+
+    @app.get("/api/status", dependencies=deps)
+    def api_status() -> dict[str, Any]:
+        """Small and cheap: the header's scan indicator polls this."""
+        return {"scheduler": scheduler is not None, "running": scan_state()}
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -260,6 +332,59 @@ def create_app(config: Config) -> FastAPI:
         return render(s, config)
 
     return app
+
+
+def _duration(seconds: float | None) -> str:
+    """Rough human duration: 42 s, 7 min, 3 h 5 min, 6 d."""
+    if seconds is None:
+        return "-"
+    s = int(seconds)
+    if s < 90:
+        return f"{s} s"
+    if s < 5400:
+        return f"{round(s / 60)} min"
+    if s < 172800:
+        return f"{s // 3600} h {s % 3600 // 60} min"
+    return f"{round(s / 86400)} d"
+
+
+def _job_rows(scheduler: Scheduler, s: Store) -> list[dict[str, Any]]:
+    """What the status page shows per job. "Last completed" comes from the database, so it
+    survives restarts; the rest is the running process's own memory."""
+
+    def row(j: Job) -> dict[str, Any]:
+        last = s.meta_get(f"job.{j.name}.last_run")
+        return {
+            "name": j.name,
+            "schedule": f"daily at {j.daily_at}"
+            if j.daily_at
+            else f"every {_duration(j.interval_s)}",
+            "running_for": time.time() - j.running_since if j.running_since else None,
+            "last_completed": (
+                datetime.fromtimestamp(float(last), UTC).isoformat(timespec="seconds")
+                if last
+                else None
+            ),
+            "last_duration_s": j.last_duration_s,
+            "last_error": j.last_error,
+            "failures": j.failures,
+            "next_in_s": max(0.0, j.next_due - time.monotonic()),
+        }
+
+    return [row(j) for j in scheduler.jobs]
+
+
+async def _scan_capability(config: Config) -> dict[str, Any]:
+    """Can scans use raw sockets, and through what? Asked of whatever executor the scans use,
+    so with a helper socket configured this is the helper's own answer."""
+    ex = make_executor(config.scan.helper_socket)
+    info: dict[str, Any] = {"via": ex.name, "socket": config.scan.helper_socket, "error": None}
+    try:
+        info["nmap"], info["raw"] = await ex.which("nmap")
+        info["arp_scan"], _ = await ex.which("arp-scan")
+    except CommandError as e:
+        info.update(nmap=False, arp_scan=False, raw=False, error=str(e))
+    return info
 
 
 def _sparkline(

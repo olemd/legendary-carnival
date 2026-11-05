@@ -259,7 +259,7 @@ def run(ctx: typer.Context) -> None:
                 from lanwatch.web.app import create_app
                 from lanwatch.web.server import make_server, serve_until
 
-                server = make_server(create_app(cfg), cfg.web.host, cfg.web.port)
+                server = make_server(create_app(cfg, sched), cfg.web.host, cfg.web.port)
                 log.info("web ui on http://%s:%d", cfg.web.host, cfg.web.port)
                 tasks.append(asyncio.create_task(serve_until(server, sched.stopped)))
             await asyncio.gather(*tasks)
