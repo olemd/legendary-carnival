@@ -14,6 +14,10 @@ Group=lanwatch
 ExecStart=/usr/bin/lanwatch run
 Restart=on-failure
 RestartSec=10
+# Exit status 2 is a configuration error (unknown key, bad value, open bind without a
+# password). Restarting cannot fix that, so the unit goes to "failed" and stays there with
+# the reason in the journal, instead of failing again every ten seconds.
+RestartPreventExitStatus=2
 # On SIGTERM lanwatch cancels the scan in progress and exits within a second or two. The
 # timeout is only a safety net: the database is SQLite in WAL mode and survives a kill,
 # and an interrupted scan simply runs again after the next start.

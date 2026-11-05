@@ -132,6 +132,30 @@ systemd-analyze verify --man=no /usr/lib/systemd/system/lanwatch.service \
 step "exposure score (informational)"
 systemd-analyze security --no-pager lanwatch.service lanwatch-helper.service | grep "Overall exposure" || true
 
+step "a configuration error stops the service once, with the reason, instead of looping"
+cp -p /etc/lanwatch/config.toml /etc/lanwatch/config.toml.good
+printf '\n[web]\nhost = "0.0.0.0"\n' >>/etc/lanwatch/config.toml # reachable, but no password
+systemctl restart lanwatch.service || true
+i=0
+until [ "$(systemctl is-failed lanwatch.service)" = failed ]; do
+    i=$((i + 1))
+    [ "$i" -lt 20 ] || fail "service did not end up failed: $(systemctl is-active lanwatch.service)"
+    sleep 1
+done
+sleep 12 # longer than RestartSec: an automatic restart would have happened by now
+[ "$(systemctl show -p NRestarts --value lanwatch.service)" = 0 ] || fail "systemd restarted it"
+[ "$(systemctl is-failed lanwatch.service)" = failed ] || fail "service left the failed state"
+journalctl -u lanwatch.service --no-pager -n 20 | grep -q "set web.password" ||
+    fail "the journal does not say what is wrong"
+mv /etc/lanwatch/config.toml.good /etc/lanwatch/config.toml
+systemctl restart lanwatch.service
+i=0
+until systemctl is-active --quiet lanwatch.service; do
+    i=$((i + 1))
+    [ "$i" -lt 30 ] || fail "service did not come back with the good config"
+    sleep 1
+done
+
 step "reinstalling (the upgrade path) leaves everything running"
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --reinstall "$DEB" >/dev/null
 systemctl is-active --quiet lanwatch-helper.socket || fail "socket inactive after reinstall"

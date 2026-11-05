@@ -12,6 +12,8 @@ Group=lanwatch
 ExecStart=/opt/lanwatch/.venv/bin/lanwatch run
 Restart=on-failure
 RestartSec=10
+# Exit status 2 is a configuration error; restarting cannot fix it.
+RestartPreventExitStatus=2
 Environment=LANWATCH_DATA_DIR=/var/lib/lanwatch
 # ARP/raw sockets for arp-scan and nmap without running as root.
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
