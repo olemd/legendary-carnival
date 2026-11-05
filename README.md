@@ -75,6 +75,22 @@ detection, a handful of safe scripts, port 9100 never touched (printers print pr
 garbage). New devices get a light scan as soon as they appear. `lanwatch rules` lists the
 rules with their effective severity.
 
+Day to day, in the web UI:
+
+- **Status** shows each scheduled job (running, last result, next run) with a "Run now"
+  button, whether scans have raw-socket privileges, and whether the LLM is reachable. A
+  header indicator shows when a scan is in progress.
+- **Devices** can be renamed, re-classified, merged (one device seen under two MAC
+  addresses, typically a phone with a private MAC) and forgotten. Mark a device as watched
+  to get a finding when it stays offline.
+- **Findings** can be acknowledged, accepted for good with a reason (a per-device exception
+  to a rule) and reopened.
+- Network identity rules flag two devices answering for one IP, a gateway, DHCP or DNS
+  address that changes MAC, and a DHCP server that starts announcing different DNS, NTP or
+  router settings.
+
+History is pruned daily (`[store] keep_*_days`), so the database stops growing.
+
 Config: see `deploy/config.example.toml`. `lanwatch config show` prints the effective
 configuration after defaults, file, env and CLI are merged.
 
