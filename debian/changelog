@@ -1,3 +1,15 @@
+lanwatch (0.4.1) unstable; urgency=medium
+
+  * Service scans run in batches with a realistic time limit each. A single
+    run over all devices exceeded its 15 minute limit on networks of a few
+    dozen devices, and the whole inventory was lost every time.
+  * lanwatch no longer reports its own decoy ports as open services on the
+    machine it runs on, nor its own addresses as decoy visitors.
+  * The default /etc/lanwatch/config.toml mentions [scan], [firmware] and
+    [decoy]. This changes a conffile: keep your own version when asked.
+
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 22:56:32 +0100
+
 lanwatch (0.4.0) unstable; urgency=medium
 
   * Decoy ports ([decoy]): a connection to a port nothing uses becomes a
