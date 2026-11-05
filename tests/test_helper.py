@@ -239,3 +239,75 @@ async def test_serve_creates_and_removes_its_own_socket(tmp_path: Path) -> None:
     assert isinstance(present, bool)
     await _stop_serving(task)
     assert not path.exists()
+
+
+def _sleeper(directory: Path, name: str) -> Path:
+    """A stand-in scanner that records its pid and then runs for a long time."""
+    pidfile = directory / f"{name}.pid"
+    script = directory / name
+    script.write_text(f'#!/bin/sh\necho $$ > "{pidfile}"\nexec sleep 300\n')
+    script.chmod(0o755)
+    return pidfile
+
+
+async def _wait_until_gone(pidfile: Path) -> bool:
+    """True once the process whose pid is in pidfile has exited (or is a reaped zombie)."""
+    for _ in range(300):
+        if pidfile.exists() and pidfile.read_text().strip():
+            stat = Path(f"/proc/{pidfile.read_text().strip()}/stat")
+            try:
+                if stat.read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                    return True
+            except FileNotFoundError:
+                return True
+        await asyncio.sleep(0.01)
+    return False
+
+
+async def _wait_for_pid(pidfile: Path) -> None:
+    for _ in range(300):
+        if pidfile.exists() and pidfile.read_text().strip():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the command never started")
+
+
+async def test_run_cmd_kills_the_command_when_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pidfile = _sleeper(tmp_path, "nmap")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    task = asyncio.create_task(run_cmd(["nmap"], 600))
+    await _wait_for_pid(pidfile)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await _wait_until_gone(pidfile)
+
+
+async def test_helper_cancels_the_command_when_its_client_disconnects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pidfile = _sleeper(tmp_path, "ping")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    path = tmp_path / "h.sock"
+    listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listening.bind(str(path))
+    listening.listen()
+    serving = asyncio.create_task(_serve(path, None, 1, listening))
+
+    # What lanwatch.service does when it is stopped or killed mid-scan: the request is out,
+    # no reply has come, and the connection closes.
+    _, writer = await asyncio.open_unix_connection(str(path))
+    request = {"op": "run", "argv": ["ping", "-c", "1", "-W", "1", "10.0.0.1"], "timeout": 600}
+    writer.write(json.dumps(request).encode() + b"\n")
+    await writer.drain()
+    await _wait_for_pid(pidfile)
+    writer.close()
+    await writer.wait_closed()
+
+    assert await _wait_until_gone(pidfile)
+    # The one concurrency slot is free again: the next request is answered.
+    present, _ = await HelperExecutor(path).which("ping")
+    assert present is True
+    await _stop_serving(serving)

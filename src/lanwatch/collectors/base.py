@@ -81,6 +81,11 @@ async def run_cmd(args: list[str], timeout: float, stdin: bytes | None = None) -
         await proc.wait()
         log.warning("timeout after %.0fs: %s", timeout, " ".join(args[:3]))
         return -1, "", "timeout"
+    except asyncio.CancelledError:
+        # The caller gave up (shutdown, or the helper's client went away). A scan nobody is
+        # waiting for must not keep running.
+        proc.kill()
+        raise
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 

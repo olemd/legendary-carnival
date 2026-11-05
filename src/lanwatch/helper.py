@@ -154,6 +154,29 @@ async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, o
     return {"error": f"unknown op {op!r}"}
 
 
+async def _answer_while_connected(
+    payload: object, sem: asyncio.Semaphore, reader: asyncio.StreamReader
+) -> dict[str, object] | None:
+    """Handle one request, but stop (and kill the command) if the client hangs up first.
+    A client sends one line and then only waits, so end-of-file on its side means it has
+    gone: stopped, restarted or killed. Returns None in that case."""
+    work = asyncio.create_task(handle_request(payload, sem))
+    hangup = asyncio.create_task(reader.read(1))
+    try:
+        await asyncio.wait({work, hangup}, return_when=asyncio.FIRST_COMPLETED)
+        if not work.done() and hangup.result() != b"":
+            await work  # stray bytes are not a hang-up; let the command finish
+        if work.done():
+            return work.result()
+        work.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await work
+        return None
+    finally:
+        hangup.cancel()
+        work.cancel()
+
+
 # First file descriptor systemd passes to a socket-activated service (sd_listen_fds(3)).
 SD_LISTEN_FDS_START = 3
 
@@ -185,8 +208,13 @@ async def _serve(
             except ValueError:
                 payload = None
             reply = (
-                await handle_request(payload, sem) if payload is not None else {"error": "bad JSON"}
+                await _answer_while_connected(payload, sem, reader)
+                if payload is not None
+                else {"error": "bad JSON"}
             )
+            if reply is None:
+                log.info("client went away, command cancelled")
+                return
             writer.write(json.dumps(reply).encode() + b"\n")
             await writer.drain()
         except (TimeoutError, OSError) as e:

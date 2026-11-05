@@ -14,9 +14,9 @@ Group=lanwatch
 ExecStart=/usr/bin/lanwatch run
 Restart=on-failure
 RestartSec=10
-# On SIGTERM lanwatch finishes the scan in progress before exiting, which can take many
-# minutes. Give it a moment, then kill: the database is SQLite in WAL mode and survives
-# that, and the interrupted scan simply runs again in the next round.
+# On SIGTERM lanwatch cancels the scan in progress and exits within a second or two. The
+# timeout is only a safety net: the database is SQLite in WAL mode and survives a kill,
+# and an interrupted scan simply runs again after the next start.
 TimeoutStopSec=30
 
 # /var/lib/lanwatch: database, reports, overview. The only place this service can write.
