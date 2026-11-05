@@ -4,6 +4,8 @@
 .ruff_cache
 .pytest_cache
 tests
+# The image ships one test fixture as eval input (see Containerfile).
+!tests/fixtures/nmap-services.xml
 deploy
 *.db
 *.db-*
