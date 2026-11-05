@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
+import socket
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,7 @@ from lanwatch.collectors.base import (
 )
 from lanwatch.collectors.services import build_nmap_args, build_nmap_udp_args
 from lanwatch.config import ScanConfig
-from lanwatch.helper import handle_request, validate_argv
+from lanwatch.helper import _serve, handle_request, systemd_socket_fd, validate_argv
 
 
 def test_validate_allows_what_lanwatch_generates() -> None:
@@ -190,3 +192,50 @@ async def test_which_reports_raw_socket_privilege(
     assert (await LocalExecutor().which("nmap"))[1] is value
     r = await handle_request({"op": "which", "binary": "nmap"}, asyncio.Semaphore(1))
     assert r["root"] is value
+
+
+@pytest.mark.parametrize(
+    ("environ", "expected"),
+    [
+        ({"LISTEN_PID": "42", "LISTEN_FDS": "1"}, 3),
+        ({"LISTEN_PID": "41", "LISTEN_FDS": "1"}, None),  # meant for another process
+        ({"LISTEN_PID": "42", "LISTEN_FDS": "2"}, None),  # we expect exactly one socket
+        ({"LISTEN_PID": "42"}, None),
+        ({}, None),
+    ],
+)
+def test_systemd_socket_fd(environ: dict[str, str], expected: int | None) -> None:
+    assert systemd_socket_fd(environ, 42) == expected
+
+
+async def _stop_serving(task: asyncio.Task[None]) -> None:
+    os.kill(os.getpid(), signal.SIGTERM)  # _serve handles it and returns
+    await asyncio.wait_for(task, timeout=5)
+
+
+async def test_serve_on_socket_passed_by_systemd(tmp_path: Path) -> None:
+    path = tmp_path / "h.sock"
+    listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listening.bind(str(path))
+    listening.listen()
+    task = asyncio.create_task(_serve(tmp_path / "unused.sock", None, 1, listening))
+    present, _ = await HelperExecutor(path).which("ping")
+    assert isinstance(present, bool)
+    await _stop_serving(task)
+    # systemd owns the socket: the helper must neither replace nor remove it.
+    assert path.exists()
+    assert not (tmp_path / "unused.sock").exists()
+
+
+async def test_serve_creates_and_removes_its_own_socket(tmp_path: Path) -> None:
+    path = tmp_path / "run" / "h.sock"
+    task = asyncio.create_task(_serve(path, None, 1))
+    for _ in range(200):
+        if path.exists():
+            break
+        await asyncio.sleep(0.01)
+    assert path.stat().st_mode & 0o777 == 0o660
+    present, _ = await HelperExecutor(path).which("ping")
+    assert isinstance(present, bool)
+    await _stop_serving(task)
+    assert not path.exists()

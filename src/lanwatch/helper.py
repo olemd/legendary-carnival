@@ -1,5 +1,9 @@
-"""lanwatch-helper: a tiny root daemon that runs the few privileged commands lanwatch needs,
-so the main process can live in an unprivileged (rootless podman) container.
+"""lanwatch-helper: a tiny daemon that runs the few privileged commands lanwatch needs, so
+the main process can run without any privileges (packaged service, rootless podman).
+
+It needs raw sockets and nothing else: run it as root, or as a dedicated user with
+CAP_NET_RAW as an ambient capability. Under systemd it takes its listening socket from a
+.socket unit (socket activation), so it never has to create or chown one itself.
 
 Protocol: one JSON object per line over a unix socket.
   {"op": "which", "binary": "nmap"}                  -> {"available": true, "root": true}
@@ -22,6 +26,9 @@ import logging
 import os
 import re
 import signal
+import socket
+import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from lanwatch.collectors.base import have, privileged, run_cmd
@@ -147,7 +154,27 @@ async def handle_request(payload: object, sem: asyncio.Semaphore) -> dict[str, o
     return {"error": f"unknown op {op!r}"}
 
 
-async def _serve(socket_path: Path, group: str | None, concurrency: int) -> None:
+# First file descriptor systemd passes to a socket-activated service (sd_listen_fds(3)).
+SD_LISTEN_FDS_START = 3
+
+
+def systemd_socket_fd(environ: Mapping[str, str], pid: int) -> int | None:
+    """The fd of the listening socket systemd passed to this process, if it passed exactly
+    one. LISTEN_PID guards against variables inherited from a parent they were meant for."""
+    if environ.get("LISTEN_PID") != str(pid) or environ.get("LISTEN_FDS") != "1":
+        return None
+    return SD_LISTEN_FDS_START
+
+
+async def _serve(
+    socket_path: Path,
+    group: str | None,
+    concurrency: int,
+    inherited: socket.socket | None = None,
+) -> None:
+    """Serve until SIGINT/SIGTERM. With `inherited` (a listening socket from systemd) the
+    socket path, its permissions and its lifetime belong to systemd and are left alone;
+    otherwise the helper creates and removes the socket itself."""
     sem = asyncio.Semaphore(concurrency)
 
     async def on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -167,14 +194,25 @@ async def _serve(socket_path: Path, group: str | None, concurrency: int) -> None
         finally:
             writer.close()
 
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-    if socket_path.exists():
-        socket_path.unlink()
-    server = await asyncio.start_unix_server(on_client, path=str(socket_path), limit=1 << 20)
-    os.chmod(socket_path, 0o660)
-    if group:
-        os.chown(socket_path, -1, grp.getgrnam(group).gr_gid)
-    log.info("listening on %s (group %s)", socket_path, group or "unchanged")
+    if inherited is not None:
+        # Python 3.13+ would unlink the socket file when the server closes, leaving the
+        # still-active .socket unit listening on a path that no longer exists.
+        if sys.version_info >= (3, 13):
+            server = await asyncio.start_unix_server(
+                on_client, sock=inherited, limit=1 << 20, cleanup_socket=False
+            )
+        else:
+            server = await asyncio.start_unix_server(on_client, sock=inherited, limit=1 << 20)
+        log.info("listening on the socket passed by systemd")
+    else:
+        socket_path.parent.mkdir(parents=True, exist_ok=True)
+        if socket_path.exists():
+            socket_path.unlink()
+        server = await asyncio.start_unix_server(on_client, path=str(socket_path), limit=1 << 20)
+        os.chmod(socket_path, 0o660)
+        if group:
+            os.chown(socket_path, -1, grp.getgrnam(group).gr_gid)
+        log.info("listening on %s (group %s)", socket_path, group or "unchanged")
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -182,22 +220,37 @@ async def _serve(socket_path: Path, group: str | None, concurrency: int) -> None
         loop.add_signal_handler(sig, stop.set)
     async with server:
         await stop.wait()
-    with contextlib.suppress(OSError):
-        socket_path.unlink()
+    if inherited is None:
+        with contextlib.suppress(OSError):
+            socket_path.unlink()
     log.info("stopped")
 
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="lanwatch-helper", description=__doc__.split("\n", 2)[0])
-    p.add_argument("--socket", type=Path, default=Path("/run/lanwatch/helper.sock"))
-    p.add_argument("--group", default=None, help="group owner of the socket (e.g. lanwatch)")
+    p.add_argument(
+        "--socket",
+        type=Path,
+        default=Path("/run/lanwatch/helper.sock"),
+        help="socket to create; ignored when systemd passes one (socket activation)",
+    )
+    p.add_argument(
+        "--group",
+        default=None,
+        help="group owner of the socket (e.g. lanwatch); ignored under socket activation",
+    )
     p.add_argument("--concurrency", type=int, default=2)
     p.add_argument("--log-level", default="info")
     a = p.parse_args(argv)
     setup_logging(a.log_level)
     if not privileged():
         log.warning("neither root nor CAP_NET_RAW: raw-socket scans will be unavailable")
-    asyncio.run(_serve(a.socket, a.group, a.concurrency))
+    fd = systemd_socket_fd(os.environ, os.getpid())
+    inherited = socket.socket(fileno=fd) if fd is not None else None
+    # The variables are addressed to this process only; keep them away from nmap and friends.
+    for var in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
+        os.environ.pop(var, None)
+    asyncio.run(_serve(a.socket, a.group, a.concurrency, inherited))
 
 
 if __name__ == "__main__":
