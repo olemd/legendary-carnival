@@ -8,9 +8,17 @@
   </td>
   <td>{% set d = devices_by_id.get(f.device_id) %}{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a>{% else %}-{% endif %}</td>
   <td class="ev">{{ f.first_seen | local }}</td>
-  <td class="muted">{{ f.status.value }}</td>
+  <td class="muted">{{ 'accepted' if f.accepted else f.status.value }}{% if f.note %}<br><span class="note-text">“{{ f.note }}”</span>{% endif %}</td>
   <td>{% if f.status.value == 'open' %}
-    <form class="inline" method="post" action="/findings/{{ f.id }}/ack"><input type="hidden" name="back" value="{{ back }}"><button title="Stop reporting this finding as new">Acknowledge</button></form>
+    <form class="inline" method="post" action="/findings/{{ f.id }}/ack"><input type="hidden" name="back" value="{{ back }}"><button title="Seen: stop reporting this finding as new">Acknowledge</button></form>
+    <details class="accept"><summary>Accept…</summary>
+      <form method="post" action="/findings/{{ f.id }}/ack"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="accept" value="true">
+        <label for="note-{{ f.id }}">Why is this intended?</label>
+        <input id="note-{{ f.id }}" type="text" name="note" maxlength="300" required>
+        <button>Accept for good</button></form>
+    </details>
+    {% elif f.status.value == 'acked' %}
+    <form class="inline" method="post" action="/findings/{{ f.id }}/reopen"><input type="hidden" name="back" value="{{ back }}"><button title="Undo: make this finding open again">Reopen</button></form>
     {% endif %}</td>
 </tr>
 {% endfor %}

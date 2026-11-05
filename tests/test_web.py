@@ -189,3 +189,23 @@ def test_device_edit_merge_and_forget(config: Config) -> None:
     assert client.get("/devices/1").status_code == 404
     assert client.get("/api/devices").json() == []
     assert client.get("/").status_code == 200  # dashboard copes with unlinked events
+
+
+def test_accept_with_reason_and_reopen(config: Config) -> None:
+    _seed(config)
+    client = TestClient(create_app(config))
+    fid = client.get("/api/findings").json()[0]["id"]
+    assert "Accept for good" in client.get("/findings").text
+
+    form = {"back": "/findings?status=acked", "accept": "true", "note": "Intended: lab VNC"}
+    r = client.post(f"/findings/{fid}/ack", data=form, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/findings?status=acked"
+    page = client.get("/findings?status=acked").text
+    assert "accepted" in page and "Intended: lab VNC" in page and "Reopen" in page
+    api = {f["id"]: f for f in client.get("/api/findings?status=acked").json()}
+    assert api[fid]["accepted"] is True and api[fid]["note"] == "Intended: lab VNC"
+
+    r = client.post(f"/findings/{fid}/reopen", data={"back": "/findings"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert fid in {f["id"] for f in client.get("/api/findings").json()}
+    assert client.post(f"/findings/{fid}/reopen").status_code == 404  # already open

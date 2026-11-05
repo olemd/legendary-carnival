@@ -164,6 +164,10 @@ class FindingRow:
     last_seen: str
     status: FindingStatus
     explanation: str | None
+    # Accepted: a person decided this is intended and said why. It then stays acknowledged
+    # for good, also if the condition goes away and comes back.
+    accepted: bool = False
+    note: str | None = None
 
 
 @dataclass(slots=True)

@@ -212,9 +212,22 @@ def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
 
     @app.post("/findings/{finding_id}/ack", dependencies=write_deps)
     def ack(
+        s: StoreDep,
+        finding_id: str,
+        back: Annotated[str, Form()] = "/findings",
+        accept: Annotated[bool, Form()] = False,
+        note: Annotated[str, Form()] = "",
+    ) -> RedirectResponse:
+        if not s.ack(finding_id, accept=accept, note=note.strip()[:300] or None):
+            raise HTTPException(404)
+        update_overview(s, config)
+        return RedirectResponse(back if back.startswith("/") else "/findings", status_code=303)
+
+    @app.post("/findings/{finding_id}/reopen", dependencies=write_deps)
+    def reopen(
         s: StoreDep, finding_id: str, back: Annotated[str, Form()] = "/findings"
     ) -> RedirectResponse:
-        if not s.ack(finding_id):
+        if not s.reopen(finding_id):
             raise HTTPException(404)
         update_overview(s, config)
         return RedirectResponse(back if back.startswith("/") else "/findings", status_code=303)

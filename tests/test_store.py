@@ -230,3 +230,29 @@ def test_merging_makes_the_other_address_an_alias(store: Store) -> None:
 
     # Both addresses answering in one round still count as one device.
     assert _one_round(store, phone, obs("10.0.0.9", "5e:11:22:00:00:02")) == [keep]
+
+
+def test_accepting_a_finding_sticks_and_can_be_undone(store: Store) -> None:
+    store.upsert_findings([_finding("f1"), _finding("f2")], {"r.a"}, {"r.a"})
+
+    # Acknowledged only: when it resolves and comes back, it is open again.
+    assert store.ack("f1")
+    # Accepted with a reason: it comes back acknowledged, reason intact.
+    assert store.ack("f2", accept=True, note="Lab switch, telnet is the only way in")
+    store.upsert_findings([], {"r.a"}, {"r.a"})  # both conditions go away
+    store.upsert_findings([_finding("f1"), _finding("f2")], {"r.a"}, {"r.a"})  # and return
+    f1, f2 = store.finding("f1"), store.finding("f2")
+    assert f1 is not None and f1.status is FindingStatus.OPEN and not f1.accepted
+    assert f2 is not None and f2.status is FindingStatus.ACKED and f2.accepted
+    assert f2.note == "Lab switch, telnet is the only way in"
+    kinds = [e.kind for e in store.events(limit=50)]
+    assert "finding.accepted" in kinds
+    assert kinds.count("finding.reopened") == 1  # f1 only; f2 came back quietly
+
+    # An acknowledged finding can be upgraded to accepted, and either can be reopened.
+    assert store.ack("f1") and store.ack("f1", accept=True, note="known")
+    assert store.reopen("f2") and not store.reopen("f2")
+    f2 = store.finding("f2")
+    assert f2 is not None and f2.status is FindingStatus.OPEN
+    assert not f2.accepted and f2.note is None
+    assert not store.reopen("no-such-finding")

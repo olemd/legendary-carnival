@@ -317,15 +317,37 @@ def findings(
 
 
 @app.command()
-def ack(ctx: typer.Context, finding_id: str) -> None:
+def ack(
+    ctx: typer.Context,
+    finding_id: str,
+    accept: Annotated[
+        str | None,
+        typer.Option(
+            help="Accept the finding for good, giving the reason. It then stays acknowledged"
+            " even if it goes away and comes back."
+        ),
+    ] = None,
+) -> None:
     """Acknowledge an open finding."""
     cfg = _state(ctx).loaded.config
     with _open_store(ctx) as store:
-        if not store.ack(finding_id):
+        if not store.ack(finding_id, accept=accept is not None, note=accept or None):
             typer.echo("no open finding with that id", err=True)
             raise typer.Exit(1)
         update_overview(store, cfg)
-    typer.echo(f"acked {finding_id}")
+    typer.echo(f"{'accepted' if accept is not None else 'acked'} {finding_id}")
+
+
+@app.command()
+def reopen(ctx: typer.Context, finding_id: str) -> None:
+    """Undo an acknowledgement or acceptance."""
+    cfg = _state(ctx).loaded.config
+    with _open_store(ctx) as store:
+        if not store.reopen(finding_id):
+            typer.echo("no acknowledged finding with that id", err=True)
+            raise typer.Exit(1)
+        update_overview(store, cfg)
+    typer.echo(f"reopened {finding_id}")
 
 
 @app.command()

@@ -167,6 +167,11 @@ MIGRATIONS: list[str] = [
         device_id INTEGER NOT NULL REFERENCES devices(id)
     );
     """,
+    # v8: accepting a finding for good, with the reason
+    """
+    ALTER TABLE findings ADD COLUMN accepted INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE findings ADD COLUMN note TEXT;
+    """,
 ]
 
 
@@ -952,7 +957,7 @@ class Store:
             for f in findings:
                 emitted.add(f.id)
                 row = self._db.execute(
-                    "SELECT status FROM findings WHERE id = ?", (f.id,)
+                    "SELECT status, accepted FROM findings WHERE id = ?", (f.id,)
                 ).fetchone()
                 if row is None:
                     self._db.execute(
@@ -980,10 +985,13 @@ class Store:
                         data={"rule_id": f.rule_id, "severity": f.severity.value},
                     )
                 else:
-                    # A resolved finding that reappears is open again. Acked stays acked.
+                    # A resolved finding that reappears is open again. Acked stays acked,
+                    # and an accepted one comes back acknowledged without a fuss.
                     status = row["status"]
-                    new_status = "open" if status == "resolved" else status
+                    new_status = status
                     if status == "resolved":
+                        new_status = "acked" if row["accepted"] else "open"
+                    if status == "resolved" and not row["accepted"]:
                         self.add_event(
                             "finding.reopened",
                             f"[{f.severity.value}] {f.title}",
@@ -1046,16 +1054,56 @@ class Store:
         row = self._db.execute("SELECT * FROM findings WHERE id = ?", (finding_id,)).fetchone()
         return _finding(row) if row else None
 
-    def ack(self, finding_id: str) -> bool:
+    def ack(self, finding_id: str, accept: bool = False, note: str | None = None) -> bool:
+        """Acknowledge an open finding: seen, stop reporting it as new.
+
+        With `accept`, also mark it as intended, with the reason in `note`. An accepted
+        finding stays acknowledged even if it resolves and later reappears. Accepting works
+        on an already acknowledged finding too."""
+        if accept:
+            cur = self._db.execute(
+                """UPDATE findings SET status = 'acked', accepted = 1, note = ?
+                   WHERE id = ? AND status IN ('open', 'acked')""",
+                (note, finding_id),
+            )
+        else:
+            cur = self._db.execute(
+                "UPDATE findings SET status = 'acked' WHERE id = ? AND status = 'open'",
+                (finding_id,),
+            )
+        if cur.rowcount > 0:
+            r = self._db.execute(
+                "SELECT title, device_id FROM findings WHERE id = ?", (finding_id,)
+            ).fetchone()
+            if accept:
+                summary = f"Accepted: {r['title']}" + (f" ({note})" if note else "")
+                self.add_event(
+                    "finding.accepted", summary, r["device_id"], finding_id, data={"note": note}
+                )
+            else:
+                self.add_event(
+                    "finding.acked", f"Acknowledged: {r['title']}", r["device_id"], finding_id
+                )
+            return True
+        return False
+
+    def reopen(self, finding_id: str) -> bool:
+        """Undo an acknowledgement or acceptance: the finding is open again."""
         cur = self._db.execute(
-            "UPDATE findings SET status = 'acked' WHERE id = ? AND status = 'open'", (finding_id,)
+            """UPDATE findings SET status = 'open', accepted = 0, note = NULL
+               WHERE id = ? AND status = 'acked'""",
+            (finding_id,),
         )
         if cur.rowcount > 0:
             r = self._db.execute(
                 "SELECT title, device_id FROM findings WHERE id = ?", (finding_id,)
             ).fetchone()
             self.add_event(
-                "finding.acked", f"Acknowledged: {r['title']}", r["device_id"], finding_id
+                "finding.reopened",
+                f"Reopened: {r['title']}",
+                r["device_id"],
+                finding_id,
+                data={"by": "user"},
             )
             return True
         return False
@@ -1150,4 +1198,6 @@ def _finding(row: sqlite3.Row) -> FindingRow:
         last_seen=str(row["last_seen"]),
         status=FindingStatus(row["status"]),
         explanation=row["explanation"],
+        accepted=bool(row["accepted"]),
+        note=row["note"],
     )
