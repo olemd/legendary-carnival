@@ -82,7 +82,8 @@ def lan(devices: dict[str, dict[str, Any]], seen: list[str]) -> httpx2.AsyncClie
     """An HTTP client whose "network" is {ip: {path: json}}; everything else is a 404."""
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        seen.append(f"{request.url.host}{request.url.path}")
+        # Recorded with the query string, so a test can tell /ota from /ota?update=1.
+        seen.append(f"{request.url.host}{request.url.raw_path.decode()}")
         assert request.method == "GET"
         body = devices.get(request.url.host, {}).get(request.url.path)
         return httpx2.Response(404) if body is None else httpx2.Response(200, json=body)
@@ -159,7 +160,7 @@ async def test_shelly_reports_its_own_update_and_is_never_told_to_update() -> No
     assert gen1 is not None and gen1.update is True and gen1.model == "SHSW-1"
     assert await probe_shelly(client, "10.0.0.9") is None
     # /ota is only ever fetched bare: with a query string it starts a firmware update.
-    assert all("?" not in url for url in seen)
+    assert "10.0.0.8/ota" in seen and not any("?" in url for url in seen)
 
 
 async def test_latest_versions_are_fetched_once_and_only_when_online() -> None:
