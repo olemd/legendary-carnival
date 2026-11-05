@@ -1,3 +1,21 @@
+lanwatch (0.4.0) unstable; urgency=medium
+
+  * Decoy ports ([decoy]): a connection to a port nothing uses becomes a
+    finding. Ports already in use are skipped. The service gains
+    CAP_NET_BIND_SERVICE for the ports below 1024; note that a port listed
+    under [decoy] is not available to a service installed later.
+  * Passive ARP listener in the helper: spoofing between scans, and devices
+    sweeping the network.
+  * Decoy name lookups over LLMNR, mDNS and NetBIOS detect poisoning tools.
+  * New IPv6 routers are reported.
+  * Firmware check ([firmware], daily, "lanwatch firmware") for Home
+    Assistant, ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin. Looking up the
+    latest release online is off by default.
+  * Optional check of whether the DHCP-announced DNS resolver filters ads or
+    malicious domains (scan.dns_filter_check, off by default).
+
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 16:03:21 +0100
+
 lanwatch (0.3.0) unstable; urgency=medium
 
   * Stopping or restarting no longer waits for the scan in progress; the scan
