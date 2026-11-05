@@ -288,6 +288,50 @@ class InfraMacChangedRule(Rule):
         return out
 
 
+class Ipv6RouterNewRule(Rule):
+    id = "net.ipv6-router-new"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "An IPv6 router is announcing itself that was not there when lanwatch first looked. "
+        "Any device can send router advertisements, and clients prefer IPv6, so a rogue "
+        "one takes over traffic and DNS even on a network that only uses IPv4. Accept the "
+        "finding if you or your provider turned IPv6 on."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        raw = ctx.store.meta_get("net.ipv6-routers")
+        try:
+            known = set(json.loads(raw)) if raw is not None else None
+        except ValueError:
+            known = None
+        if known is None:
+            return []  # the infra probes have not run yet; nothing to compare with
+        out: list[Finding] = []
+        for r in ctx.store.infra("ipv6-router"):
+            mac, gateway = str(r.data.get("mac") or ""), str(r.data.get("gateway") or "")
+            identity = mac or gateway
+            if identity in known:
+                continue
+            device = ctx.store.device_by_key(mac) if mac else None
+            who = f"{device.label} ({mac})" if device is not None else (mac or gateway)
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"New IPv6 router on {r.data.get('dev')}: {who}",
+                    key_parts=[identity],
+                    device_id=device.id if device is not None else None,
+                    evidence={
+                        "gateway": gateway,
+                        "mac": mac or None,
+                        "interface": r.data.get("dev"),
+                        "known_routers": sorted(known),
+                    },
+                )
+            )
+        return out
+
+
 class DhcpSettingsChangedRule(Rule):
     id = "net.dhcp-settings-changed"
     kind = Kind.SECURITY
@@ -344,4 +388,5 @@ RULES: list[Rule] = [
     IpConflictRule(),
     InfraMacChangedRule(),
     DhcpSettingsChangedRule(),
+    Ipv6RouterNewRule(),
 ]

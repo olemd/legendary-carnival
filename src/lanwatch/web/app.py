@@ -309,6 +309,8 @@ def create_app(
             igds=[r for r in upnp if r.data.get("is_igd")],
             ipv6=[d for d in s.devices() if d.attrs.get("ipv6")],
             devices_by_ip={d.ip: d for d in s.devices() if d.ip},
+            devices_by_mac={d.mac: d for d in s.devices() if d.mac},
+            routers=s.infra("ipv6-router"),
             snapshot=s.latest_snapshot("infra"),
         )
 

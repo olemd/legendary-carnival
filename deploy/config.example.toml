@@ -27,6 +27,7 @@ scan_new_devices_immediately = true
 # Infra probes, every schedule.infra_interval_s: DHCP servers + mDNS (nmap broadcast
 # scripts, need root/CAP_NET_RAW/helper), UPnP incl. router port mappings, IPv6 exposure.
 upnp = true
+name_poisoning_check = true             # ask for a name that does not exist; whoever answers is poisoning
 ipv6 = true
 ipv6_top_ports = 100
 # The only feature that talks to the internet: nmap's vulners script matches reported

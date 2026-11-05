@@ -115,6 +115,9 @@ class ScanConfig(StrictModel):
     # Needed for rootless containers. Unset = run commands locally.
     helper_socket: Path | None = None
     # Infra probes (every schedule.infra_interval_s): DHCP servers, mDNS, UPnP, IPv6.
+    # Ask the local segment for a name that does not exist (LLMNR, mDNS, NetBIOS). Anything
+    # that answers is a poisoning tool. Local broadcast only.
+    name_poisoning_check: bool = True
     upnp: bool = True
     ipv6: bool = True
     ipv6_top_ports: int = Field(default=100, ge=10, le=65535)

@@ -82,6 +82,39 @@ def parse_default_gateways(data: object) -> list[str]:
     return sorted(out)
 
 
+def parse_ipv6_routers(routes: object, neighbours: object) -> list[dict[str, str]]:
+    """The IPv6 default routers this host has learned (from router advertisements), from
+    `ip -j -6 route show` and `ip -j -6 neigh show`: gateway address, interface, and the
+    router's MAC address when the neighbour table knows it."""
+    macs: dict[tuple[str, str], str] = {}
+    for n in neighbours if isinstance(neighbours, list) else []:
+        if isinstance(n, dict) and n.get("dst") and n.get("lladdr"):
+            macs[(str(n["dst"]), str(n.get("dev", "")))] = str(n["lladdr"]).lower()
+    out: dict[tuple[str, str], dict[str, str]] = {}
+    for r in routes if isinstance(routes, list) else []:
+        if not isinstance(r, dict) or r.get("dst") != "default" or not r.get("gateway"):
+            continue
+        try:
+            gateway = str(ipaddress.IPv6Address(str(r["gateway"])))
+        except ValueError:
+            continue
+        dev = str(r.get("dev", ""))
+        out[(gateway, dev)] = {"gateway": gateway, "dev": dev, "mac": macs.get((gateway, dev), "")}
+    return [out[k] for k in sorted(out)]
+
+
+async def ipv6_routers(executor: Executor | None = None) -> list[dict[str, str]]:
+    ex = executor or LocalExecutor()
+    rc, routes, _ = await ex.run(["ip", "-j", "-6", "route", "show"], timeout=10)
+    if rc != 0 or not routes.strip():
+        return []
+    _, neigh, _ = await ex.run(["ip", "-j", "-6", "neigh", "show"], timeout=10)
+    try:
+        return parse_ipv6_routers(json.loads(routes), json.loads(neigh) if neigh.strip() else [])
+    except ValueError:
+        return []
+
+
 async def default_gateways(executor: Executor | None = None) -> list[str]:
     """This host's default gateways; empty when `ip` is unavailable."""
     rc, out, _ = await (executor or LocalExecutor()).run(["ip", "-j", "route", "show"], timeout=10)

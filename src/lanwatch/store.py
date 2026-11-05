@@ -341,6 +341,15 @@ class Store:
             if len(macs) == 1 and self.meta_get(f"net.pin.{ip}") is None:
                 self.meta_set(f"net.pin.{ip}", macs[0])
 
+    def pin_ipv6_routers(self) -> None:
+        """Remember which IPv6 routers were announcing themselves the first time the infra
+        probes ran. An empty list counts: on a network without IPv6, a router that shows
+        up later is exactly the thing to notice."""
+        if self.meta_get("net.ipv6-routers") is None:
+            routers = self.infra("ipv6-router")
+            known = sorted({str(r.data.get("mac") or r.data.get("gateway")) for r in routers})
+            self.meta_set("net.ipv6-routers", json.dumps(known))
+
     def pin_dhcp_settings(self) -> None:
         """Remember what each DHCP server announced the first time it was seen: router,
         DNS servers, NTP servers and domain. A later change is then a finding."""

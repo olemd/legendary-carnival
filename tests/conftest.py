@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from lanwatch.config import Config, LlmConfig
+from lanwatch.config import Config, LlmConfig, ScanConfig
 from lanwatch.helper import DEFAULT_SCRIPTS, Policy, validate_argv
 from lanwatch.store import Store
 
@@ -32,7 +32,12 @@ def store() -> Store:
 
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
-    return Config(data_dir=tmp_path, llm=LlmConfig(enabled=False))
+    # No LLM, and no probes that put real packets on the developer's network.
+    return Config(
+        data_dir=tmp_path,
+        llm=LlmConfig(enabled=False),
+        scan=ScanConfig(name_poisoning_check=False),
+    )
 
 
 def fixture_text(name: str) -> str:

@@ -9,7 +9,7 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 ## Status
 
 M6, all planned milestones delivered. Discovery, service inventory (nmap), infra probes
-(DHCP, UPnP port mappings, IPv6, mDNS), 22 deterministic rules, change detection with an
+(DHCP, UPnP port mappings, IPv6, mDNS), 24 deterministic rules, change detection with an
 event timeline, `overview.md`, web UI with search and an inventory chat, a local LLM
 (Ollama) that classifies devices, explains findings in your language, writes a daily
 digest and suggests improvements, and notifications via ntfy, webhook, e-mail and Home

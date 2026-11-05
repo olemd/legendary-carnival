@@ -32,6 +32,15 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% endfor %}
 {% else %}<p class="empty">No UPnP devices answered.</p>{% endif %}
 
+{% if routers %}
+<h2>IPv6 routers</h2>
+<div class="tbl"><table><thead><tr><th>Interface</th><th>Router address</th><th>MAC</th><th>Device</th><th>First seen</th></tr></thead><tbody>
+{% for r in routers %}{% set d = devices_by_mac.get(r.data.mac) %}
+<tr><td>{{ r.data.dev }}</td><td class="mono">{{ r.data.gateway }}</td><td class="mono">{{ r.data.mac or '-' }}</td>
+<td>{% if d %}<a href="/devices/{{ d.id }}">{{ d.label }}</a>{% else %}-{% endif %}</td><td class="ev">{{ r.first_seen | local }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+
 <h2>IPv6</h2>
 {% if ipv6 %}
 <div class="tbl"><table><thead><tr><th>Device</th><th>Global addresses</th><th>Open ports</th></tr></thead><tbody>

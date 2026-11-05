@@ -62,4 +62,40 @@ class DecoyTouchedRule(Rule):
         return out
 
 
-RULES: list[Rule] = [DecoyTouchedRule()]
+class NamePoisoningRule(Rule):
+    id = "ids.name-poisoning"
+    kind = Kind.SECURITY
+    default_severity = Severity.CRITICAL
+    description = (
+        "A device answered a lookup for a host name that does not exist. lanwatch asks the "
+        "local segment for a random name over LLMNR, mDNS and NetBIOS; nothing legitimate "
+        "answers. A machine that does is running a poisoning tool (Responder and the like) "
+        "that answers every lookup with its own address to capture credentials."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("name-poisoning"):
+            ip = str(r.data.get("responder") or r.key)
+            protocols = sorted(str(p) for p in r.data.get("protocols") or [])
+            device = ctx.store.device_by_ip(ip)
+            who = f"{device.label} ({ip})" if device is not None else ip
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"{who} answers lookups for names that do not exist "
+                    f"({', '.join(protocols)})",
+                    key_parts=[ip],
+                    device_id=device.id if device is not None else None,
+                    evidence={
+                        "responder": ip,
+                        "protocols": protocols,
+                        "asked_for": r.data.get("name"),
+                        "first_seen": r.first_seen,
+                    },
+                )
+            )
+        return out
+
+
+RULES: list[Rule] = [DecoyTouchedRule(), NamePoisoningRule()]

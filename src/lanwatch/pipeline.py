@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 from lanwatch.collectors.base import Executor, make_executor
+from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import select_backend
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.services import nmap_available, scan_services
@@ -18,6 +19,7 @@ from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
     default_gateways,
+    ipv6_routers,
     list_interfaces,
     select_subnets,
     self_observations,
@@ -212,6 +214,33 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
         store.replace_infra("upnp", entries, snapshot_id)
         out.upnp_devices = len(upnp)
         out.igd_mappings = sum(len(u.mappings) for u in upnp)
+    # IPv6 routers this host has learned, on the interfaces lanwatch watches.
+    routers = [r for r in await ipv6_routers(ex) if r["dev"] in iface_names]
+    store.replace_infra(
+        "ipv6-router", {f"{r['gateway']}%{r['dev']}": r for r in routers}, snapshot_id
+    )
+    store.pin_ipv6_routers()
+
+    if config.scan.name_poisoning_check:
+        pairs = [
+            (str(a.ip), str(a.network.broadcast_address))
+            for i in ifaces
+            if i.name in iface_names
+            for a in i.addrs
+            if str(a.ip) in bind_ips
+        ]
+        try:
+            answers = await probe_name_poisoning(pairs)
+        except Exception:
+            log.exception("name poisoning probe failed")
+            answers = []
+        poisoners: dict[str, dict[str, Any]] = {}
+        for a in answers:
+            entry = poisoners.setdefault(a.responder, {"responder": a.responder, "protocols": []})
+            entry["protocols"].append(a.protocol)
+            entry["name"] = a.name
+        store.replace_infra("name-poisoning", poisoners, snapshot_id)
+
     store.finish_snapshot(snapshot_id, len(enriched))
     out.devices_enriched = len(enriched)
 
