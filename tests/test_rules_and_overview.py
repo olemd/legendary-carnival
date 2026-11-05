@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from lanwatch.config import Config, RuleOverride
 from lanwatch.models import FindingStatus, HostObservation, Severity
@@ -239,3 +240,50 @@ def test_infrastructure_addresses_come_from_routes_and_dhcp(store: Store) -> Non
         "192.168.1.3": "DNS server",
         "9.9.9.9": "DNS server",
     }
+
+
+def test_dhcp_announcing_other_settings_than_before(store: Store, config: Config) -> None:
+    engine = Engine(config)
+    rule = "net.dhcp-settings-changed"
+    offer: dict[str, Any] = {
+        "interface": "eth0",
+        "server": "192.168.1.1",
+        "router": "192.168.1.1",
+        "dns": ["192.168.1.1"],
+        "ntp": ["192.168.1.1"],
+        "domain": "lan",
+    }
+
+    def infra_round(data: dict[str, Any]) -> None:
+        sid = store.begin_snapshot("infra", "t")
+        store.replace_infra("dhcp", {"eth0/192.168.1.1": data}, sid)
+        store.pin_dhcp_settings()  # as run_infra does
+        store.finish_snapshot(sid, 1)
+        engine.run(
+            RuleContext(
+                store=store,
+                config=config,
+                snapshot_id=sid,
+                previous_snapshot_id=None,
+                is_baseline=False,
+            )
+        )
+
+    infra_round(offer)
+    infra_round({**offer, "dns": ["192.168.1.1"]})
+    assert _open_titles(store, rule) == []
+
+    # The router starts handing out someone else's resolver, and a different time server.
+    infra_round({**offer, "dns": ["203.0.113.66", "192.168.1.1"], "ntp": []})
+    titles = sorted(_open_titles(store, rule))
+    assert titles == [
+        "DHCP server 192.168.1.1 now announces DNS 192.168.1.1, 203.0.113.66, was 192.168.1.1",
+        "DHCP server 192.168.1.1 now announces NTP nothing, was 192.168.1.1",
+    ]
+    by_setting = {f.evidence["setting"]: f for f in store.findings() if f.rule_id == rule}
+    assert by_setting["dns"].severity is Severity.HIGH
+    assert by_setting["ntp"].severity is Severity.MEDIUM
+
+    # Put back: both resolve.
+    infra_round(offer)
+    assert _open_titles(store, rule) == []

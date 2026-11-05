@@ -179,6 +179,17 @@ MIGRATIONS: list[str] = [
 ]
 
 
+def dhcp_settings(offer: dict[str, Any]) -> dict[str, list[str]]:
+    """The settings of a DHCP offer that every client on the network will follow, each as
+    a sorted list so that order differences between probes are not changes."""
+    return {
+        "router": sorted(str(offer.get("router") or "").split()),
+        "dns": sorted(str(x) for x in offer.get("dns") or []),
+        "ntp": sorted(str(x) for x in offer.get("ntp") or []),
+        "domain": sorted(str(offer.get("domain") or "").split()),
+    }
+
+
 @dataclass(slots=True)
 class RecordResult:
     seen_device_ids: list[int] = field(default_factory=list)
@@ -329,6 +340,13 @@ class Store:
             macs = [mac for _, mac in holders.get(ip, []) if mac]
             if len(macs) == 1 and self.meta_get(f"net.pin.{ip}") is None:
                 self.meta_set(f"net.pin.{ip}", macs[0])
+
+    def pin_dhcp_settings(self) -> None:
+        """Remember what each DHCP server announced the first time it was seen: router,
+        DNS servers, NTP servers and domain. A later change is then a finding."""
+        for r in self.infra("dhcp"):
+            if self.meta_get(f"net.dhcp.{r.key}") is None:
+                self.meta_set(f"net.dhcp.{r.key}", json.dumps(dhcp_settings(r.data)))
 
     def sighting_device_ids(self, snapshot_id: int) -> set[int]:
         rows = self._db.execute(

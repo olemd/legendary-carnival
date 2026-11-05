@@ -170,6 +170,7 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
         store.replace_infra(
             "dhcp", {f"{o.interface}/{o.server}": o.as_dict() for o in probes.dhcp}, snapshot_id
         )
+        store.pin_dhcp_settings()
         out.dhcp_servers = sorted({o.server for o in probes.dhcp})
     enriched: set[int] = set()
     for ip, names in probes.mdns.items():

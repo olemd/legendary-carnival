@@ -9,7 +9,7 @@ from typing import Any
 
 from lanwatch.models import Device, Finding, Kind, Severity
 from lanwatch.rules.base import Rule, RuleContext
-from lanwatch.store import Store
+from lanwatch.store import Store, dhcp_settings
 
 IOT_KINDS = {"iot", "camera", "media", "smart_home_hub", "printer", "game_console"}
 TRUSTED_KINDS = {"workstation", "laptop", "server", "nas", "virtual_machine"}
@@ -285,6 +285,53 @@ class InfraMacChangedRule(Rule):
         return out
 
 
+class DhcpSettingsChangedRule(Rule):
+    id = "net.dhcp-settings-changed"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "A DHCP server announces a different router, DNS server, NTP server or domain than "
+        "when lanwatch first saw it. Every client follows these settings, so changing the "
+        "DNS server is how a compromised router redirects a whole network. Accept the "
+        "finding if you changed it yourself (for example to a filtering resolver)."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        labels = {"router": "router", "dns": "DNS", "ntp": "NTP", "domain": "domain"}
+        out: list[Finding] = []
+        for r in ctx.store.infra("dhcp"):
+            raw = ctx.store.meta_get(f"net.dhcp.{r.key}")
+            try:
+                first = json.loads(raw) if raw else None
+            except ValueError:
+                first = None
+            if not isinstance(first, dict):
+                continue
+            now = dhcp_settings(r.data)
+            for field, label in labels.items():
+                was, is_ = list(first.get(field) or []), now[field]
+                if was == is_:
+                    continue
+                out.append(
+                    self.finding(
+                        ctx,
+                        title=f"DHCP server {r.data.get('server')} now announces {label} "
+                        f"{', '.join(is_) or 'nothing'}, was {', '.join(was) or 'nothing'}",
+                        key_parts=[r.key, field, *was, "->", *is_],
+                        # Router and DNS redirect traffic; NTP and domain are lesser levers.
+                        severity=None if field in ("router", "dns") else Severity.MEDIUM,
+                        evidence={
+                            "interface": r.data.get("interface"),
+                            "server": r.data.get("server"),
+                            "setting": field,
+                            "first_seen": was,
+                            "now": is_,
+                        },
+                    )
+                )
+        return out
+
+
 RULES: list[Rule] = [
     RogueDhcpRule(),
     UpnpIgdRule(),
@@ -293,4 +340,5 @@ RULES: list[Rule] = [
     FlatNetworkRule(),
     IpConflictRule(),
     InfraMacChangedRule(),
+    DhcpSettingsChangedRule(),
 ]

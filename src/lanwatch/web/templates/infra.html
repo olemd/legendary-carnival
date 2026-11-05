@@ -6,9 +6,9 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 
 <h2>DHCP servers</h2>
 {% if dhcp %}
-<div class="tbl"><table><thead><tr><th>Interface</th><th>Server</th><th>Offers</th><th>Router</th><th>DNS</th><th>Domain</th><th>First seen</th></tr></thead><tbody>
+<div class="tbl"><table><thead><tr><th>Interface</th><th>Server</th><th>Offers</th><th>Router</th><th>DNS</th><th>NTP</th><th>Domain</th><th>First seen</th></tr></thead><tbody>
 {% for r in dhcp %}<tr><td>{{ r.data.interface }}</td><td class="mono">{{ r.data.server }}</td><td class="mono">{{ r.data.offered_ip }}</td>
-<td class="mono">{{ r.data.router }}</td><td class="mono">{{ r.data.dns | join(', ') }}</td><td>{{ r.data.domain }}</td><td class="ev">{{ r.first_seen | local }}</td></tr>{% endfor %}
+<td class="mono">{{ r.data.router }}</td><td class="mono">{{ r.data.dns | join(', ') }}</td><td class="mono">{{ (r.data.ntp or []) | join(', ') or '-' }}</td><td>{{ r.data.domain }}</td><td class="ev">{{ r.first_seen | local }}</td></tr>{% endfor %}
 </tbody></table></div>
 {% if dhcp | length > 1 %}<p class="note"><span class="sev sev-critical">critical</span> More than one DHCP server is answering.</p>{% endif %}
 {% else %}<p class="empty">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}

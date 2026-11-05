@@ -30,6 +30,7 @@ class DhcpOffer:
     router: str = ""
     dns: list[str] = field(default_factory=list)
     domain: str = ""
+    ntp: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +40,7 @@ class DhcpOffer:
             "router": self.router,
             "dns": self.dns,
             "domain": self.domain,
+            "ntp": self.ntp,
         }
 
 
@@ -92,6 +94,7 @@ def parse_broadcast_results(
                     router=" ".join(_as_list(r.get("Router"))),
                     dns=_as_list(r.get("Domain Name Server")),
                     domain=str(r.get("Domain Name", "")),
+                    ntp=_as_list(r.get("NTP Servers")),
                 )
             )
     mdns: dict[str, list[str]] = {}
