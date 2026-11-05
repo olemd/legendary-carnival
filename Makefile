@@ -1,13 +1,17 @@
 # Convenience targets. Everything here is also a one-liner you can run by hand.
 IMAGE ?= localhost/lanwatch:latest
 
-.PHONY: check test container run-container helper-install
+.PHONY: check test clean container run-container helper-install
 
 check:            ## lint, format check, types, tests
 	uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
 
 test:
 	uv run pytest -q
+
+clean:            ## remove caches, build output and .venv (uv recreates it on the next run)
+	rm -rf .venv .mypy_cache .ruff_cache .pytest_cache dist
+	find . -path ./.git -prune -o -type d \( -name __pycache__ -o -name '*.egg-info' \) -prune -exec rm -rf {} +
 
 container:        ## build the image with podman
 	podman build -t $(IMAGE) .
