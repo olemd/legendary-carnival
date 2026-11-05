@@ -1,3 +1,26 @@
+lanwatch (0.3.0) unstable; urgency=medium
+
+  * Stopping or restarting no longer waits for the scan in progress; the scan
+    is cancelled, also inside the helper.
+  * A configuration error leaves the service failed with the reason in the
+    journal instead of restarting it every ten seconds.
+  * Web UI: Status page (jobs, "Run now", scan privileges, LLM), a scan
+    indicator, and protection against cross-site form posts.
+  * Devices can be re-classified, merged, forgotten and watched; private MAC
+    addresses are marked. Findings can be accepted with a reason and reopened.
+  * New rules: IP conflict, changed MAC on the gateway/DHCP/DNS address,
+    changed DHCP-announced settings, watched device offline.
+  * The helper only runs lanwatch's own nmap scripts against networks this
+    machine is attached to. Extend with LANWATCH_HELPER_ALLOW_SCRIPTS and
+    LANWATCH_HELPER_ALLOW_NETS (see README.Debian).
+  * History is pruned daily ([store] keep_*_days).
+  * --verbose on the commands that take time.
+  * Concurrent writers (service, CLI, web UI) wait for each other instead of
+    failing with "database is locked".
+  * arm64 package.
+
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 15:11:04 +0100
+
 lanwatch (0.2.0) unstable; urgency=medium
 
   * Web UI: new look with summary tiles on the dashboard, severity chips with

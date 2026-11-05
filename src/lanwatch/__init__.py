@@ -1,3 +1,3 @@
 """lanwatch: continuous auditor for your own local network."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
