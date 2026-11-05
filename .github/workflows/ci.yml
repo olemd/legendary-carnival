@@ -1,28 +1,38 @@
 name: ci
+# Kept small on purpose: two jobs per push. The wider checks (Debian 12, Ubuntu 24.04, the
+# arm64 package) run in the release workflow, or here when started by hand.
 on:
   push:
+    branches: ["**"]          # not tags: release.yml covers those, with more tests
+    paths-ignore: ["**.md"]   # prose-only changes need no run
   pull_request:
-  # Manual runs additionally build and smoke-test the arm64 package (slow: emulated).
+    paths-ignore: ["**.md"]
   workflow_dispatch:
+
+# A newer push to the same branch makes the run for the older one pointless.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13"   # the version the package bundles
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -q
+      # The oldest supported Python, in the same job rather than a second runner.
+      - run: uv run --frozen --python 3.12 pytest -q
 
-  # Build the Debian package and lint it. Pinned to 24.04 so the debhelper and lintian
-  # versions do not change underneath us when ubuntu-latest moves.
+  # Build the Debian package, lint it, and install it under real systemd on Debian 13.
+  # Pinned to 24.04 so the debhelper and lintian versions do not change underneath us when
+  # ubuntu-latest moves.
   deb:
     runs-on: ubuntu-24.04
     steps:
@@ -33,37 +43,26 @@ jobs:
       - run: make deb
       # The .deb, not the .changes: Ubuntu's lintian rejects "unstable" as an upload target.
       - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
+      # Rootful: the test container runs systemd and must be able to sandbox its units.
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
       - uses: actions/upload-artifact@v4
         with:
           name: lanwatch-deb
           path: dist/lanwatch_*_amd64.deb
           if-no-files-found: error
 
-  # Install that package under real systemd on each supported distribution and exercise it.
-  deb-test:
-    needs: deb
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        image: ["debian:12", "debian:13", "ubuntu:24.04"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: lanwatch-deb
-          path: dist
-      # Rootful: the test container runs systemd and must be able to sandbox its units.
-      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/${{ matrix.image }}
-
-  # The arm64 package is built and tested under emulation, which takes several minutes, so
-  # it does not run on every push: only when started by hand, and in the release workflow.
-  deb-arm64:
+  # Only when started by hand: the other supported distributions, and the arm64 package,
+  # which is built and smoke-tested under emulation and takes several minutes.
+  wide:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static lintian
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian qemu-user-static
+      - run: make deb
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:12
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/ubuntu:24.04
       - run: make deb-arm64
       - run: lintian --fail-on error dist/lanwatch_*_arm64.deb
       - run: tests/deb/smoke.sh arm64
