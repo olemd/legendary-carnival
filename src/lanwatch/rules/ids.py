@@ -98,4 +98,47 @@ class NamePoisoningRule(Rule):
         return out
 
 
-RULES: list[Rule] = [DecoyTouchedRule(), NamePoisoningRule()]
+class ArpSweepRule(Rule):
+    id = "ids.arp-sweep"
+    kind = Kind.SECURITY
+    default_severity = Severity.MEDIUM
+    # Asking for this many addresses that no known device has is not ordinary traffic. A
+    # router looking for its own clients asks for addresses that exist.
+    UNUSED_TARGETS = 20
+    description = (
+        "A device sent ARP requests for many addresses that no known device has: it is "
+        "mapping the network. Heard by the passive ARP listener between scans. Accept the "
+        "finding for a scanner of your own (a second lanwatch, a network controller)."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        used = {d.ip for d in ctx.store.devices() if d.ip}
+        out: list[Finding] = []
+        for r in ctx.store.infra("arp-sweep"):
+            targets = [str(t) for t in r.data.get("targets") or []]
+            unused = [t for t in targets if t not in used]
+            if len(unused) < self.UNUSED_TARGETS:
+                continue
+            mac = str(r.data.get("mac") or r.key)
+            device = ctx.store.device_by_key(mac)
+            who = f"{device.label} ({mac})" if device is not None else mac
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"{who} is sweeping the network: ARP requests for {len(targets)} "
+                    f"addresses, {len(unused)} of them unused",
+                    key_parts=[mac],
+                    device_id=device.id if device is not None else None,
+                    evidence={
+                        "mac": mac,
+                        "ip": r.data.get("ip") or None,
+                        "addresses_asked_for": len(targets),
+                        "unused": len(unused),
+                        "sample": unused[:10],
+                    },
+                )
+            )
+        return out
+
+
+RULES: list[Rule] = [DecoyTouchedRule(), NamePoisoningRule(), ArpSweepRule()]

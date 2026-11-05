@@ -294,6 +294,38 @@ async def run_maintenance(config: Config, store: Store) -> dict[str, int]:
     return deleted
 
 
+async def _record_arp_traffic(config: Config, store: Store, ex: Executor, snapshot_id: int) -> None:
+    """Store what the passive ARP listener heard since the previous discovery round."""
+    report_fn = getattr(ex, "arp_report", None)
+    if not config.scan.arp_watch or report_fn is None:
+        return
+    try:
+        report = await report_fn(config.schedule.discovery_interval_s + 30)
+    except Exception as e:  # an older helper, or one that is restarting
+        log.debug("no ARP report: %s", e)
+        return
+    if report is None:
+        return  # no raw-socket privilege; the status page says so
+    conflicts = {
+        str(ip): {"ip": str(ip), "macs": [str(m) for m in macs]}
+        for ip, macs in (report.get("conflicts") or {}).items()
+    }
+    sweeps = {
+        str(s["mac"]): {"mac": str(s["mac"]), "ip": str(s.get("ip") or ""), "targets": s["targets"]}
+        for s in report.get("sweeps") or []
+        if isinstance(s, dict) and s.get("mac") and isinstance(s.get("targets"), list)
+    }
+    store.replace_infra("arp-conflict", conflicts, snapshot_id)
+    store.replace_infra("arp-sweep", sweeps, snapshot_id)
+    store.meta_set("arp.frames", str(int(report.get("frames") or 0)))
+    log.debug(
+        "ARP listener: %s frames, %d conflicts, %d busy senders",
+        report.get("frames"),
+        len(conflicts),
+        len(sweeps),
+    )
+
+
 async def run_discovery(
     config: Config, store: Store, executor: Executor | None = None
 ) -> DiscoveryOutcome:
@@ -327,6 +359,7 @@ async def run_discovery(
     if gateways:
         store.meta_set("net.gateways", json.dumps(gateways))
     store.pin_infrastructure(infrastructure_ips(store))
+    await _record_arp_traffic(config, store, ex, snapshot_id)
 
     ctx = RuleContext(
         store=store,

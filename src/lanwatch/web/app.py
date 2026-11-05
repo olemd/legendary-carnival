@@ -361,6 +361,7 @@ def create_app(
             llm=llm,
             db_bytes=db.stat().st_size if db.is_file() else 0,
             decoys=decoys,
+            arp_frames=s.meta_get("arp.frames"),
             devices_total=len(s.devices()),
         )
 

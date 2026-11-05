@@ -232,13 +232,28 @@ class IpConflictRule(Rule):
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
         infra = infrastructure_ips(ctx.store)
-        out: list[Finding] = []
+        # Two sources: the active scan (two answers in one round) and the passive ARP
+        # listener (two MAC addresses that kept taking the address from each other).
+        claims: dict[str, dict[str, int | None]] = {}
         for ip, answers in ctx.store.ip_holders().items():
             # Only answers that came with a MAC address can show two different devices; a
             # host seen without one (a ping sweep, a routed subnet) proves nothing.
-            holders = [(did, mac) for did, mac in answers if mac]
-            if len({mac for _, mac in holders}) < 2:
+            for did, mac in answers:
+                if mac:
+                    claims.setdefault(ip, {})[mac] = did
+        for r in ctx.store.infra("arp-conflict"):
+            for mac in r.data.get("macs") or []:
+                claims.setdefault(r.key, {}).setdefault(str(mac), None)
+        out: list[Finding] = []
+        for ip, by_mac in claims.items():
+            if len(by_mac) < 2:
                 continue
+            holders: list[tuple[int, str]] = []
+            for mac, seen_as in sorted(by_mac.items()):
+                known = ctx.store.device_by_key(mac) if seen_as is None else None
+                # -1: a MAC address only the listener has heard; no device record yet.
+                device_id = seen_as if seen_as is not None else (known.id if known else -1)
+                holders.append((device_id, mac))
             role = infra.get(ip)
             who = [_who(ctx, did, mac) for did, mac in holders]
             out.append(

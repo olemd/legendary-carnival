@@ -35,6 +35,7 @@
       {% else %}
       <dt>Raw sockets</dt><dd>{% if capability.raw %}<span class="result-ok">yes</span>{% else %}<span class="result-failed">no</span> <span class="muted">ARP discovery, UDP scans and DHCP/mDNS probes are skipped</span>{% endif %}</dd>
       <dt>nmap</dt><dd>{% if capability.nmap %}<span class="result-ok">installed</span>{% else %}<span class="result-failed">missing</span> <span class="muted">no service inventory</span>{% endif %}</dd>
+      <dt>ARP listener</dt><dd>{% if not config.scan.arp_watch %}<span class="muted">disabled in config</span>{% elif arp_frames is not none %}<span class="result-ok">listening</span> <span class="muted">{{ arp_frames }} frames in the last round</span>{% else %}<span class="muted">not running (needs raw sockets and one discovery round)</span>{% endif %}</dd>
       <dt>arp-scan</dt><dd>{% if capability.arp_scan %}<span class="result-ok">installed</span>{% else %}<span class="muted">missing, discovery falls back to nmap</span>{% endif %}</dd>
       {% endif %}
     </dl>

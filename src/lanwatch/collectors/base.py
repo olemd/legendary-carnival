@@ -9,8 +9,9 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
+from lanwatch import arpwatch
 from lanwatch.logging_setup import with_heartbeat
 
 log = logging.getLogger(__name__)
@@ -97,6 +98,14 @@ async def run_cmd(args: list[str], timeout: float, stdin: bytes | None = None) -
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
+def local_arp_report(window_s: float) -> dict[str, Any] | None:
+    """Start this process's ARP listener if needed and allowed, and report from it."""
+    if not privileged():
+        return None
+    watch = arpwatch.shared()
+    return watch.report(window_s) if watch.start() else None
+
+
 class Executor(Protocol):
     name: str
 
@@ -115,6 +124,10 @@ class LocalExecutor:
 
     async def which(self, binary: str) -> tuple[bool, bool]:
         return have(binary), privileged()
+
+    async def arp_report(self, window_s: float) -> dict[str, Any] | None:
+        """What the passive ARP listener heard; None when this process may not listen."""
+        return local_arp_report(window_s)
 
 
 class HelperExecutor:
@@ -155,6 +168,11 @@ class HelperExecutor:
     async def which(self, binary: str) -> tuple[bool, bool]:
         r = await self._request({"op": "which", "binary": binary}, 5)
         return bool(r.get("available")), bool(r.get("root"))
+
+    async def arp_report(self, window_s: float) -> dict[str, Any] | None:
+        r = await self._request({"op": "arp-report", "window": window_s}, 5)
+        report = r.get("report")
+        return report if isinstance(report, dict) else None
 
 
 def make_executor(helper_socket: Path | None) -> Executor:

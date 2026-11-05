@@ -102,6 +102,10 @@ async def main() -> None:
         rc, out, err = await ex.run(["nmap", "-oX", "-", "-n", "-Pn", *flags, target], 300)
         assert rc == 0 and "<nmaprun" in out and "<port " in out, (flags, rc, err[-400:])
         print("nmap", *flags, target, "-> ok")
+    # The passive ARP listener runs inside the helper and has heard the scans' answers.
+    report = await ex.arp_report(900)
+    assert report is not None and report["frames"] > 0, report
+    print("ARP listener heard", report["frames"], "frames")
     # The helper is the privilege boundary: nothing beyond this LAN, no other scripts.
     for argv in (["nmap", "-sn", "8.8.8.8"], ["nmap", "--script=vuln", target]):
         try:

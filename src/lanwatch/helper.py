@@ -8,6 +8,7 @@ CAP_NET_RAW as an ambient capability. Under systemd it takes its listening socke
 Protocol: one JSON object per line over a unix socket.
   {"op": "which", "binary": "nmap"}                  -> {"available": true, "root": true}
   {"op": "run", "argv": [...], "timeout": 600}       -> {"rc": 0, "stdout": "...", "stderr": "..."}
+  {"op": "arp-report", "window": 330}                -> {"report": {...} or null}
   anything else, or an argv outside the allowlist    -> {"error": "..."}
 
 The allowlist is the whole security model: only four binaries, only flags lanwatch itself
@@ -37,7 +38,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from lanwatch.collectors.base import have, privileged, run_cmd
+from lanwatch.collectors.base import have, local_arp_report, privileged, run_cmd
 from lanwatch.config import ScanConfig
 from lanwatch.logging_setup import setup_logging
 
@@ -228,6 +229,12 @@ async def handle_request(
             return {"error": "unknown binary"}
         # The key is called "root" for wire compatibility; it means raw-socket privilege.
         return {"available": have(binary), "root": privileged()}
+    if op == "arp-report":
+        # Passive and read-only: what the helper's ARP listener heard recently. Nothing in
+        # the request is used but the length of the look-back.
+        window = payload.get("window", 330)
+        seconds = float(window) if isinstance(window, int | float) else 330.0
+        return {"report": local_arp_report(seconds)}
     if op == "run":
         argv = payload.get("argv")
         if not isinstance(argv, list):
