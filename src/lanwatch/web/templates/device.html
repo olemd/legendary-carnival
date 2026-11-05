@@ -35,7 +35,6 @@
   <datalist id="kinds">{% for k in kinds %}<option value="{{ k }}">{% endfor %}</datalist>
   <label for="d-desc">Description</label>
   <input id="d-desc" type="text" name="description" value="{{ device.description or '' }}" maxlength="200">
-  <span></span>
   <label class="check"><input type="checkbox" name="watch" value="true"{% if device.watch %} checked{% endif %}> Raise a finding when this device goes offline</label>
   <div class="edit-actions"><button class="primary">Save</button>
     <span class="muted">Kind and description normally come from the LLM. Changing them pins your values; clear both to hand them back.</span></div>
