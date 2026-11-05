@@ -68,7 +68,13 @@ done
 case $state in
 running | degraded) ;;
 *)
-    echo "systemd did not finish booting (state: $state)" >&2
+    # Say what the container was doing: an empty state means systemd is not even installed
+    # yet (apt still running or stuck), anything else that systemd itself is hanging.
+    echo "systemd did not finish booting (state: ${state:-none, systemctl not available yet})" >&2
+    echo "-- processes in the container:" >&2
+    pm top "$name" >&2 || true
+    echo "-- container log:" >&2
+    pm logs --tail 40 "$name" >&2 || true
     exit 1
     ;;
 esac
