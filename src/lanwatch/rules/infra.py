@@ -4,10 +4,12 @@ observations and device attributes from the store."""
 from __future__ import annotations
 
 import ipaddress
+import json
 from typing import Any
 
 from lanwatch.models import Device, Finding, Kind, Severity
 from lanwatch.rules.base import Rule, RuleContext
+from lanwatch.store import Store
 
 IOT_KINDS = {"iot", "camera", "media", "smart_home_hub", "printer", "game_console"}
 TRUSTED_KINDS = {"workstation", "laptop", "server", "nas", "virtual_machine"}
@@ -185,10 +187,110 @@ class FlatNetworkRule(Rule):
         return out
 
 
+def infrastructure_ips(store: Store) -> dict[str, str]:
+    """The addresses every other device depends on, with their role: this host's default
+    gateways (recorded by discovery) and the router, DHCP server and DNS servers that DHCP
+    announces (recorded by the infra probes). Whoever answers for one of these can read or
+    redirect the whole network's traffic."""
+    roles: dict[str, str] = {}
+
+    def add(value: object, role: str) -> None:
+        for ip in str(value or "").replace(",", " ").split():
+            try:
+                roles.setdefault(str(ipaddress.IPv4Address(ip)), role)
+            except ValueError:
+                continue
+
+    try:
+        for ip in json.loads(store.meta_get("net.gateways") or "[]"):
+            add(ip, "Gateway")
+    except ValueError:
+        pass
+    for r in store.infra("dhcp"):
+        add(r.data.get("router"), "Gateway")
+        add(r.data.get("server"), "DHCP server")
+        for dns in r.data.get("dns") or []:
+            add(dns, "DNS server")
+    return roles
+
+
+def _who(ctx: RuleContext, device_id: int, mac: str | None) -> str:
+    d = ctx.store.device(device_id)
+    return f"{mac or '?'} ({d.label})" if d is not None and d.label != mac else str(mac or "?")
+
+
+class IpConflictRule(Rule):
+    id = "net.ip-conflict"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "Two devices answered for the same IP address in one discovery round. Either an "
+        "address conflict (a static address inside the DHCP range) or one device "
+        "impersonating the other (ARP spoofing). Critical when the address is the gateway, "
+        "the DHCP server or a DNS server."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        infra = infrastructure_ips(ctx.store)
+        out: list[Finding] = []
+        for ip, holders in ctx.store.ip_holders().items():
+            if len(holders) < 2:
+                continue
+            role = infra.get(ip)
+            who = [_who(ctx, did, mac) for did, mac in holders]
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"Two devices answer for {ip}"
+                    + (f" ({role.lower()})" if role else "")
+                    + f": {', '.join(who)}",
+                    key_parts=[ip, *sorted(str(mac) for _, mac in holders)],
+                    severity=Severity.CRITICAL if role else None,
+                    evidence={"ip": ip, "role": role, "answered": who},
+                )
+            )
+        return out
+
+
+class InfraMacChangedRule(Rule):
+    id = "net.infrastructure-mac-changed"
+    kind = Kind.SECURITY
+    default_severity = Severity.CRITICAL
+    description = (
+        "The gateway, DHCP server or a DNS server now answers from a different MAC address "
+        "than when lanwatch first saw it. Expected once after replacing the router (accept "
+        "the finding); otherwise the classic sign of ARP spoofing, where another device "
+        "puts itself between the network and its gateway."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        holders = ctx.store.ip_holders()
+        out: list[Finding] = []
+        for ip, role in infrastructure_ips(ctx.store).items():
+            pinned = ctx.store.meta_get(f"net.pin.{ip}")
+            now = sorted({mac for _, mac in holders.get(ip, []) if mac})
+            if pinned is None or not now or pinned in now:
+                continue  # never seen, not answering this round, or still the same device
+            who = [_who(ctx, did, mac) for did, mac in holders[ip] if mac]
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"{role} {ip} now answers from {', '.join(who)}, was {pinned}",
+                    key_parts=[ip, pinned, *now],
+                    device_id=holders[ip][0][0],
+                    severity=None if role == "Gateway" else Severity.HIGH,
+                    evidence={"ip": ip, "role": role, "first_seen_mac": pinned, "now": who},
+                )
+            )
+        return out
+
+
 RULES: list[Rule] = [
     RogueDhcpRule(),
     UpnpIgdRule(),
     UpnpMappingsRule(),
     Ipv6ExposedRule(),
     FlatNetworkRule(),
+    IpConflictRule(),
+    InfraMacChangedRule(),
 ]

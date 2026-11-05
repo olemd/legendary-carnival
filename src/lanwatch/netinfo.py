@@ -69,6 +69,30 @@ async def list_interfaces(executor: Executor | None = None) -> list[Interface]:
     return list_interfaces_ioctl()
 
 
+def parse_default_gateways(data: object) -> list[str]:
+    """IPv4 gateways of the default routes in `ip -j route show` output."""
+    out: set[str] = set()
+    for route in data if isinstance(data, list) else []:
+        if not isinstance(route, dict) or route.get("dst") != "default":
+            continue
+        try:
+            out.add(str(ipaddress.IPv4Address(str(route.get("gateway")))))
+        except ValueError:
+            continue
+    return sorted(out)
+
+
+async def default_gateways(executor: Executor | None = None) -> list[str]:
+    """This host's default gateways; empty when `ip` is unavailable."""
+    rc, out, _ = await (executor or LocalExecutor()).run(["ip", "-j", "route", "show"], timeout=10)
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        return parse_default_gateways(json.loads(out))
+    except ValueError:
+        return []
+
+
 _SIOCGIFFLAGS = 0x8913
 _SIOCGIFADDR = 0x8915
 _SIOCGIFNETMASK = 0x891B

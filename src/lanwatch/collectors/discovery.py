@@ -10,6 +10,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import socket
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -38,6 +39,9 @@ class DiscoveryBackend(Protocol):
 # -- arp-scan ---------------------------------------------------------------
 
 
+_DUP = re.compile(r"\s*\(DUP: \d+\)\s*$")
+
+
 def parse_arp_scan_plain(text: str, source: str = "arp-scan") -> list[HostObservation]:
     """`arp-scan --plain` prints: IP<TAB>MAC<TAB>Vendor."""
     out: list[HostObservation] = []
@@ -50,7 +54,9 @@ def parse_arp_scan_plain(text: str, source: str = "arp-scan") -> list[HostObserv
             ipaddress.IPv4Address(ip)
         except ValueError:
             continue
-        vendor = parts[2].strip() if len(parts) > 2 else None
+        # A second answer for an IP already listed is tagged "(DUP: n)" after the vendor.
+        # The line is kept: two MACs for one IP is exactly what the conflict rule looks for.
+        vendor = _DUP.sub("", parts[2]).strip() if len(parts) > 2 else None
         if vendor and vendor.lower().startswith("(unknown"):
             vendor = None
         out.append(HostObservation(ip=ip, mac=mac, vendor=vendor, source=source))

@@ -98,3 +98,30 @@ def test_list_interfaces_ioctl_runs_on_linux() -> None:
     assert any(i.name == "lo" for i in ifaces)
     lo = next(i for i in ifaces if i.name == "lo")
     assert lo.mac is None and any(str(a.ip) == "127.0.0.1" for a in lo.addrs)
+
+
+def test_arp_scan_duplicate_answers_are_kept_with_a_clean_vendor() -> None:
+    from lanwatch.collectors.discovery import parse_arp_scan_plain
+
+    text = (
+        "192.168.1.1\t74:ac:b9:00:00:01\tUbiquiti Inc\n"
+        "192.168.1.1\tf0:18:98:00:00:20\tApple, Inc. (DUP: 2)\n"
+    )
+    hosts = parse_arp_scan_plain(text)
+    assert [(h.ip, h.mac, h.vendor) for h in hosts] == [
+        ("192.168.1.1", "74:ac:b9:00:00:01", "Ubiquiti Inc"),
+        ("192.168.1.1", "f0:18:98:00:00:20", "Apple, Inc."),
+    ]
+
+
+def test_default_gateways_from_ip_route() -> None:
+    from lanwatch.netinfo import parse_default_gateways
+
+    routes = [
+        {"dst": "default", "gateway": "192.168.1.1", "dev": "enp16s0", "protocol": "dhcp"},
+        {"dst": "192.168.1.0/24", "dev": "enp16s0", "prefsrc": "192.168.1.10"},
+        {"dst": "default", "dev": "tun0"},  # no gateway on a point-to-point link
+        {"dst": "default", "gateway": "fe80::1", "dev": "enp16s0"},
+    ]
+    assert parse_default_gateways(routes) == ["192.168.1.1"]
+    assert parse_default_gateways("nonsense") == [] and parse_default_gateways([]) == []

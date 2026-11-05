@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -15,11 +16,17 @@ from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
-from lanwatch.netinfo import list_interfaces, select_subnets, self_observations
+from lanwatch.netinfo import (
+    default_gateways,
+    list_interfaces,
+    select_subnets,
+    self_observations,
+)
 from lanwatch.notify import dispatch as notify
 from lanwatch.overview import update as update_overview
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.engine import Engine
+from lanwatch.rules.infra import infrastructure_ips
 from lanwatch.store import Store
 
 log = logging.getLogger(__name__)
@@ -274,6 +281,12 @@ async def run_discovery(
     previous = store.latest_snapshot("discovery")
     rec = store.record_hosts(snapshot_id, hosts)
     store.finish_snapshot(snapshot_id, len(rec.seen_device_ids))
+    # Note who holds the gateway and the other addresses the network depends on, so the
+    # rules can tell when that changes.
+    gateways = await default_gateways(ex)
+    if gateways:
+        store.meta_set("net.gateways", json.dumps(gateways))
+    store.pin_infrastructure(infrastructure_ips(store))
 
     ctx = RuleContext(
         store=store,

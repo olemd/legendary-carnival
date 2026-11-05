@@ -147,3 +147,95 @@ def test_watched_device_offline_raises_and_resolves(store: Store, config: Config
     for _ in range(3):
         engine.run(_round(store, config, [tv]))
     assert offline_findings() == []
+
+
+def _open_titles(store: Store, rule_id: str) -> list[str]:
+    return [f.title for f in store.findings(FindingStatus.OPEN) if f.rule_id == rule_id]
+
+
+def test_two_devices_answering_for_one_ip(store: Store, config: Config) -> None:
+    engine = Engine(config)
+    printer = HostObservation(
+        ip="10.0.0.60", mac="00:1e:c0:00:00:60", hostname="printer", source="t"
+    )
+    laptop = HostObservation(ip="10.0.0.20", mac="f0:18:98:00:00:20", source="t")
+    engine.run(_round(store, config, [printer, laptop]))
+    assert _open_titles(store, "net.ip-conflict") == []
+
+    # Someone gave another machine the printer's address.
+    clash = HostObservation(ip="10.0.0.60", mac="b8:27:eb:00:00:99", source="t")
+    result = engine.run(_round(store, config, [printer, laptop, clash]))
+    (title,) = _open_titles(store, "net.ip-conflict")
+    assert title.startswith("Two devices answer for 10.0.0.60:")
+    assert "00:1e:c0:00:00:60 (printer)" in title and "b8:27:eb:00:00:99" in title
+    f = next(f for f in store.findings() if f.rule_id == "net.ip-conflict")
+    assert f.severity is Severity.HIGH and f.id in result.new_ids
+
+    # Sorted out: resolves by itself.
+    engine.run(_round(store, config, [printer, laptop]))
+    assert _open_titles(store, "net.ip-conflict") == []
+
+
+def test_gateway_answering_from_another_mac(store: Store, config: Config) -> None:
+    import json
+
+    engine = Engine(config)
+    router = HostObservation(ip="10.0.0.1", mac="74:ac:b9:00:00:01", hostname="gw", source="t")
+    laptop = HostObservation(ip="10.0.0.20", mac="f0:18:98:00:00:20", hostname="mbp", source="t")
+    rule = "net.infrastructure-mac-changed"
+
+    def discovery(hosts: list[HostObservation]) -> None:
+        ctx = _round(store, config, hosts)
+        # What run_discovery does between recording the round and running the rules.
+        store.meta_set("net.gateways", json.dumps(["10.0.0.1"]))
+        store.pin_infrastructure(["10.0.0.1"])
+        engine.run(ctx)
+
+    discovery([router, laptop])
+    assert store.meta_get("net.pin.10.0.0.1") == "74:ac:b9:00:00:01"
+    discovery([router, laptop])
+    assert _open_titles(store, rule) == []
+
+    # The laptop starts answering for the gateway address as well: a conflict on an
+    # address everything depends on, so critical.
+    spoof = HostObservation(ip="10.0.0.1", mac="f0:18:98:00:00:20", source="t")
+    discovery([router, spoof])
+    conflict = next(f for f in store.findings() if f.rule_id == "net.ip-conflict")
+    assert conflict.severity is Severity.CRITICAL and "(gateway)" in conflict.title
+    assert _open_titles(store, rule) == []  # the real gateway still answers too
+
+    # Only the impostor answers: the gateway address has changed hands.
+    discovery([spoof])
+    (title,) = _open_titles(store, rule)
+    assert (
+        title == "Gateway 10.0.0.1 now answers from f0:18:98:00:00:20 (mbp), was 74:ac:b9:00:00:01"
+    )
+    f = next(f for f in store.findings() if f.rule_id == rule)
+    assert f.severity is Severity.CRITICAL and f.evidence["first_seen_mac"] == "74:ac:b9:00:00:01"
+    assert store.meta_get("net.pin.10.0.0.1") == "74:ac:b9:00:00:01"  # the pin does not follow
+
+    # The real router is back alone: resolved. Gateway offline for a round: nothing to say.
+    discovery([router, laptop])
+    assert _open_titles(store, rule) == []
+    discovery([laptop])
+    assert _open_titles(store, rule) == []
+
+
+def test_infrastructure_addresses_come_from_routes_and_dhcp(store: Store) -> None:
+    import json
+
+    from lanwatch.rules.infra import infrastructure_ips
+
+    assert infrastructure_ips(store) == {}
+    store.meta_set("net.gateways", json.dumps(["192.168.1.1"]))
+    sid = store.begin_snapshot("infra", "t")
+    offer = {"interface": "eth0", "server": "192.168.1.2", "router": "192.168.1.1"}
+    store.replace_infra(
+        "dhcp", {"eth0/192.168.1.2": {**offer, "dns": ["192.168.1.3", "9.9.9.9"]}}, sid
+    )
+    assert infrastructure_ips(store) == {
+        "192.168.1.1": "Gateway",
+        "192.168.1.2": "DHCP server",
+        "192.168.1.3": "DNS server",
+        "9.9.9.9": "DNS server",
+    }

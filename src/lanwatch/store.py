@@ -305,6 +305,31 @@ class Store:
                 ).rowcount
         return deleted
 
+    def ip_holders(self) -> dict[str, list[tuple[int, str | None]]]:
+        """Who answered for each IP in the newest finished discovery round:
+        ip -> [(device id, MAC)]. More than one entry means two devices claimed the IP."""
+        latest = self.latest_snapshot("discovery")
+        if latest is None:
+            return {}
+        rows = self._db.execute(
+            """SELECT s.ip, d.id, d.mac FROM sightings s JOIN devices d ON d.id = s.device_id
+               WHERE s.snapshot_id = ? ORDER BY s.ip, d.id""",
+            (latest.id,),
+        ).fetchall()
+        out: dict[str, list[tuple[int, str | None]]] = {}
+        for r in rows:
+            out.setdefault(str(r["ip"]), []).append((int(r["id"]), r["mac"]))
+        return out
+
+    def pin_infrastructure(self, ips: Iterable[str]) -> None:
+        """Remember which MAC address holds each infrastructure IP (gateway, DHCP, DNS) the
+        first time it is seen held by exactly one. A later change is then a finding."""
+        holders = self.ip_holders()
+        for ip in ips:
+            macs = [mac for _, mac in holders.get(ip, []) if mac]
+            if len(macs) == 1 and self.meta_get(f"net.pin.{ip}") is None:
+                self.meta_set(f"net.pin.{ip}", macs[0])
+
     def sighting_device_ids(self, snapshot_id: int) -> set[int]:
         rows = self._db.execute(
             "SELECT device_id FROM sightings WHERE snapshot_id = ?", (snapshot_id,)
