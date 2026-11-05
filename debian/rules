@@ -32,9 +32,12 @@ override_dh_auto_install:
 	#    find their interpreter relative to themselves. The platform pin stops a newer
 	#    build host from selecting wheels that need a newer glibc than debian/control says.
 	uv venv --relocatable --python $(DEST)/python/bin/python3 $(DEST)/venv
+	#    --refresh-package: uv caches the wheel it builds from this checkout and only
+	#    rebuilds when pyproject.toml changes, so without it a build after editing source
+	#    files alone would package the previous build's code.
 	UV_PROJECT_ENVIRONMENT=$(DEST)/venv uv sync --frozen --no-dev --no-editable \
 		--link-mode=copy --python $(DEST)/python/bin/python3 \
-		--python-platform x86_64-manylinux_2_28
+		--python-platform x86_64-manylinux_2_28 --refresh-package lanwatch
 
 	# 3. Point the three remaining absolute build paths at the installed location.
 	sed -i 's|^home = .*|home = $(PREFIX)/python/bin|' $(DEST)/venv/pyvenv.cfg
@@ -73,6 +76,8 @@ override_dh_auto_install:
 	@! grep -rlF '$(CURDIR)' $(DEST) || { echo "build path left in the files above" >&2; exit 1; }
 	@test -z "$$(find $(DEST) -type l -lname '/*')" || { echo "absolute symlink in $(DEST)" >&2; exit 1; }
 	$(DEST)/venv/bin/python -B -c 'import lanwatch.cli, lanwatch.helper, uvloop, httptools, pydantic_core'
+	@diff -rq -x __pycache__ src/lanwatch $(DEST)/venv/lib/$(PYLIB)/site-packages/lanwatch \
+		|| { echo "the packaged lanwatch differs from src/lanwatch (stale build cache?)" >&2; exit 1; }
 
 # The config file can hold secrets. Ship it unreadable to others from the first moment;
 # debian/lanwatch.tmpfiles then hands the lanwatch group read access.
