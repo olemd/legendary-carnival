@@ -1213,7 +1213,12 @@ class _Tx:
         self._db = db
 
     def __enter__(self) -> None:
-        self._db.execute("BEGIN")
+        # IMMEDIATE takes the write lock now, waiting up to the connection's timeout for
+        # another writer (the service, the CLI and the web UI share one database file).
+        # A plain BEGIN starts as a reader and upgrades at its first write; if someone
+        # else committed in between, SQLite fails that upgrade at once with "database is
+        # locked", without waiting, and the whole scan round is lost.
+        self._db.execute("BEGIN IMMEDIATE")
 
     def __exit__(self, exc_type: object, *_: object) -> None:
         self._db.execute("ROLLBACK" if exc_type else "COMMIT")

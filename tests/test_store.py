@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from lanwatch.config import Config
 from lanwatch.models import Finding, FindingStatus, HostObservation, Kind, Severity
 from lanwatch.store import MIGRATIONS, Store
@@ -256,3 +258,35 @@ def test_accepting_a_finding_sticks_and_can_be_undone(store: Store) -> None:
     assert f2 is not None and f2.status is FindingStatus.OPEN
     assert not f2.accepted and f2.note is None
     assert not store.reopen("no-such-finding")
+
+
+def test_concurrent_writers_wait_instead_of_failing(tmp_path: Path) -> None:
+    """The service and a CLI command writing at the same moment: both must succeed."""
+    import threading
+    import time
+
+    path = tmp_path / "shared.db"
+    a = Store(path)
+    a.meta_set("k", "initial")
+    errors: list[BaseException] = []
+    started = threading.Event()
+
+    def other_process() -> None:
+        try:
+            with Store(path) as b:
+                started.set()
+                b.meta_set("k", "from the other writer")
+        except BaseException as e:  # reported to the main thread below
+            errors.append(e)
+
+    t = threading.Thread(target=other_process)
+    with a._tx():
+        assert a.meta_get("k") == "initial"  # read first, then write: what record_hosts does
+        t.start()
+        started.wait(timeout=5)
+        time.sleep(0.1)  # the other writer is now either done (the bug) or waiting (correct)
+        a.meta_set("k", "from the transaction")
+    t.join(timeout=10)
+    assert errors == []
+    assert a.meta_get("k") == "from the other writer"  # it waited, then wrote last
+    a.close()
