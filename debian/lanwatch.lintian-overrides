@@ -1,0 +1,21 @@
+# The package deliberately bundles a prebuilt CPython (python-build-standalone) and prebuilt
+# wheels under /usr/lib/lanwatch instead of using the system Python; see README.Debian.
+# The tags below all follow from that one decision.
+
+# The standalone interpreter is statically linked against its own copies of these.
+lanwatch: embedded-library * [usr/lib/lanwatch/*]
+lanwatch: hardening-no-pie [usr/lib/lanwatch/python/bin/*]
+# Prebuilt binaries are shipped byte-for-byte as published; they are not re-stripped,
+# since stripping wheels that auditwheel has already rewritten can corrupt them.
+lanwatch: unstripped-binary-or-object [usr/lib/lanwatch/*]
+# These scripts run under the bundled interpreter, never the system python3.
+lanwatch: python3-script-but-no-python3-dep * [usr/lib/lanwatch/*]
+# Bytecode is precompiled (hash-based) because the tree is read-only at runtime and nothing
+# like py3compile runs for a private interpreter.
+lanwatch: package-installs-python-pycache-dir [usr/lib/lanwatch/*]
+# uv's relocatable entry points are sh/python polyglots: sh execs the interpreter next to
+# the script, python ignores the first lines. They are not meant to parse as pure sh.
+lanwatch: shell-script-fails-syntax-check [usr/lib/lanwatch/venv/bin/*]
+
+# The config file may contain secrets; debian/lanwatch.tmpfiles gives the service group access.
+lanwatch: non-standard-file-perm 0640 != 0644 [etc/lanwatch/config.toml]

@@ -9,3 +9,12 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+# debhelper build output (make deb)
+debian/lanwatch/
+debian/.build/
+debian/.debhelper/
+debian/files
+debian/debhelper-build-stamp
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log

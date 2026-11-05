@@ -1,0 +1,44 @@
+[Unit]
+Description=lanwatch scan helper (raw-socket scans for lanwatch.service)
+Documentation=file:///usr/share/doc/lanwatch/README.Debian
+# Started through lanwatch-helper.socket, which owns /run/lanwatch/helper.sock.
+Requires=lanwatch-helper.socket
+After=lanwatch-helper.socket
+
+[Service]
+Type=exec
+# Its own account: shares no files, groups or processes with lanwatch.service.
+User=lanwatch-helper
+Group=lanwatch-helper
+ExecStart=/usr/lib/lanwatch/venv/bin/lanwatch-helper
+Restart=on-failure
+RestartSec=5
+
+# The one privilege nmap and arp-scan need, and no way to obtain another.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+# As the main service, plus packet sockets for ARP and raw frames.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+# It only runs scanners; the configuration (secrets) and the database are none of its business.
+InaccessiblePaths=-/etc/lanwatch -/var/lib/lanwatch
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

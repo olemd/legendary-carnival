@@ -1,0 +1,29 @@
+Source: lanwatch
+Section: net
+Priority: optional
+Maintainer: olemd <olemd@glemt.net>
+Build-Depends: debhelper-compat (= 13), dh-sequence-installsysusers
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/olemd/legendary-carnival
+
+Package: lanwatch
+Architecture: amd64
+Depends: libc6 (>= 2.28),
+         nmap,
+         iproute2,
+         ca-certificates,
+         systemd,
+         ${misc:Depends}
+Recommends: arp-scan, iputils-ping
+Suggests: git
+Description: continuous auditor for your own local network
+ lanwatch discovers the devices on your LAN, inventories their open services,
+ evaluates rules against what it finds and reports changes and findings through
+ a local web UI and notifications. An optional local LLM (Ollama) explains
+ findings; nothing leaves the network unless you enable it.
+ .
+ The package is self-contained: it ships its own Python interpreter and
+ libraries under /usr/lib/lanwatch. The service runs as an unprivileged user
+ without capabilities; scans that need raw sockets go through a small
+ socket-activated helper that holds CAP_NET_RAW and nothing else.

@@ -1,0 +1,13 @@
+[Unit]
+Description=lanwatch scan helper socket
+Documentation=file:///usr/share/doc/lanwatch/README.Debian
+
+[Socket]
+ListenStream=/run/lanwatch/helper.sock
+# Only root and the lanwatch service user may ask for scans.
+SocketUser=root
+SocketGroup=lanwatch
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target

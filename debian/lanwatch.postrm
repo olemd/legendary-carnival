@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Purge removes everything the package created at runtime: the database, reports and
+# overview under the state directory. The system users are left in place, as is customary.
+if [ "$1" = purge ]; then
+    rm -rf /var/lib/lanwatch
+fi
+
+#DEBHELPER#

@@ -1,7 +1,9 @@
 # Convenience targets. Everything here is also a one-liner you can run by hand.
 IMAGE ?= localhost/lanwatch:latest
+# Distribution image the package is test-installed in (make deb-test).
+DEB_TEST_IMAGE ?= docker.io/library/debian:13
 
-.PHONY: check test clean container run-container helper-install
+.PHONY: check test clean deb deb-test container run-container helper-install
 
 check:            ## lint, format check, types, tests
 	uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
@@ -11,7 +13,17 @@ test:
 
 clean:            ## remove caches, build output and .venv (uv recreates it on the next run)
 	rm -rf .venv .mypy_cache .ruff_cache .pytest_cache dist
+	rm -rf debian/lanwatch debian/.build debian/.debhelper debian/files \
+	  debian/debhelper-build-stamp debian/*.substvars debian/*.debhelper debian/*.debhelper.log
 	find . -path ./.git -prune -o -type d \( -name __pycache__ -o -name '*.egg-info' \) -prune -exec rm -rf {} +
+
+deb:              ## build dist/lanwatch_<version>_amd64.deb (needs debhelper, uv and network)
+	dpkg-buildpackage -b -us -uc
+	mkdir -p dist
+	mv ../lanwatch_*_amd64.deb ../lanwatch_*_amd64.buildinfo ../lanwatch_*_amd64.changes dist/
+
+deb-test:         ## install the built package in a systemd container and exercise it (needs podman)
+	tests/deb/e2e.sh $(DEB_TEST_IMAGE)
 
 container:        ## build the image with podman
 	podman build -t $(IMAGE) .

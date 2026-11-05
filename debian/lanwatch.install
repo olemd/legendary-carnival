@@ -1,0 +1,2 @@
+debian/bin/lanwatch usr/bin
+debian/config.toml  etc/lanwatch

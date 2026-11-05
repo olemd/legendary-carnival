@@ -1,0 +1,4 @@
+# The config file may hold secrets (web password, notification tokens): readable by root
+# and the service user only. "z" adjusts an existing path and ignores a missing one.
+# Applied at install (after the lanwatch group exists, before the service starts) and at boot.
+z /etc/lanwatch/config.toml 0640 root lanwatch -

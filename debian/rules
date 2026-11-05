@@ -1,0 +1,99 @@
+#!/usr/bin/make -f
+# Builds a self-contained package: a standalone CPython and a virtualenv filled from
+# uv.lock, both under /usr/lib/lanwatch. Nothing is compiled; the interpreter and the wheels
+# are downloaded prebuilt, so the build needs `uv` on PATH and network access.
+
+# The bundled interpreter. Bump deliberately: the package owns its Python security updates.
+PYTHON_VERSION := 3.13.14
+PYLIB          := python$(basename $(PYTHON_VERSION))
+
+PKG     := $(CURDIR)/debian/lanwatch
+PREFIX  := /usr/lib/lanwatch
+DEST    := $(PKG)$(PREFIX)
+SCRATCH := $(CURDIR)/debian/.build
+# Where uv unpacks the interpreter before it is moved into place.
+PYSRC   := $(SCRATCH)/py/cpython-$(PYTHON_VERSION)-linux-x86_64-gnu
+
+# --buildsystem=none: without it debhelper finds the project Makefile and runs `make clean`
+# (deleting .venv and dist/), `make` (the full check suite) and `make test` during the build.
+%:
+	dh $@ --buildsystem=none
+
+override_dh_auto_install:
+	@command -v uv >/dev/null || { echo "uv is required to build this package: https://docs.astral.sh/uv/" >&2; exit 1; }
+	rm -rf $(SCRATCH) $(DEST)
+	mkdir -p $(DEST)
+
+	# 1. Interpreter. --no-bin keeps uv from linking it into the builder's ~/.local/bin.
+	uv python install --no-bin --install-dir $(SCRATCH)/py $(PYTHON_VERSION)
+	mv $(PYSRC) $(DEST)/python
+
+	# 2. Dependencies, exactly as locked. A relocatable venv gets entry-point scripts that
+	#    find their interpreter relative to themselves. The platform pin stops a newer
+	#    build host from selecting wheels that need a newer glibc than debian/control says.
+	uv venv --relocatable --python $(DEST)/python/bin/python3 $(DEST)/venv
+	UV_PROJECT_ENVIRONMENT=$(DEST)/venv uv sync --frozen --no-dev --no-editable \
+		--link-mode=copy --python $(DEST)/python/bin/python3 \
+		--python-platform x86_64-manylinux_2_28
+
+	# 3. Point the three remaining absolute build paths at the installed location.
+	sed -i 's|^home = .*|home = $(PREFIX)/python/bin|' $(DEST)/venv/pyvenv.cfg
+	ln -sfn ../../python/bin/$(PYLIB) $(DEST)/venv/bin/python
+	sed -i 's|$(PYSRC)|$(PREFIX)/python|g' $(DEST)/python/lib/$(PYLIB)/_sysconfigdata_*.py
+
+	# 4. Drop what a headless service never loads: Tk and IDLE, pip, C headers and the
+	#    embedding library (the python binary is statically linked and does not use it).
+	rm -rf $(DEST)/python/include $(DEST)/python/share/man $(DEST)/python/BUILD \
+		$(DEST)/python/lib/libpython3* $(DEST)/python/lib/pkgconfig \
+		$(DEST)/python/lib/libtcl* $(DEST)/python/lib/tcl* $(DEST)/python/lib/tk* \
+		$(DEST)/python/lib/itcl* $(DEST)/python/lib/thread* \
+		$(DEST)/python/lib/$(PYLIB)/tkinter $(DEST)/python/lib/$(PYLIB)/idlelib \
+		$(DEST)/python/lib/$(PYLIB)/turtledemo $(DEST)/python/lib/$(PYLIB)/turtle.py \
+		$(DEST)/python/lib/$(PYLIB)/ensurepip $(DEST)/python/lib/$(PYLIB)/config-* \
+		$(DEST)/python/lib/$(PYLIB)/lib-dynload/_tkinter.* \
+		$(DEST)/python/lib/$(PYLIB)/site-packages/pip* \
+		$(DEST)/python/bin/idle3* $(DEST)/python/bin/pip* $(DEST)/python/bin/pydoc3* \
+		$(DEST)/python/bin/python3*-config
+	# In the venv keep only the two lanwatch entry points (and the python symlinks): no
+	# activate scripts, no command-line tools of the dependencies.
+	find $(DEST)/venv/bin -type f ! -name lanwatch ! -name lanwatch-helper -delete
+	rm -f $(DEST)/venv/.gitignore $(DEST)/venv/CACHEDIR.TAG
+	# Records the checkout the wheel was built from; meaningless once installed.
+	rm -f $(DEST)/venv/lib/$(PYLIB)/site-packages/lanwatch-*.dist-info/direct_url.json
+
+	# 5. Bytecode, last. Hash-based because dpkg clamps file mtimes, which would make
+	#    timestamp-based .pyc files stale on a tree the service cannot write to. -s/-p make
+	#    tracebacks show installed paths; -B and -f keep the compiling interpreter's own
+	#    imports from leaving build-path .pyc files behind.
+	find $(DEST) -name __pycache__ -type d -prune -exec rm -rf {} +
+	$(DEST)/python/bin/python3 -B -m compileall -q -f --invalidation-mode unchecked-hash \
+		-s $(PKG) -p / $(DEST)/python/lib/$(PYLIB) $(DEST)/venv/lib/$(PYLIB)/site-packages
+
+	# 6. Refuse to package a tree that still refers to the build directory or cannot start.
+	@! grep -rlF '$(CURDIR)' $(DEST) || { echo "build path left in the files above" >&2; exit 1; }
+	@test -z "$$(find $(DEST) -type l -lname '/*')" || { echo "absolute symlink in $(DEST)" >&2; exit 1; }
+	$(DEST)/venv/bin/python -B -c 'import lanwatch.cli, lanwatch.helper, uvloop, httptools, pydantic_core'
+
+# The config file can hold secrets. Ship it unreadable to others from the first moment;
+# debian/lanwatch.tmpfiles then hands the lanwatch group read access.
+execute_after_dh_fixperms:
+	chmod 0640 $(PKG)/etc/lanwatch/config.toml
+
+# Three calls because the units need different upgrade behaviour: the services are
+# restarted to pick up new code, the socket is left alone (systemd refuses to restart a
+# socket whose service is running, and there is nothing in it to update).
+override_dh_installsystemd:
+	dh_installsystemd --name=lanwatch-helper --no-stop-on-upgrade lanwatch-helper.socket
+	dh_installsystemd --name=lanwatch-helper lanwatch-helper.service
+	dh_installsystemd lanwatch.service
+
+# The bundled interpreter and wheels are prebuilt and already stripped; their library
+# dependencies are glibc only and declared by hand in debian/control.
+override_dh_strip override_dh_dwz override_dh_makeshlibs override_dh_shlibdeps override_dh_strip_nondeterminism:
+
+# xz so a package built on Ubuntu (whose dpkg defaults to zstd) installs on Debian 12.
+override_dh_builddeb:
+	dh_builddeb -- -Zxz
+
+execute_after_dh_clean:
+	rm -rf $(SCRATCH)

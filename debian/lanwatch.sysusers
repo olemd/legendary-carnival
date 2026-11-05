@@ -1,0 +1,4 @@
+# Two separate accounts so the process that serves the web UI and talks to the network
+# (lanwatch) shares nothing with the one that may open raw sockets (lanwatch-helper).
+u lanwatch        - "lanwatch network auditor" /var/lib/lanwatch
+u lanwatch-helper - "lanwatch scan helper"

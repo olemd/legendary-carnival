@@ -1,0 +1,56 @@
+[Unit]
+Description=lanwatch network auditor
+Documentation=file:///usr/share/doc/lanwatch/README.Debian
+Wants=network-online.target
+After=network-online.target lanwatch-helper.socket
+# Scans that need raw sockets are sent to the helper over this socket.
+Requires=lanwatch-helper.socket
+
+[Service]
+Type=exec
+User=lanwatch
+Group=lanwatch
+# The wrapper sets the data directory and helper socket; see /usr/bin/lanwatch.
+ExecStart=/usr/bin/lanwatch run
+Restart=on-failure
+RestartSec=10
+# On SIGTERM lanwatch finishes the scan in progress before exiting, which can take many
+# minutes. Give it a moment, then kill: the database is SQLite in WAL mode and survives
+# that, and the interrupted scan simply runs again in the next round.
+TimeoutStopSec=30
+
+# /var/lib/lanwatch: database, reports, overview. The only place this service can write.
+StateDirectory=lanwatch
+StateDirectoryMode=0750
+UMask=0027
+
+# This process serves the web UI and talks to the network, so it gets no capabilities at
+# all. Everything privileged is done by lanwatch-helper.service.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Unix (helper), IP (web UI, UPnP, HTTP) and netlink (interface listing). No raw or packet.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

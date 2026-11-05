@@ -1,0 +1,54 @@
+lanwatch for Debian
+===================
+
+After installation lanwatch is running and scanning the directly attached networks.
+The web UI listens on http://127.0.0.1:8321 (loopback only until you set a password).
+
+Configuration
+-------------
+
+  /etc/lanwatch/config.toml      the only config file; every key is optional
+  /usr/share/doc/lanwatch/examples/config.example.toml
+                                 all keys with their defaults
+
+  sudo lanwatch config show      effective configuration
+  sudo systemctl restart lanwatch
+
+The config file is readable by root and the lanwatch user only, because it may hold the
+web password and notification tokens. That mode is re-applied at boot (tmpfiles.d).
+
+Command line
+------------
+
+Run the CLI as root: "sudo lanwatch findings", "sudo lanwatch scan", and so on.
+/usr/bin/lanwatch immediately switches to the lanwatch user, so it works on the same
+database as the service without leaving root-owned files behind.
+
+Services and privileges
+-----------------------
+
+  lanwatch.service         user lanwatch, no capabilities. Scheduler, web UI, database,
+                           LLM and notification requests. Writes only /var/lib/lanwatch.
+  lanwatch-helper.socket   /run/lanwatch/helper.sock, root:lanwatch 0660.
+  lanwatch-helper.service  user lanwatch-helper, CAP_NET_RAW only. Runs nmap, arp-scan,
+                           ip and ping on behalf of lanwatch.service.
+
+Nothing runs as root. The helper accepts only command lines that match an allowlist of
+those four programs and their flags; targets must be IP addresses or networks. Within
+that, it will run any nmap script by name against any address, so it limits what a
+compromised lanwatch.service could do to network scanning rather than preventing it.
+
+Logs: journalctl -u lanwatch -u lanwatch-helper
+
+The bundled Python
+------------------
+
+The package ships its own Python interpreter and libraries under /usr/lib/lanwatch and
+does not use the system Python. Security updates for them arrive with new lanwatch
+packages, not through Debian's python3 packages.
+
+Removal
+-------
+
+"apt remove lanwatch" keeps /etc/lanwatch and /var/lib/lanwatch.
+"apt purge lanwatch" deletes both, including the scan history.

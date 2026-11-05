@@ -1,0 +1,5 @@
+lanwatch (0.1.0) unstable; urgency=medium
+
+  * Initial Debian package.
+
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 12:21:30 +0100

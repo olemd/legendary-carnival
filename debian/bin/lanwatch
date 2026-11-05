@@ -1,0 +1,31 @@
+#!/bin/sh
+# /usr/bin/lanwatch for the Debian package. lanwatch.service starts through this script and
+# so does anyone typing "lanwatch" in a shell, which guarantees the command line sees the
+# same user, database and scan helper as the running service.
+set -eu
+
+REAL=/usr/lib/lanwatch/venv/bin/lanwatch
+SERVICE_USER=lanwatch
+
+if [ "$(id -u)" -eq 0 ]; then
+    # Never touch the state directory as root: a root-owned SQLite journal file would lock
+    # the service out of its own database. Become the service user first, then start over.
+    # HOME and the working directory are reset because lanwatch looks for a per-user
+    # config under them, and the service user may not look inside root's.
+    cd /
+    export HOME=/var/lib/lanwatch
+    unset XDG_CONFIG_HOME XDG_DATA_HOME
+    exec setpriv --reuid="$SERVICE_USER" --regid="$SERVICE_USER" --init-groups "$0" "$@"
+fi
+
+if [ "$(id -un)" != "$SERVICE_USER" ]; then
+    echo "lanwatch: the system instance is run as root: sudo lanwatch $*" >&2
+    exit 1
+fi
+
+# Where the packaged service keeps its data and reaches the scan helper. An existing value
+# wins, so "systemctl edit lanwatch" can still override either.
+export LANWATCH_DATA_DIR="${LANWATCH_DATA_DIR:-/var/lib/lanwatch}"
+export LANWATCH_SCAN__HELPER_SOCKET="${LANWATCH_SCAN__HELPER_SOCKET:-/run/lanwatch/helper.sock}"
+
+exec "$REAL" "$@"

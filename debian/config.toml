@@ -1,0 +1,19 @@
+# lanwatch configuration (TOML). Every key is optional: with nothing set here, the built-in
+# defaults apply and lanwatch scans the directly attached networks.
+#
+#   All keys and their defaults:  /usr/share/doc/lanwatch/examples/config.example.toml
+#   Effective configuration:      sudo lanwatch config show
+#   Apply changes:                sudo systemctl restart lanwatch
+#
+# This file may contain secrets (web password, notification tokens). It is readable only by
+# root and the lanwatch service user.
+
+# Web UI. Loopback only by default; binding to anything else requires a password.
+# [web]
+# host = "0.0.0.0"
+# password = "change-me"            # HTTP basic auth, user "lanwatch"
+
+# Local LLM (Ollama) for explanations and the daily digest. lanwatch works without it.
+# [llm]
+# base_url = "http://localhost:11434"
+# enabled = false
