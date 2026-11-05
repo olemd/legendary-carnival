@@ -121,6 +121,14 @@ enabled = true
 ports = [23, 1433, 3389, 5555]         # telnet, MS SQL, RDP, Android debug bridge
 ignore = []                            # source addresses never reported
 
+[firmware]
+# Once a day: which version do devices run, and is a newer one out? Covers Home Assistant,
+# ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin. Reading the running version stays on the
+# LAN. Shelly and Pi-hole say themselves whether an update exists; for the others the
+# latest release has to be looked up at the vendor or on GitHub, which needs online = true.
+enabled = true
+online = false                          # ask vendors/GitHub for the latest release
+
 [rules]
 # "inventory.ip-changed" = { enabled = false }
 # "inventory.new-device" = { severity = "high" }

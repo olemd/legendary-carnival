@@ -18,6 +18,11 @@
   {% if device.attrs.ipv6 %}<dt>IPv6</dt><dd class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</dd>{% endif %}
   <dt>First seen</dt><dd>{{ device.first_seen | local }}</dd>
   <dt>Last seen</dt><dd>{{ device.last_seen | local }}</dd>
+  {% set fw = device.attrs.firmware %}{% if fw %}<dt>Firmware</dt><dd>{{ fw.product }} <span class="mono">{{ fw.version }}</span>{% if fw.model %} <span class="muted">{{ fw.model }}</span>{% endif %}
+      {% if fw.update %}<span class="result-failed">behind</span> <span class="muted">latest is <span class="mono">{{ fw.latest }}</span></span>
+      {% elif fw.update is sameas false %}<span class="result-ok">up to date</span>
+      {% else %}<span class="muted">latest release unknown</span>{% endif %}
+      <span class="muted">· checked {{ fw.checked | local }}</span></dd>{% endif %}
   <dt>Last service scan</dt><dd>{{ last_inventory | local }}</dd>
 </dl>
 

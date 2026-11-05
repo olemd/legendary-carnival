@@ -9,7 +9,7 @@ Plan and design decisions: [PLAN.md](PLAN.md).
 ## Status
 
 M6, all planned milestones delivered. Discovery, service inventory (nmap), infra probes
-(DHCP, UPnP port mappings, IPv6, mDNS), 26 deterministic rules, change detection with an
+(DHCP, UPnP port mappings, IPv6, mDNS), 27 deterministic rules, change detection with an
 event timeline, `overview.md`, web UI with search and an inventory chat, a local LLM
 (Ollama) that classifies devices, explains findings in your language, writes a daily
 digest and suggests improvements, and notifications via ntfy, webhook, e-mail and Home
@@ -88,6 +88,25 @@ Day to day, in the web UI:
 - Network identity rules flag two devices answering for one IP, a gateway, DHCP or DNS
   address that changes MAC, and a DHCP server that starts announcing different DNS, NTP or
   router settings.
+
+Signs of someone looking around or impersonating others (no mirror port needed):
+
+- **Decoy ports** (`[decoy]`): listeners on ports this machine does not use. A device that
+  connects is scanning the network and becomes a finding. Ports already in use are skipped.
+- **ARP listener**: hears ARP traffic between scans, for spoofing (two MACs fighting over
+  an address) and sweeps (one device asking for most of the subnet).
+- **Decoy name lookups**: asks for a host name that does not exist over LLMNR, mDNS and
+  NetBIOS. Whatever answers is a poisoning tool.
+- **New IPv6 routers**: a router advertisement from a device that was not a router before.
+
+Hygiene checks:
+
+- **Firmware** (`[firmware]`, daily, `lanwatch firmware`): the version Home Assistant,
+  ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
+  exists. Reading versions stays on the LAN; looking up the latest release at the vendor or
+  on GitHub needs `online = true`.
+- **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
+  hands out blocks ads or known-malicious test names.
 
 History is pruned daily (`[store] keep_*_days`), so the database stops growing.
 

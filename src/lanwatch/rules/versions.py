@@ -12,9 +12,10 @@ vulners.com) and reports entries at or above scan.vulners_min_cvss. Same caveat,
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from typing import Any
 
-from lanwatch.models import Device, Finding, Kind, ServiceRow, Severity
+from lanwatch.models import Device, Finding, Kind, ServiceRow, Severity, iso, now_utc
 from lanwatch.rules.base import Rule, RuleContext
 from lanwatch.rules.services import ServiceRule
 
@@ -126,4 +127,47 @@ class KnownCvesRule(ServiceRule):
         )
 
 
-RULES: list[Rule] = [LegacyVersionRule(), KnownCvesRule()]
+class FirmwareOutdatedRule(Rule):
+    id = "device.firmware-outdated"
+    kind = Kind.IMPROVEMENT
+    default_severity = Severity.LOW
+    # A check older than this says nothing about now (the device may be off, or the check
+    # switched off); the finding then resolves rather than lingering.
+    MAX_AGE = timedelta(days=3)
+    description = (
+        "A device runs an older firmware or software version than the latest release. Found "
+        "by the daily firmware check ([firmware] in the config) for the products it knows: "
+        "Home Assistant, ESPHome, Shelly, Tasmota, Pi-hole, Jellyfin. Raise the severity "
+        "under [rules] if you want to be notified."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        fresh = iso(now_utc() - self.MAX_AGE)
+        out: list[Finding] = []
+        for d in ctx.store.devices():
+            fw = d.attrs.get("firmware")
+            if not isinstance(fw, dict) or fw.get("update") is not True:
+                continue
+            if str(fw.get("checked") or "") < fresh:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"{d.label}: {fw.get('product')} {fw.get('version')} is behind "
+                    f"{fw.get('latest')}",
+                    key_parts=[d.key, str(fw.get("product"))],
+                    device_id=d.id,
+                    evidence={
+                        "product": fw.get("product"),
+                        "model": fw.get("model") or None,
+                        "running": fw.get("version"),
+                        "latest": fw.get("latest"),
+                        "read_via": fw.get("source"),
+                        "checked": fw.get("checked"),
+                    },
+                )
+            )
+        return out
+
+
+RULES: list[Rule] = [LegacyVersionRule(), KnownCvesRule(), FirmwareOutdatedRule()]

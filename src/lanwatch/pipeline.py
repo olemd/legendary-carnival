@@ -16,6 +16,7 @@ from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
+from lanwatch.firmware import Firmware, check_firmware
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
@@ -289,6 +290,49 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
 def _excluded(h: HostObservation, excludes: list[str]) -> bool:
     ex = {e.lower() for e in excludes}
     return h.ip in ex or (h.mac is not None and h.mac in ex)
+
+
+@dataclass(slots=True)
+class FirmwareOutcome:
+    found: list[tuple[str, Firmware]] = field(default_factory=list)  # device label, firmware
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def run_firmware(
+    config: Config, store: Store, executor: Executor | None = None
+) -> FirmwareOutcome:
+    """Daily: read firmware versions off the devices that offer them, then run the rules."""
+    ex = executor or make_executor(config.scan.helper_socket)
+    ifaces = await list_interfaces(ex)
+    subnets = select_subnets(ifaces, config.network)
+    bind_ips = [ip for ip, _ in self_observations(ifaces, subnets)]
+    results = await check_firmware(store, bind_ips, online=config.firmware.online)
+    snapshot_id = store.begin_snapshot("firmware", "local")
+    store.finish_snapshot(snapshot_id, len(results))
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    outdated = sum(1 for _, fw in results if fw.update)
+    log.info(
+        "firmware check: %d devices report a version, %d behind%s",
+        len(results),
+        outdated,
+        "" if config.firmware.online else " (online lookups are off)",
+    )
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    return FirmwareOutcome(
+        found=[(d.label, fw) for d, fw in results],
+        new_findings=rules.new_ids,
+        resolved_findings=rules.resolved_ids,
+    )
 
 
 async def run_maintenance(config: Config, store: Store) -> dict[str, int]:

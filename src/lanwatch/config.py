@@ -279,6 +279,17 @@ class DecoyConfig(StrictModel):
     ignore: list[str] = Field(default_factory=list)
 
 
+class FirmwareConfig(StrictModel):
+    """Daily check of what version devices run; see lanwatch/firmware.py for the products."""
+
+    # Read running versions from devices: mDNS, and one unauthenticated GET to a few
+    # well-known local URLs on devices that have that port open. Stays on the LAN.
+    enabled: bool = True
+    # Also ask vendors and GitHub what the latest release is. The only part that leaves
+    # the network; without it only devices that compare for themselves report updates.
+    online: bool = False
+
+
 class RuleOverride(StrictModel):
     enabled: bool | None = None
     severity: Severity | None = None
@@ -295,6 +306,7 @@ class Config(StrictModel):
     notify: NotifyConfig = NotifyConfig()
     web: WebConfig = WebConfig()
     decoy: DecoyConfig = DecoyConfig()
+    firmware: FirmwareConfig = FirmwareConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property

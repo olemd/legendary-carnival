@@ -86,6 +86,11 @@ if echo "$out" | grep -q "skipping DHCP/mDNS"; then
     fail "broadcast probes were skipped as unprivileged"
 fi
 
+step "firmware check runs (nothing here reports a version, and nothing is looked up online)"
+out=$(lanwatch firmware 2>&1) || fail "firmware check failed: $out"
+echo "$out" | tail -3
+echo "$out" | grep -q "online lookups are off" || fail "unexpected firmware output"
+
 step "UDP and version scans through the helper, as the service user"
 gateway=$(ip -4 route show default | awk '{ print $3; exit }')
 as_service_user "$PY" - "$SOCK" "$gateway" <<'PYEOF' || fail "scan through the helper failed"
@@ -145,6 +150,13 @@ systemd-analyze verify --man=no /usr/lib/systemd/system/lanwatch.service \
 
 step "exposure score (informational)"
 systemd-analyze security --no-pager lanwatch.service lanwatch-helper.service | grep "Overall exposure" || true
+
+step "no scheduled job has failed so far (discovery, inventory, infra, maintenance, firmware)"
+if journalctl -u lanwatch.service --no-pager | grep "job .* failed"; then
+    journalctl -u lanwatch.service --no-pager | grep -A12 "job .* failed" | head -40 >&2
+    fail "a scheduled job failed"
+fi
+journalctl -u lanwatch.service --no-pager | grep -E "firmware check:|maintenance|infra done" | tail -3 || true
 
 step "a configuration error stops the service once, with the reason, instead of looping"
 cp -p /etc/lanwatch/config.toml /etc/lanwatch/config.toml.good

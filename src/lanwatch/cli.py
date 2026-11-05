@@ -21,7 +21,13 @@ from lanwatch.logging_setup import set_verbose, setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
-from lanwatch.pipeline import run_discovery, run_infra, run_inventory, run_maintenance
+from lanwatch.pipeline import (
+    run_discovery,
+    run_firmware,
+    run_infra,
+    run_inventory,
+    run_maintenance,
+)
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
@@ -191,6 +197,36 @@ def infra(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
 
 @app.command()
+def firmware(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
+    """Firmware check now: versions devices report, and whether a newer release exists."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    try:
+        with _open_store(ctx) as store:
+            out = asyncio.run(run_firmware(cfg, store))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from e
+    if not out.found:
+        typer.echo("no device reported a firmware version")
+    for label, fw in sorted(out.found, key=lambda x: x[0].lower()):
+        state = (
+            f"behind {fw.latest}"
+            if fw.update
+            else "up to date"
+            if fw.update is False
+            else "latest unknown"
+        )
+        typer.echo(f"{label[:28]:<28} {fw.product:<15} {fw.version:<34} {state}")
+    if not cfg.firmware.online:
+        typer.echo(
+            "online lookups are off ([firmware] online = false): only devices that"
+            " check for updates themselves can report one"
+        )
+
+
+@app.command()
 def services(ctx: typer.Context, device_id: int) -> None:
     """Open services on one device."""
     with _open_store(ctx) as store:
@@ -264,6 +300,8 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                 job("infra", cfg.schedule.infra_interval_s, lambda: run_infra(cfg, store)),
                 job("maintenance", 86400, lambda: run_maintenance(cfg, store)),
             ]
+            if cfg.firmware.enabled:
+                jobs.append(job("firmware", 86400, lambda: run_firmware(cfg, store)))
             if cfg.llm.enabled:
                 from lanwatch.llm import hooks as llm_hooks
 
