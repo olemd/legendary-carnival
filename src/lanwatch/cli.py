@@ -16,7 +16,7 @@ import typer
 
 from lanwatch import __version__
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
-from lanwatch.decoy import Decoys, record_hit
+from lanwatch.decoy import Decoys, publish_listening, record_hit
 from lanwatch.logging_setup import set_verbose, setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
@@ -327,7 +327,7 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                 if record_hit(store, source, port):
                     sched.trigger("discovery")
 
-            decoys = Decoys(cfg.decoy, decoy_hit)
+            decoys = Decoys(cfg.decoy, decoy_hit, lambda ports: publish_listening(store, ports))
             tasks.append(asyncio.create_task(decoys.serve_until(sched.stopped)))
             if cfg.web.enabled:
                 from lanwatch.web.app import create_app

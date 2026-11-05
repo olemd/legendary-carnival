@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 
 from lanwatch.config import DecoyConfig
+from lanwatch.netinfo import is_local_address
 from lanwatch.store import Store
 
 log = logging.getLogger(__name__)
@@ -61,9 +62,16 @@ def _plain_ip(address: str) -> str:
 
 
 class Decoys:
-    def __init__(self, config: DecoyConfig, on_hit: Callable[[str, int], None]) -> None:
+    def __init__(
+        self,
+        config: DecoyConfig,
+        on_hit: Callable[[str, int], None],
+        on_change: Callable[[list[int]], None] | None = None,
+    ) -> None:
         self.config = config
         self.on_hit = on_hit
+        # Called with the ports being listened on whenever that set changes.
+        self.on_change = on_change
         self.listening: list[int] = []
         self.skipped: dict[int, str] = {}  # port -> why it is not a decoy
         self._servers: list[asyncio.Server] = []
@@ -95,6 +103,8 @@ class Decoys:
             log.info("decoy ports: listening on %s", ", ".join(map(port_label, self.listening)))
         for port, reason in self.skipped.items():
             log.info("decoy port %s skipped: %s", port_label(port), reason)
+        if self.on_change is not None:
+            self.on_change(list(self.listening))
 
     async def stop(self) -> None:
         for server in self._servers:
@@ -102,6 +112,9 @@ class Decoys:
             with contextlib.suppress(Exception):
                 await server.wait_closed()
         self._servers.clear()
+        self.listening.clear()
+        if self.on_change is not None:
+            self.on_change([])
 
     async def serve_until(self, stopped: asyncio.Event) -> None:
         await self.start()
@@ -118,8 +131,9 @@ class Decoys:
             source, own = _plain_ip(str(peer[0])), _plain_ip(str(local[0]))
         except (TypeError, ValueError, IndexError):
             return
-        # This machine connecting to itself is lanwatch's own service scan.
-        if source == own or ipaddress.ip_address(source).is_loopback or source in self._ignore:
+        # This machine connecting to itself is lanwatch's own service scan. With several
+        # addresses on one machine the two ends need not be the same address.
+        if source == own or is_local_address(source) or source in self._ignore:
             return
         now = time.monotonic()
         if now - self._last.get((source, port), float("-inf")) < REPEAT_S:
@@ -129,6 +143,23 @@ class Decoys:
             self.on_hit(source, port)
         except Exception:
             log.exception("recording a decoy connection failed")
+
+
+LISTENING_KEY = "decoy.listening"
+
+
+def publish_listening(store: Store, ports: list[int]) -> None:
+    """Tell the scans which ports on this machine are decoys right now. lanwatch scans the
+    machine it runs on like any other, and would otherwise report its own decoys as an
+    open telnet and a database, with findings to match."""
+    store.meta_set(LISTENING_KEY, json.dumps(sorted(ports)))
+
+
+def listening_ports(store: Store) -> set[int]:
+    try:
+        return {int(p) for p in json.loads(store.meta_get(LISTENING_KEY) or "[]")}
+    except (ValueError, TypeError):
+        return set()
 
 
 def record_hit(store: Store, source: str, port: int) -> bool:

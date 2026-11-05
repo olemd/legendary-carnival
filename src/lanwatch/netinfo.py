@@ -69,6 +69,22 @@ async def list_interfaces(executor: Executor | None = None) -> list[Interface]:
     return list_interfaces_ioctl()
 
 
+def is_local_address(address: str) -> bool:
+    """Is this one of this machine's own addresses, on any interface, IPv4 or IPv6?
+    Asked of the kernel: binding a socket to an address works only if it is local."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as probe:
+            probe.bind((str(ip), 0))
+        return True
+    except OSError:
+        return False
+
+
 def parse_default_gateways(data: object) -> list[str]:
     """IPv4 gateways of the default routes in `ip -j route show` output."""
     out: set[str] = set()

@@ -87,6 +87,79 @@ async def test_who_counts_as_a_hit() -> None:
     assert hits == [("192.168.1.52", 23), ("192.168.1.52", 3389), ("192.168.1.60", 23)]
 
 
+async def test_any_address_of_this_machine_is_not_a_hit() -> None:
+    from lanwatch.netinfo import is_local_address
+
+    assert is_local_address("127.0.0.1") and is_local_address("127.0.0.53")
+    assert not is_local_address("192.0.2.1") and not is_local_address("not an address")
+
+    hits: list[tuple[str, int]] = []
+    decoys = Decoys(DecoyConfig(ports=[23]), lambda ip, port: hits.append((ip, port)))
+    # A machine with several addresses can reach one of them from another: still itself.
+    await decoys._connected(_Writer("127.0.0.53", "192.168.1.10"), 23)  # type: ignore[arg-type]
+    assert hits == []
+
+
+async def test_the_scans_are_told_which_ports_are_decoys(store: Store) -> None:
+    from lanwatch.decoy import listening_ports, publish_listening
+
+    assert listening_ports(store) == set()
+    free = _free_port()
+    decoys = Decoys(
+        DecoyConfig(ports=[free]),
+        lambda ip, port: None,
+        lambda ports: publish_listening(store, ports),
+    )
+    await decoys.start()
+    assert listening_ports(store) == {free}
+    await decoys.stop()
+    assert listening_ports(store) == set()  # nothing is hidden once the listeners are gone
+
+
+async def test_own_decoy_ports_are_not_recorded_as_services(
+    store: Store, config: Config, monkeypatch: Any
+) -> None:
+    """lanwatch scans the machine it runs on. Its decoys must not come back as an open
+    telnet on itself, while a real telnet on another device still must."""
+    from lanwatch import pipeline
+    from lanwatch.collectors.services import (
+        HostServices,
+        PortObservation,
+        PortSet,
+        ServiceScanResult,
+    )
+    from lanwatch.decoy import publish_listening
+
+    sid = store.begin_snapshot("discovery", "t")
+    hosts = [
+        HostObservation(ip="127.0.0.1", mac="02:00:00:00:00:01", hostname="me", source="t"),
+        HostObservation(ip="192.0.2.5", mac="02:00:00:00:00:05", hostname="old-switch", source="t"),
+    ]
+    me, switch = store.record_hosts(sid, hosts).seen_device_ids
+    store.finish_snapshot(sid, 2)
+    publish_listening(store, [23, 3389])
+
+    def port(n: int, name: str) -> PortObservation:
+        return PortObservation(port=n, proto="tcp", state="open", name=name)
+
+    async def fake_scan(
+        ex: object, targets: list[str], cfg: object, deep: bool
+    ) -> ServiceScanResult:
+        found = [port(22, "ssh"), port(23, "telnet"), port(3389, "ms-wbt-server")]
+        return ServiceScanResult(
+            hosts=[HostServices(ip=ip, ports=list(found)) for ip in targets],
+            scanned={"tcp": PortSet.from_spec("1-65535")},
+        )
+
+    monkeypatch.setattr(pipeline, "scan_services", fake_scan)
+    await pipeline.run_inventory(config, store)
+    assert [s.port for s in store.services(me)] == [22]
+    assert [s.port for s in store.services(switch)] == [22, 23, 3389]
+    titles = [f.title for f in store.findings(FindingStatus.OPEN)]
+    assert any("telnet" in t and "old-switch" in t for t in titles)
+    assert not any("(127.0.0.1)" in t for t in titles)
+
+
 def test_only_sources_on_watched_networks_are_recorded(store: Store) -> None:
     sid = store.begin_snapshot("discovery", "t")
     tv = HostObservation(ip="192.168.1.52", mac="a4:77:33:00:00:52", hostname="tv", source="t")

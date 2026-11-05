@@ -16,12 +16,14 @@ from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
+from lanwatch.decoy import listening_ports
 from lanwatch.firmware import Firmware, check_firmware
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
     default_gateways,
     ipv6_routers,
+    is_local_address,
     list_interfaces,
     select_subnets,
     self_observations,
@@ -103,6 +105,11 @@ async def run_inventory(
     snapshot_id = store.begin_snapshot(kind, "nmap")
     log.debug("targets: %s", ", ".join(ips))
     result = await scan_services(ex, ips, config.scan, deep=deep)
+    decoys = listening_ports(store)
+    for h in result.hosts:
+        if decoys and is_local_address(h.ip):
+            # Our own decoy ports, seen by our own scan. They are not services.
+            h.ports = [p for p in h.ports if not (p.proto == "tcp" and p.port in decoys)]
     by_ip = {h.ip: h for h in result.hosts}
     diffs: dict[int, ServiceDiff] = {}
     for d in targets.values():
@@ -191,6 +198,11 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
             if d is None:
                 continue
             open_ports = {a: probes.ipv6_open[a] for a in addrs if a in probes.ipv6_open}
+            decoys = {f"{p}/tcp" for p in listening_ports(store)}
+            for own in [addr for addr in open_ports if decoys and is_local_address(addr)]:
+                # Our own decoy ports on our own IPv6 addresses are not exposed services.
+                open_ports[own] = [p for p in open_ports[own] if p not in decoys]
+            open_ports = {addr: ports for addr, ports in open_ports.items() if ports}
             if store.merge_device_attrs(d.id, {"ipv6": addrs, "ipv6_open": open_ports}):
                 enriched.add(d.id)
         out.ipv6_devices = len(probes.ipv6)

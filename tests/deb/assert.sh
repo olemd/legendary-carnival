@@ -86,6 +86,19 @@ if echo "$out" | grep -q "skipping DHCP/mDNS"; then
     fail "broadcast probes were skipped as unprivileged"
 fi
 
+step "lanwatch scans itself without reporting its own decoy ports as services"
+own_ip=$(ip -4 -o addr show dev eth0 | awk '{ split($4, a, "/"); print a[1]; exit }')
+own_id=$(lanwatch devices --all --json | "$PY" -c '
+import json, sys
+print(next(d["id"] for d in json.load(sys.stdin) if d["ip"] == sys.argv[1]))' "$own_ip")
+# The fastest profile keeps this to seconds; which ports are open does not depend on it.
+out=$(LANWATCH_SCAN__PROFILE=thorough lanwatch inventory "$own_id" 2>&1) || fail "inventory failed: $out"
+echo "$out" | tail -1
+services=$(lanwatch services "$own_id" 2>&1)
+if echo "$services" | grep -E "(^|[^0-9])(23|1433|3389|5555)/tcp"; then
+    fail "a decoy port was recorded as a service on this machine"
+fi
+
 step "firmware check runs (nothing here reports a version, and nothing is looked up online)"
 out=$(lanwatch firmware 2>&1) || fail "firmware check failed: $out"
 echo "$out" | tail -3
