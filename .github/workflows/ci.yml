@@ -51,21 +51,30 @@ jobs:
           path: dist/lanwatch_*_amd64.deb
           if-no-files-found: error
 
-  # Only when started by hand: the other supported distributions, and the arm64 package,
-  # which is built and smoke-tested under emulation and takes several minutes.
+  # Only when started by hand: the other supported distributions...
   wide:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian qemu-user-static
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper
       - run: make deb
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:12
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/ubuntu:24.04
-      - run: make deb-arm64
+
+  # ...and the arm64 package, built and tested natively on an arm64 runner, services and
+  # all. (Emulation cannot run the sandboxed units, and is flaky for the build itself.)
+  arm64:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian podman
+      - run: make deb
       - run: lintian --fail-on error dist/lanwatch_*_arm64.deb
-      - run: tests/deb/smoke.sh arm64
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
       - uses: actions/upload-artifact@v4
         with:
           name: lanwatch-deb-arm64

@@ -25,6 +25,14 @@ if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
 fi
 deb=$(basename "$1")
 
+# Running another architecture's variant of IMAGE moves the local tag to it, and every
+# later use of that tag on this machine would get it. Put the tag back when done.
+restore() {
+    # shellcheck disable=SC2086
+    $PODMAN pull -q --arch "$(dpkg --print-architecture)" "$IMAGE" >/dev/null 2>&1 || true
+}
+trap restore EXIT
+
 echo "== $IMAGE ($ARCH): installing $deb"
 # PODMAN may be "sudo podman", so it is split on purpose. The quoted script is meant for the
 # shell inside the container, so its variables must not expand here.

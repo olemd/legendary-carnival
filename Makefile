@@ -27,18 +27,33 @@ deb:              ## build dist/lanwatch_<version>_<arch>.deb for this machine (
 # (needs podman and qemu-user-static with binfmt). The source is copied inside the
 # container; only the finished .deb comes back out. -d: nothing is compiled, so the
 # build-essential dependency dpkg would otherwise insist on is not installed there.
+#
+# qemu's user-mode emulation occasionally aborts multithreaded programs (uv, here), so the
+# build is tried up to three times. On real arm64 hardware plain `make deb` is the way.
+#
+# Pulling another architecture's variant of an image moves the local tag to it, and podman
+# keeps one image per tag: every later build on this machine that uses debian:13 or the uv
+# image would silently get arm64. The trap puts both tags back, also when the build fails.
+ARM64_BASES := docker.io/library/debian:13 ghcr.io/astral-sh/uv:0.11
 deb-arm64:        ## build dist/lanwatch_<version>_arm64.deb in an emulated container
+	@set -e; \
+	trap 'for i in $(ARM64_BASES); do podman pull -q --arch $(DEB_ARCH) $$i >/dev/null || true; done' EXIT; \
+	set -x; \
 	BUILDAH_FORMAT=docker podman build --arch arm64 -f debian/Containerfile.build \
 	  --build-arg BUILD_DATE="$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 	  --build-arg GIT_REVISION="$$(git describe --always --dirty)" \
-	  -t localhost/lanwatch-debbuild:arm64 debian
-	mkdir -p dist
-	podman run --rm --arch arm64 -v "$(CURDIR):/src:ro" -v "$(CURDIR)/dist:/out" \
+	  -t localhost/lanwatch-debbuild:arm64 debian; \
+	mkdir -p dist; \
+	n=1; until podman run --rm --arch arm64 -v "$(CURDIR):/src:ro" -v "$(CURDIR)/dist:/out" \
 	  localhost/lanwatch-debbuild:arm64 sh -ec '\
 	    mkdir lanwatch && cd lanwatch && \
 	    tar -C /src --exclude=./.git --exclude=./.venv --exclude=./dist --exclude=./debian/lanwatch \
 	        --exclude=./debian/.build --exclude=./debian/.debhelper -cf - . | tar -xf - && \
-	    dpkg-buildpackage -b -us -uc -d && cp ../lanwatch_*_arm64.deb /out/'
+	    dpkg-buildpackage -b -us -uc -d && cp ../lanwatch_*_arm64.deb /out/'; \
+	do \
+	  [ $$n -lt 3 ] || { echo "arm64 build failed $$n times" >&2; exit 1; }; \
+	  n=$$((n + 1)); echo "emulated build failed, attempt $$n of 3" >&2; \
+	done
 
 deb-test:         ## install the built package in a systemd container and exercise it (needs podman)
 	tests/deb/e2e.sh $(DEB_TEST_IMAGE)
