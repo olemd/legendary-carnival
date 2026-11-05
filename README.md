@@ -13,7 +13,7 @@ M6, all planned milestones delivered. Discovery, service inventory (nmap), infra
 event timeline, `overview.md`, web UI with search and an inventory chat, a local LLM
 (Ollama) that classifies devices, explains findings in your language, writes a daily
 digest and suggests improvements, and notifications via ntfy, webhook, e-mail and Home
-Assistant. Runs bare, in rootful podman, or rootless podman with a small root helper
+Assistant. Runs from a Debian package, bare, in rootful podman, or rootless podman with a small helper
 (see `deploy/README.md`).
 
 ## Quick start
@@ -80,9 +80,21 @@ configuration after defaults, file, env and CLI are merged.
 
 ## Deploy
 
-See `deploy/README.md`: bare systemd, rootful podman (quadlet, host network, two
-capabilities), or rootless podman plus `lanwatch-helper`, a root daemon that runs only
-allowlisted scan commands over a unix socket. Ollama with ROCm has its own quadlet.
+On Debian and Ubuntu, install the package. It bundles its own Python, starts the service,
+and runs nothing as root:
+
+```sh
+make deb                                          # needs debhelper and uv
+sudo apt install ./dist/lanwatch_0.1.0_amd64.deb
+sudo lanwatch findings                            # CLI on the service's database
+```
+
+Config is `/etc/lanwatch/config.toml`; the web UI is on http://127.0.0.1:8321. Tagged
+versions also have the `.deb` attached to their GitHub release.
+
+Other layouts are in `deploy/README.md`: bare systemd, rootful podman (quadlet, host
+network, two capabilities), or rootless podman plus `lanwatch-helper`, a small daemon that
+runs only allowlisted scan commands over a unix socket. Ollama with ROCm has its own quadlet.
 
 ## Development
 

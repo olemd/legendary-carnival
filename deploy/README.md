@@ -1,7 +1,27 @@
 # Deploying lanwatch
 
-Three supported layouts. All assume Linux and a host that sits on the LAN you want to
+Four supported layouts. All assume Linux and a host that sits on the LAN you want to
 watch (a VM behind NAT sees nothing).
+
+## 0. Debian package (recommended on Debian and Ubuntu)
+
+```sh
+make deb                                          # needs debhelper and uv; or take the
+sudo apt install ./dist/lanwatch_0.1.0_amd64.deb  # .deb from a GitHub release
+```
+
+Self-contained (own Python and libraries under `/usr/lib/lanwatch`), tested on Debian 12,
+Debian 13 and Ubuntu 24.04. After install the service is running and the web UI is on
+http://127.0.0.1:8321. Config: `/etc/lanwatch/config.toml`. CLI: `sudo lanwatch ...`.
+
+Nothing runs as root. `lanwatch.service` runs as user `lanwatch` with no capabilities;
+scans that need raw sockets go over `/run/lanwatch/helper.sock` to
+`lanwatch-helper.service`, which runs as its own user with `CAP_NET_RAW` and nothing else
+and is started by systemd socket activation. Both are sandboxed
+(`systemd-analyze security lanwatch lanwatch-helper`). Details: `debian/README.Debian`.
+
+`make deb-test` installs the built package in a podman container running systemd and
+checks all of the above.
 
 ## 1. Bare systemd (no container)
 
@@ -14,7 +34,8 @@ sudo cp deploy/lanwatch.service /etc/systemd/system/ && sudo systemctl enable --
 ```
 
 `AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN` in the unit gives the unprivileged user
-raw sockets for arp-scan and nmap SYN/UDP scans.
+raw sockets for arp-scan and nmap SYN/UDP scans. lanwatch detects the ambient
+`CAP_NET_RAW` and tells nmap to use it (`NMAP_PRIVILEGED`); no root needed.
 
 ## 2. Rootful podman (simplest container)
 
@@ -30,7 +51,7 @@ root on the host network namespace, which is exactly why the capability set is m
 
 ## 3. Rootless podman + root helper (least privilege)
 
-The container runs as you, with no capabilities. A ~150-line root daemon on the host
+The container runs as you, with no capabilities. A small root daemon on the host
 (`lanwatch-helper`) executes only allowlisted `nmap`, `arp-scan`, `ip` and `ping`
 invocations whose arguments are validated against patterns; targets must be IP
 addresses or CIDRs. No shell, no file arguments, no script args.
