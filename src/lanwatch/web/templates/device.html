@@ -4,11 +4,13 @@
 <h1>{{ device.label }} <span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span></h1>
 <dl class="facts">
   <dt>IP</dt><dd class="mono">{{ device.ip or '-' }}</dd>
-  <dt>MAC</dt><dd class="mono">{{ device.mac or '-' }}</dd>
+  <dt>MAC</dt><dd><span class="mono">{{ device.mac or '-' }}</span>{% if device.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}
+      {% if aliases %}<br><span class="muted">also seen as <span class="mono">{{ aliases | join(', ') }}</span></span>{% endif %}</dd>
   <dt>Vendor</dt><dd>{{ device.vendor or '-' }}</dd>
   <dt>Hostname</dt><dd>{{ device.hostname or '-' }}</dd>
   <dt>Kind</dt><dd>{% if device.kind %}<span class="kind">{{ device.kind }}</span>
-      {% if device.kind_confidence is not none %}<span class="muted">{{ (device.kind_confidence * 100) | round | int }}% confidence</span>{% endif %}
+      {% if device.kind_manual %}<span class="muted">set by you</span>
+      {% elif device.kind_confidence is not none %}<span class="muted">{{ (device.kind_confidence * 100) | round | int }}% confidence</span>{% endif %}
       {% else %}-{% endif %}</dd>
   <dt>Description</dt><dd>{{ device.description or '-' }}</dd>
   {% if device.attrs.upnp %}<dt>UPnP</dt><dd>{{ device.attrs.upnp.friendly_name }} <span class="muted">{{ device.attrs.upnp.manufacturer }} {{ device.attrs.upnp.model }}</span></dd>{% endif %}
@@ -17,11 +19,20 @@
   <dt>First seen</dt><dd>{{ device.first_seen | local }}</dd>
   <dt>Last seen</dt><dd>{{ device.last_seen | local }}</dd>
   <dt>Last service scan</dt><dd>{{ last_inventory | local }}</dd>
-  <dt><label for="device-name">Name</label></dt><dd>
-    <form class="inline" method="post" action="/devices/{{ device.id }}/name">
-      <input id="device-name" type="text" name="name" value="{{ device.name or '' }}" placeholder="give it a name"> <button class="primary">Save</button>
-    </form></dd>
 </dl>
+
+<h2>Edit</h2>
+<form class="edit" method="post" action="/devices/{{ device.id }}/edit">
+  <label for="d-name">Name</label>
+  <input id="d-name" type="text" name="name" value="{{ device.name or '' }}" maxlength="60" placeholder="give it a name">
+  <label for="d-kind">Kind</label>
+  <input id="d-kind" type="text" name="kind" value="{{ device.kind or '' }}" maxlength="40" list="kinds" autocomplete="off">
+  <datalist id="kinds">{% for k in kinds %}<option value="{{ k }}">{% endfor %}</datalist>
+  <label for="d-desc">Description</label>
+  <input id="d-desc" type="text" name="description" value="{{ device.description or '' }}" maxlength="200">
+  <div class="edit-actions"><button class="primary">Save</button>
+    <span class="muted">Kind and description normally come from the LLM. Changing them pins your values; clear both to hand them back.</span></div>
+</form>
 
 <h2>Services</h2>
 {% if services %}
@@ -52,4 +63,24 @@
 <div class="tbl"><table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th><span class="vh">Action</span></th></tr></thead>
 <tbody>{% set back = '/devices/' ~ device.id %}{% set devices_by_id = {device.id: device} %}{% include "_finding_rows.html" %}</tbody></table></div>
 {% else %}<p class="empty">None.</p>{% endif %}
+
+<h2>Housekeeping</h2>
+<details class="panel">
+  <summary>Merge with another device, or forget this one</summary>
+  {% if others %}
+  <form class="inline" method="post" action="/devices/{{ device.id }}/merge">
+    <label for="merge-other">Merge into this device:</label>
+    <select id="merge-other" name="other" required>
+      <option value="">choose a device…</option>
+      {% for o in others %}<option value="{{ o.id }}">{{ o.label }} · {{ o.mac or o.ip or o.key }}{% if o.id in same_host %} (same hostname){% endif %}</option>{% endfor %}
+    </select>
+    <button>Merge</button>
+  </form>
+  <p class="muted">For one physical device that shows up twice, typically a phone or laptop that changed its private MAC address. The other entry disappears, its address is remembered as belonging to this device, and its history moves here. This cannot be undone.</p>
+  {% endif %}
+  <form class="inline" method="post" action="/devices/{{ device.id }}/forget">
+    <button class="danger">Forget this device</button>
+  </form>
+  <p class="muted">Removes the device with its services and findings. If it is still on the network, the next discovery adds it again as a new device.</p>
+</details>
 {% endblock %}

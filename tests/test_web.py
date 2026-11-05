@@ -161,3 +161,31 @@ def test_cross_site_posts_are_refused(config: Config) -> None:
     # The UI's own forms, and clients that are not browsers, still work.
     ok = {"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"}
     assert client.post("/scan/discovery", headers=ok, follow_redirects=False).status_code == 303
+
+
+def test_device_edit_merge_and_forget(config: Config) -> None:
+    _seed(config)
+    client = TestClient(create_app(config))
+
+    page = client.get("/devices/1").text
+    assert "Merge into this device" in page and "Forget this device" in page
+    assert ">private<" in page  # the fixture's aa:bb:cc... addresses are locally administered
+
+    form = {"name": "Router", "kind": "Router", "description": "Gateway in the hall"}
+    r = client.post("/devices/1/edit", data=form, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/devices/1"
+    page = client.get("/devices/1").text
+    assert "Gateway in the hall" in page and "set by you" in page and ">router<" in page
+    assert client.post("/devices/999/edit", data=form).status_code == 404
+
+    assert client.post("/devices/1/merge", data={"other": "1"}).status_code == 404
+    r = client.post("/devices/1/merge", data={"other": "2"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert client.get("/devices/2").status_code == 404
+    assert "also seen as" in client.get("/devices/1").text
+
+    r = client.post("/devices/1/forget", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/devices"
+    assert client.get("/devices/1").status_code == 404
+    assert client.get("/api/devices").json() == []
+    assert client.get("/").status_code == 200  # dashboard copes with unlinked events

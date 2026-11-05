@@ -135,6 +135,14 @@ def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
         if d is None:
             raise HTTPException(404)
         findings = [f for f in s.findings(None) if f.device_id == device_id]
+        # Other devices this one could be merged with; likely duplicates (same hostname) first.
+        host = (d.hostname or "").lower()
+        others = sorted(
+            (o for o in s.devices() if o.id != d.id),
+            key=lambda o: (not (host and (o.hostname or "").lower() == host), o.label.lower()),
+        )
+        from lanwatch.llm.tasks import DeviceKind
+
         return page(
             request,
             "device.html",
@@ -143,7 +151,46 @@ def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
             findings=findings,
             last_inventory=s.last_inventory_at(device_id),
             events=s.events(device_id=device_id, limit=50),
+            aliases=s.device_aliases(device_id),
+            others=others,
+            same_host={o.id for o in others if host and (o.hostname or "").lower() == host},
+            kinds=[k.value for k in DeviceKind],
         )
+
+    @app.post("/devices/{device_id}/edit", dependencies=write_deps)
+    def edit_device(
+        s: StoreDep,
+        device_id: int,
+        name: Annotated[str, Form()] = "",
+        kind: Annotated[str, Form()] = "",
+        description: Annotated[str, Form()] = "",
+    ) -> RedirectResponse:
+        ok = s.edit_device(
+            device_id,
+            name=name.strip()[:60] or None,
+            kind=kind.strip().lower()[:40] or None,
+            description=description.strip()[:200] or None,
+        )
+        if not ok:
+            raise HTTPException(404)
+        update_overview(s, config)
+        return RedirectResponse(f"/devices/{device_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/merge", dependencies=write_deps)
+    def merge_device(
+        s: StoreDep, device_id: int, other: Annotated[int, Form()]
+    ) -> RedirectResponse:
+        if not s.merge_devices(device_id, other):
+            raise HTTPException(404)
+        update_overview(s, config)
+        return RedirectResponse(f"/devices/{device_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/forget", dependencies=write_deps)
+    def forget_device(s: StoreDep, device_id: int) -> RedirectResponse:
+        if not s.delete_device(device_id):
+            raise HTTPException(404)
+        update_overview(s, config)
+        return RedirectResponse("/devices", status_code=303)
 
     @app.post("/devices/{device_id}/name", dependencies=write_deps)
     def set_name(

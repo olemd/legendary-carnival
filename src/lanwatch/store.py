@@ -159,6 +159,14 @@ MIGRATIONS: list[str] = [
     CREATE INDEX events_ts ON events(ts);
     CREATE INDEX events_device ON events(device_id, ts);
     """,
+    # v7: manual classification, and several identities (MAC addresses) for one device
+    """
+    ALTER TABLE devices ADD COLUMN kind_manual INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE device_aliases (
+        key       TEXT PRIMARY KEY,
+        device_id INTEGER NOT NULL REFERENCES devices(id)
+    );
+    """,
 ]
 
 
@@ -308,7 +316,13 @@ class Store:
                 if h.key in seen_keys:
                     continue
                 seen_keys.add(h.key)
-                row = self._db.execute("SELECT * FROM devices WHERE key = ?", (h.key,)).fetchone()
+                row = self._db.execute(
+                    """SELECT * FROM devices WHERE key = ?1 OR id =
+                       (SELECT device_id FROM device_aliases WHERE key = ?1)""",
+                    (h.key,),
+                ).fetchone()
+                if row is not None and int(row["id"]) in result.seen_device_ids:
+                    continue  # a second address of a merged device, already recorded this round
                 if row is None:
                     cur = self._db.execute(
                         """INSERT INTO devices
@@ -400,6 +414,109 @@ class Store:
         cur = self._db.execute("UPDATE devices SET kind = ? WHERE id = ?", (kind, device_id))
         return cur.rowcount > 0
 
+    def edit_device(
+        self, device_id: int, *, name: str | None, kind: str | None, description: str | None
+    ) -> bool:
+        """Apply a person's edit of name, kind and description. False for an unknown device.
+
+        Kind and description normally come from the LLM. Changing either here pins both:
+        the classification will not overwrite them. Clearing both hands them back."""
+        row = self._db.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        if row is None:
+            return False
+        if name != row["name"]:
+            self.set_device_name(device_id, name)
+        if (kind, description) != (row["kind"], row["description"]):
+            manual = bool(kind or description)
+            self._db.execute(
+                """UPDATE devices SET kind = ?, description = ?, kind_manual = ?,
+                   kind_confidence = NULL WHERE id = ?""",
+                (kind, description, int(manual), device_id),
+            )
+            if kind != row["kind"]:
+                self.add_event(
+                    "device.classified",
+                    f"Set to {kind}" if kind else "Classification cleared",
+                    device_id,
+                    data={"kind": kind, "previous": row["kind"], "by": "user"},
+                )
+        return True
+
+    def delete_device(self, device_id: int) -> bool:
+        """Forget a device and everything recorded about it. Timeline events stay, without
+        a link. If the device is still on the network, the next discovery adds it as new."""
+        row = self._db.execute(
+            "SELECT name, hostname, key FROM devices WHERE id = ?", (device_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        with self._tx():
+            for table in ("sightings", "services", "device_scans", "device_aliases", "findings"):
+                self._db.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
+            self._db.execute("UPDATE events SET device_id = NULL WHERE device_id = ?", (device_id,))
+            self._db.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+            self.add_event(
+                "device.forgotten", f"Forgot {row['name'] or row['hostname'] or row['key']}"
+            )
+        return True
+
+    def merge_devices(self, keep_id: int, other_id: int) -> bool:
+        """Fold `other` into `keep`: the same physical device seen under two addresses,
+        typically a phone that changed its private MAC. `other`'s address becomes an alias,
+        so future sightings of it count as `keep`. Its history moves over; its services and
+        findings are dropped, since the next scans produce them again under `keep`."""
+        if keep_id == other_id:
+            return False
+        keep = self._db.execute("SELECT * FROM devices WHERE id = ?", (keep_id,)).fetchone()
+        other = self._db.execute("SELECT * FROM devices WHERE id = ?", (other_id,)).fetchone()
+        if keep is None or other is None:
+            return False
+        with self._tx():
+            self._db.execute(
+                "UPDATE device_aliases SET device_id = ? WHERE device_id = ?", (keep_id, other_id)
+            )
+            self._db.execute(
+                "INSERT OR REPLACE INTO device_aliases(key, device_id) VALUES (?, ?)",
+                (other["key"], keep_id),
+            )
+            self._db.execute(
+                "UPDATE OR IGNORE sightings SET device_id = ? WHERE device_id = ?",
+                (keep_id, other_id),
+            )
+            for table in ("sightings", "services", "device_scans", "findings"):
+                self._db.execute(f"DELETE FROM {table} WHERE device_id = ?", (other_id,))
+            self._db.execute(
+                "UPDATE events SET device_id = ? WHERE device_id = ?", (keep_id, other_id)
+            )
+            # Keep the longer history and whatever `keep` did not know itself.
+            self._db.execute(
+                """UPDATE devices SET first_seen = MIN(first_seen, ?),
+                   last_seen = MAX(last_seen, ?), hostname = COALESCE(hostname, ?),
+                   vendor = COALESCE(vendor, ?), name = COALESCE(name, ?) WHERE id = ?""",
+                (
+                    other["first_seen"],
+                    other["last_seen"],
+                    other["hostname"],
+                    other["vendor"],
+                    other["name"],
+                    keep_id,
+                ),
+            )
+            self._db.execute("DELETE FROM devices WHERE id = ?", (other_id,))
+            self.add_event(
+                "device.merged",
+                f"Merged {other['name'] or other['hostname'] or other['key']} into this device",
+                keep_id,
+                data={"alias": other["key"]},
+            )
+        return True
+
+    def device_aliases(self, device_id: int) -> list[str]:
+        rows = self._db.execute(
+            "SELECT key FROM device_aliases WHERE device_id = ? ORDER BY key", (device_id,)
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
     def set_device_classification(
         self, device_id: int, kind: str, description: str, confidence: float
     ) -> bool:
@@ -407,7 +524,7 @@ class Store:
         before = self._db.execute("SELECT kind FROM devices WHERE id = ?", (device_id,)).fetchone()
         cur = self._db.execute(
             """UPDATE devices SET kind = ?, description = ?, kind_confidence = ?
-               WHERE id = ?
+               WHERE id = ? AND kind_manual = 0
                  AND (kind IS NOT ? OR description IS NOT ? OR kind_confidence IS NOT ?)""",
             (kind, description, confidence, device_id, kind, description, confidence),
         )
@@ -998,6 +1115,7 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         last_seen=str(row["last_seen"]),
         online=online,
         attrs=json.loads(row["attrs"] or "{}"),
+        kind_manual=bool(row["kind_manual"]),
     )
 
 

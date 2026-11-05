@@ -54,6 +54,14 @@ def local_str(s: str | None) -> str:
     return parse_iso(s).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def is_private_mac(mac: str | None) -> bool:
+    """True when the locally-administered bit of the first octet is set (x2, x6, xA, xE)."""
+    try:
+        return mac is not None and bool(int(mac[:2], 16) & 0x02)
+    except ValueError:
+        return False
+
+
 def normalize_mac(mac: str | None) -> str | None:
     if not mac:
         return None
@@ -129,10 +137,18 @@ class Device:
     last_seen: str
     online: bool
     attrs: dict[str, Any] = field(default_factory=dict)
+    # Kind and description were set by a person; the LLM classification leaves them alone.
+    kind_manual: bool = False
 
     @property
     def label(self) -> str:
         return self.name or self.hostname or self.vendor or self.key
+
+    @property
+    def private_mac(self) -> bool:
+        """A locally administered ("randomised") MAC address: phones and laptops make one up
+        per network, and may change it, so such a device can reappear as a new one."""
+        return is_private_mac(self.mac)
 
 
 @dataclass(slots=True)

@@ -9,7 +9,7 @@
   <td><a href="/devices/{{ d.id }}">{{ d.name or d.hostname or d.vendor or d.key }}</a>
       {% if d.kind %}<br><span class="kind">{{ d.kind }}</span>{% endif %}</td>
   <td class="mono">{{ d.ip or '-' }}</td>
-  <td class="mono">{{ d.mac or '-' }}</td>
+  <td><span class="mono">{{ d.mac or '-' }}</span>{% if d.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}</td>
   <td>{{ d.vendor or '-' }}</td>
   <td>{{ d.hostname or '-' }}</td>
   <td class="mono">{{ ports or '-' }}</td>

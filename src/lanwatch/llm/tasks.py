@@ -206,8 +206,8 @@ async def classify_devices(svc: LlmService, device_ids: list[int], budget: int) 
             log.info("LLM budget for this round reached (%d calls)", budget)
             break
         d = svc.store.device(did)
-        if d is None:
-            continue
+        if d is None or d.kind_manual:
+            continue  # gone, or a person decided what it is
         facts = device_facts(d, svc.store.services(did))
         if len(facts) == 4 and not any(
             (facts["vendor_from_mac"], facts["hostname"], facts["open_ports"])

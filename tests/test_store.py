@@ -154,3 +154,79 @@ async def test_maintenance_honours_retention_settings(store: Store, config: Conf
     assert (await run_maintenance(config, store))["events"] == 0
     config.store.keep_events_days = 365
     assert (await run_maintenance(config, store))["events"] == 1
+
+
+def test_private_mac_detection() -> None:
+    from lanwatch.models import is_private_mac
+
+    assert is_private_mac("da:a1:19:00:00:01") and is_private_mac("02:00:00:00:00:01")
+    assert not is_private_mac("f0:18:98:11:22:01") and not is_private_mac("3c:22:fb:11:22:02")
+    assert not is_private_mac(None) and not is_private_mac("zz:00:00:00:00:00")
+
+
+def _one_round(store: Store, *hosts: HostObservation) -> list[int]:
+    sid = store.begin_snapshot("discovery", "test")
+    rec = store.record_hosts(sid, list(hosts))
+    store.finish_snapshot(sid, len(rec.seen_device_ids))
+    return rec.seen_device_ids
+
+
+def test_a_persons_classification_is_not_overwritten(store: Store) -> None:
+    (did,) = _one_round(store, obs("10.0.0.5", "f0:18:98:00:00:05"))
+    store.set_device_classification(did, "laptop", "Probably a MacBook", 0.6)
+
+    # Saving the form with nothing changed about the kind does not pin it.
+    store.edit_device(did, name="Work Mac", kind="laptop", description="Probably a MacBook")
+    d = store.device(did)
+    assert d is not None and d.name == "Work Mac" and not d.kind_manual
+
+    store.edit_device(did, name="Work Mac", kind="workstation", description="Mac Studio")
+    assert store.set_device_classification(did, "laptop", "Probably a MacBook", 0.6) is False
+    d = store.device(did)
+    assert d is not None and d.kind_manual and d.kind_confidence is None
+    assert (d.kind, d.description) == ("workstation", "Mac Studio")
+
+    # Clearing both hands the device back to the LLM.
+    store.edit_device(did, name="Work Mac", kind=None, description=None)
+    assert store.set_device_classification(did, "laptop", "Probably a MacBook", 0.6) is True
+    d = store.device(did)
+    assert d is not None and not d.kind_manual and d.kind == "laptop"
+    assert store.edit_device(999, name=None, kind=None, description=None) is False
+
+
+def test_forgetting_a_device_removes_it_and_it_can_come_back(store: Store) -> None:
+    host = obs("10.0.0.5", "f0:18:98:00:00:05", hostname="old-printer")
+    (did,) = _one_round(store, host)
+    assert store.delete_device(did) is True and store.delete_device(did) is False
+    assert store.devices() == []
+    forgotten = [e for e in store.events(limit=20) if e.kind == "device.forgotten"]
+    assert forgotten and "old-printer" in forgotten[0].summary
+    assert all(e.device_id is None for e in store.events(limit=20))  # history kept, unlinked
+    # Still on the network: the next round adds it back as a new device.
+    sid = store.begin_snapshot("discovery", "test")
+    rec = store.record_hosts(sid, [host])
+    store.finish_snapshot(sid, 1)
+    assert len(rec.new_device_ids) == 1 and len(store.devices()) == 1
+
+
+def test_merging_makes_the_other_address_an_alias(store: Store) -> None:
+    phone = obs("10.0.0.7", "da:a1:19:00:00:01", hostname="pixel")
+    keep, dup = _one_round(store, phone, obs("10.0.0.8", "5e:11:22:00:00:02", hostname="pixel"))
+    store.set_device_name(keep, "Ole's phone")
+
+    assert store.merge_devices(keep, dup) is True
+    assert store.merge_devices(keep, dup) is False and store.merge_devices(keep, keep) is False
+    assert [d.id for d in store.devices()] == [keep]
+    assert store.device_aliases(keep) == ["5e:11:22:00:00:02"]
+    assert any(e.kind == "device.merged" for e in store.events(device_id=keep, limit=20))
+
+    # The phone shows up under the other address again: same device, not a new one.
+    sid = store.begin_snapshot("discovery", "test")
+    rec = store.record_hosts(sid, [obs("10.0.0.9", "5e:11:22:00:00:02", hostname="pixel")])
+    store.finish_snapshot(sid, 1)
+    assert rec.new_device_ids == [] and rec.seen_device_ids == [keep]
+    d = store.device(keep)
+    assert d is not None and d.online and d.ip == "10.0.0.9" and d.name == "Ole's phone"
+
+    # Both addresses answering in one round still count as one device.
+    assert _one_round(store, phone, obs("10.0.0.9", "5e:11:22:00:00:02")) == [keep]
