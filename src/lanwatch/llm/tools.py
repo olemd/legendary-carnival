@@ -4,7 +4,7 @@ when the user asked for them in the conversation. Every call is traced back to t
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -149,7 +149,7 @@ class ToolRunner:
                 else:
                     result = (
                         await handler(**arguments)
-                        if asyncio.iscoroutinefunction(handler)
+                        if inspect.iscoroutinefunction(handler)
                         else handler(**arguments)
                     )
             ok = not (isinstance(result, dict) and "error" in result)
