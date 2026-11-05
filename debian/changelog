@@ -1,3 +1,11 @@
+lanwatch (0.2.0) unstable; urgency=medium
+
+  * Web UI: new look with summary tiles on the dashboard, severity chips with
+    their own icons, labelled online/offline state and a tuned dark mode.
+  * Tailscale interfaces are no longer scanned by default.
+
+ -- olemd <olemd@glemt.net>  Thu, 05 Nov 2026 13:48:46 +0100
+
 lanwatch (0.1.0) unstable; urgency=medium
 
   * Initial Debian package.

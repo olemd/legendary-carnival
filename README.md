@@ -85,7 +85,7 @@ and runs nothing as root:
 
 ```sh
 make deb                                          # needs debhelper and uv
-sudo apt install ./dist/lanwatch_0.1.0_amd64.deb
+sudo apt install ./dist/lanwatch_*_amd64.deb
 sudo lanwatch findings                            # CLI on the service's database
 ```
 

@@ -7,7 +7,7 @@ watch (a VM behind NAT sees nothing).
 
 ```sh
 make deb                                          # needs debhelper and uv; or take the
-sudo apt install ./dist/lanwatch_0.1.0_amd64.deb  # .deb from a GitHub release
+sudo apt install ./dist/lanwatch_*_amd64.deb   # .deb from a GitHub release
 ```
 
 Self-contained (own Python and libraries under `/usr/lib/lanwatch`), tested on Debian 12,
