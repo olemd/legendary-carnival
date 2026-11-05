@@ -2,6 +2,8 @@ name: ci
 on:
   push:
   pull_request:
+  # Manual runs additionally build and smoke-test the arm64 package (slow: emulated).
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -27,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian shellcheck
-      - run: shellcheck debian/bin/lanwatch debian/lanwatch.postrm tests/deb/e2e.sh tests/deb/assert.sh
+      - run: shellcheck debian/bin/lanwatch debian/lanwatch.postrm tests/deb/e2e.sh tests/deb/assert.sh tests/deb/smoke.sh
       - run: make deb
       # The .deb, not the .changes: Ubuntu's lintian rejects "unstable" as an upload target.
       - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
@@ -53,3 +55,20 @@ jobs:
           path: dist
       # Rootful: the test container runs systemd and must be able to sandbox its units.
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/${{ matrix.image }}
+
+  # The arm64 package is built and tested under emulation, which takes several minutes, so
+  # it does not run on every push: only when started by hand, and in the release workflow.
+  deb-arm64:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static lintian
+      - run: make deb-arm64
+      - run: lintian --fail-on error dist/lanwatch_*_arm64.deb
+      - run: tests/deb/smoke.sh arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanwatch-deb-arm64
+          path: dist/lanwatch_*_arm64.deb
+          if-no-files-found: error

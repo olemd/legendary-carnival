@@ -11,7 +11,10 @@ sudo apt install ./dist/lanwatch_*_amd64.deb   # .deb from a GitHub release
 ```
 
 Self-contained (own Python and libraries under `/usr/lib/lanwatch`), tested on Debian 12,
-Debian 13 and Ubuntu 24.04. After install the service is running and the web UI is on
+Debian 13 and Ubuntu 24.04. Releases also carry an arm64 package (Raspberry Pi and
+similar); build one yourself with `make deb-arm64`, which needs podman and
+qemu-user-static. The arm64 package is only smoke-tested under emulation, not under systemd
+on real hardware. After install the service is running and the web UI is on
 http://127.0.0.1:8321. Config: `/etc/lanwatch/config.toml`. CLI: `sudo lanwatch ...`.
 
 Nothing runs as root. `lanwatch.service` runs as user `lanwatch` with no capabilities;

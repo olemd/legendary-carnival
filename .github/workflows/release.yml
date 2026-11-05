@@ -1,6 +1,6 @@
 name: release
-# Pushing a tag vX.Y.Z builds the Debian package, tests it and publishes it as a GitHub
-# release. The tag must match the version in all three places it is written down.
+# Pushing a tag vX.Y.Z builds the Debian packages (amd64 and arm64), tests them and
+# publishes them as a GitHub release. The tag must match the version in all three places it is written down.
 on:
   push:
     tags: ["v*"]
@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian qemu-user-static
       - name: Tag matches pyproject.toml, lanwatch/__init__.py and debian/changelog
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -29,7 +29,11 @@ jobs:
       - run: make deb
       - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
+      # arm64 is built and smoke-tested under emulation; a failure here blocks the release.
+      - run: make deb-arm64
+      - run: lintian --fail-on error dist/lanwatch_*_arm64.deb
+      - run: tests/deb/smoke.sh arm64
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/lanwatch_*_amd64.deb --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb --verify-tag --generate-notes

@@ -3,16 +3,21 @@
 # uv.lock, both under /usr/lib/lanwatch. Nothing is compiled; the interpreter and the wheels
 # are downloaded prebuilt, so the build needs `uv` on PATH and network access.
 
+# DEB_HOST_GNU_CPU: x86_64 on amd64, aarch64 on arm64. uv names its Python builds and
+# wheel platforms the same way, so the one variable selects both.
+include /usr/share/dpkg/architecture.mk
+
 # The bundled interpreter. Bump deliberately: the package owns its Python security updates.
 PYTHON_VERSION := 3.13.14
 PYLIB          := python$(basename $(PYTHON_VERSION))
+PYBUILD        := cpython-$(PYTHON_VERSION)-linux-$(DEB_HOST_GNU_CPU)-gnu
 
 PKG     := $(CURDIR)/debian/lanwatch
 PREFIX  := /usr/lib/lanwatch
 DEST    := $(PKG)$(PREFIX)
 SCRATCH := $(CURDIR)/debian/.build
 # Where uv unpacks the interpreter before it is moved into place.
-PYSRC   := $(SCRATCH)/py/cpython-$(PYTHON_VERSION)-linux-x86_64-gnu
+PYSRC   := $(SCRATCH)/py/$(PYBUILD)
 
 # --buildsystem=none: without it debhelper finds the project Makefile and runs `make clean`
 # (deleting .venv and dist/), `make` (the full check suite) and `make test` during the build.
@@ -25,7 +30,7 @@ override_dh_auto_install:
 	mkdir -p $(DEST)
 
 	# 1. Interpreter. --no-bin keeps uv from linking it into the builder's ~/.local/bin.
-	uv python install --no-bin --install-dir $(SCRATCH)/py $(PYTHON_VERSION)
+	uv python install --no-bin --install-dir $(SCRATCH)/py $(PYBUILD)
 	mv $(PYSRC) $(DEST)/python
 
 	# 2. Dependencies, exactly as locked. A relocatable venv gets entry-point scripts that
@@ -37,7 +42,7 @@ override_dh_auto_install:
 	#    files alone would package the previous build's code.
 	UV_PROJECT_ENVIRONMENT=$(DEST)/venv uv sync --frozen --no-dev --no-editable \
 		--link-mode=copy --python $(DEST)/python/bin/python3 \
-		--python-platform x86_64-manylinux_2_28 --refresh-package lanwatch
+		--python-platform $(DEB_HOST_GNU_CPU)-manylinux_2_28 --refresh-package lanwatch
 
 	# 3. Point the three remaining absolute build paths at the installed location.
 	sed -i 's|^home = .*|home = $(PREFIX)/python/bin|' $(DEST)/venv/pyvenv.cfg
@@ -95,6 +100,9 @@ override_dh_installsystemd:
 # The bundled interpreter and wheels are prebuilt and already stripped; their library
 # dependencies are glibc only and declared by hand in debian/control.
 override_dh_strip override_dh_dwz override_dh_makeshlibs override_dh_shlibdeps override_dh_strip_nondeterminism:
+
+# The interpreter is run during the build (venv, bytecode), so the package is built on its
+# own architecture: natively, or in an emulated container (make deb-arm64).
 
 # xz so a package built on Ubuntu (whose dpkg defaults to zstd) installs on Debian 12.
 override_dh_builddeb:

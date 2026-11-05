@@ -1,0 +1,17 @@
+# Build environment for the Debian package on another CPU architecture, run under emulation:
+#   make deb-arm64
+# debian/rules runs the bundled Python while building (virtualenv, bytecode), so an arm64
+# package has to be built on arm64. Nothing is compiled, which keeps emulation bearable.
+FROM docker.io/library/debian:13
+
+ARG BUILD_DATE
+ARG GIT_REVISION
+LABEL org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${GIT_REVISION}"
+RUN printf 'build_date=%s\ngit_revision=%s\n' "${BUILD_DATE}" "${GIT_REVISION}" > /etc/build-info
+
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends debhelper ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build

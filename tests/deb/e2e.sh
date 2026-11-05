@@ -17,9 +17,12 @@ PODMAN=${PODMAN:-podman}
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH='' cd -- "$here/../.." && pwd)
 
-set -- "$root"/dist/lanwatch_*_amd64.deb
+# This machine's architecture: the services run for real here, which emulation cannot do
+# (see smoke.sh for other architectures).
+arch=$(dpkg --print-architecture)
+set -- "$root"/dist/lanwatch_*_"$arch".deb
 if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-    echo "expected exactly one dist/lanwatch_*_amd64.deb; run 'make deb' first" >&2
+    echo "expected exactly one dist/lanwatch_*_$arch.deb; run 'make deb' first" >&2
     exit 1
 fi
 deb=$(basename "$1")
@@ -41,7 +44,9 @@ trap 'exit 130' INT TERM
 
 echo "== $IMAGE: starting systemd container $name"
 pm network create "$name" >/dev/null
-pm run -d --name "$name" --privileged --systemd=always --network "$name" \
+# --arch is explicit because a local image tag can point at another architecture's variant
+# (after `make deb-arm64` or smoke.sh); podman then fetches the right one.
+pm run -d --name "$name" --arch "$arch" --privileged --systemd=always --network "$name" \
     -v "$root/dist:/dist:ro" -v "$here:/e2e:ro" "$IMAGE" \
     sh -c 'export DEBIAN_FRONTEND=noninteractive
            rm -f /usr/sbin/policy-rc.d
