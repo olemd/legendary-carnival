@@ -8,7 +8,7 @@
 # start and that TLS verification works. It deliberately does not start the services:
 # under user-mode emulation systemd's system-call filters see the emulator's system calls,
 # not the service's, so the sandboxed units cannot run there. The full test (e2e.sh) needs
-# real hardware of that architecture.
+# real hardware of that architecture; CI and the release workflow run it on an arm64 runner.
 set -eu
 
 ARCH=${1:?usage: smoke.sh ARCH [IMAGE]}

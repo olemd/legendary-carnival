@@ -1,18 +1,16 @@
 name: release
-# Pushing a tag vX.Y.Z builds the Debian packages (amd64 and arm64), tests them and
-# publishes them as a GitHub release. The tag must match the version in all three places it is written down.
+# Pushing a tag vX.Y.Z builds the Debian packages for amd64 and arm64, each on its own
+# architecture, tests them under systemd, and publishes them as a GitHub release. Nothing
+# is published unless every job before `publish` passed.
 on:
   push:
     tags: ["v*"]
-permissions:
-  contents: write
 jobs:
-  deb:
+  # The tag must match the version in all three places it is written down.
+  version:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian qemu-user-static
       - name: Tag matches pyproject.toml, lanwatch/__init__.py and debian/changelog
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -26,17 +24,56 @@ jobs:
               exit 1
             fi
           done
+
+  # Every supported distribution; day-to-day CI only tests Debian 13.
+  amd64:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian
       - run: make deb
       - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
-      # Every supported distribution; day-to-day CI only tests Debian 13.
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:12
       - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/ubuntu:24.04
-      # arm64 is built and smoke-tested under emulation; a failure here blocks the release.
-      - run: make deb-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: dist/lanwatch_*_amd64.deb
+          if-no-files-found: error
+
+  # Built and tested natively: the build runs the bundled Python, and the sandboxed
+  # services cannot run under emulation.
+  arm64:
+    needs: version
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian podman
+      - run: make deb
       - run: lintian --fail-on error dist/lanwatch_*_arm64.deb
-      - run: tests/deb/smoke.sh arm64
-      - name: Publish
-        env:
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist/lanwatch_*_arm64.deb
+          if-no-files-found: error
+
+  publish:
+    needs: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: deb-*
+          merge-multiple: true
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb --verify-tag --generate-notes
