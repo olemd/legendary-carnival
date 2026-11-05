@@ -53,6 +53,11 @@ keep_alive = "30m"
 
 [store]
 # path = "/var/lib/lanwatch/lanwatch.db"
+# Days of history kept by the daily maintenance job; 0 keeps everything. Devices, services
+# and findings are never pruned.
+keep_rounds_days = 30                   # who answered in each discovery round
+keep_events_days = 365                  # the timeline
+keep_notifications_days = 90            # the notification log
 
 [overview]
 enabled = true

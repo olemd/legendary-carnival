@@ -235,6 +235,24 @@ def _excluded(h: HostObservation, excludes: list[str]) -> bool:
     return h.ip in ex or (h.mac is not None and h.mac in ex)
 
 
+async def run_maintenance(config: Config, store: Store) -> dict[str, int]:
+    """Daily housekeeping: drop history older than the configured retention, so a database
+    that records every five minutes stops growing after the first month."""
+
+    def cutoff(days: int) -> str | None:
+        return iso(now_utc() - timedelta(days=days)) if days > 0 else None
+
+    keep = config.store
+    deleted = store.prune(
+        rounds_before=cutoff(keep.keep_rounds_days),
+        events_before=cutoff(keep.keep_events_days),
+        notifications_before=cutoff(keep.keep_notifications_days),
+    )
+    if any(deleted.values()):
+        log.info("maintenance: pruned %s", ", ".join(f"{n} {t}" for t, n in deleted.items() if n))
+    return deleted
+
+
 async def run_discovery(
     config: Config, store: Store, executor: Executor | None = None
 ) -> DiscoveryOutcome:

@@ -249,6 +249,45 @@ class Store:
         ).fetchone()
         return int(row[0])
 
+    def prune(
+        self,
+        rounds_before: str | None = None,
+        events_before: str | None = None,
+        notifications_before: str | None = None,
+    ) -> dict[str, int]:
+        """Delete history older than the given ISO timestamps (None keeps everything of
+        that sort). Returns rows deleted per table.
+
+        The newest finished snapshot of every kind always stays, whatever its age: it is
+        what "online now" and "last scan" are read from. Snapshots that current state
+        still points to (a service's last scan, an infra record) stay as well."""
+        deleted = {"sightings": 0, "snapshots": 0, "events": 0, "notifications": 0}
+        newest = "SELECT MAX(id) FROM snapshots WHERE finished_at IS NOT NULL GROUP BY kind"
+        with self._tx():
+            if rounds_before is not None:
+                old = f"SELECT id FROM snapshots WHERE started_at < ? AND id NOT IN ({newest})"
+                deleted["sightings"] = self._db.execute(
+                    f"DELETE FROM sightings WHERE snapshot_id IN ({old})", (rounds_before,)
+                ).rowcount
+                deleted["snapshots"] = self._db.execute(
+                    f"""DELETE FROM snapshots WHERE started_at < ? AND id NOT IN ({newest})
+                        AND id NOT IN (SELECT last_snapshot_id FROM services
+                                       WHERE last_snapshot_id IS NOT NULL)
+                        AND id NOT IN (SELECT snapshot_id FROM infra
+                                       WHERE snapshot_id IS NOT NULL)
+                        AND id NOT IN (SELECT snapshot_id FROM sightings)""",
+                    (rounds_before,),
+                ).rowcount
+            if events_before is not None:
+                deleted["events"] = self._db.execute(
+                    "DELETE FROM events WHERE ts < ?", (events_before,)
+                ).rowcount
+            if notifications_before is not None:
+                deleted["notifications"] = self._db.execute(
+                    "DELETE FROM notifications WHERE ts < ?", (notifications_before,)
+                ).rowcount
+        return deleted
+
     def sighting_device_ids(self, snapshot_id: int) -> set[int]:
         rows = self._db.execute(
             "SELECT device_id FROM sightings WHERE snapshot_id = ?", (snapshot_id,)

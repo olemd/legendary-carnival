@@ -20,7 +20,7 @@ from lanwatch.logging_setup import setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
-from lanwatch.pipeline import run_discovery, run_infra, run_inventory
+from lanwatch.pipeline import run_discovery, run_infra, run_inventory, run_maintenance
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
@@ -235,6 +235,7 @@ def run(ctx: typer.Context) -> None:
                     lambda: run_inventory(cfg, store, deep=True),
                 ),
                 job("infra", cfg.schedule.infra_interval_s, lambda: run_infra(cfg, store)),
+                job("maintenance", 86400, lambda: run_maintenance(cfg, store)),
             ]
             if cfg.llm.enabled:
                 from lanwatch.llm import hooks as llm_hooks

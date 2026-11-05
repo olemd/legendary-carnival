@@ -154,6 +154,13 @@ class LlmConfig(StrictModel):
 
 class StoreConfig(StrictModel):
     path: Path | None = None
+    # How many days of history a daily maintenance job keeps. 0 keeps everything.
+    # Rounds: which devices answered in each discovery round (one row per device every five
+    # minutes, by far the fastest-growing data). Devices, services and findings are never
+    # pruned; they are current state, not history.
+    keep_rounds_days: int = Field(default=30, ge=0)
+    keep_events_days: int = Field(default=365, ge=0)
+    keep_notifications_days: int = Field(default=90, ge=0)
 
 
 class OverviewConfig(StrictModel):
