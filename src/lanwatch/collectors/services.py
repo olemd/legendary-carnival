@@ -147,6 +147,32 @@ def parse_nmap_xml_services(xml_text: str, address_type: str = "ipv4") -> Servic
 # -- command line ---------------------------------------------------------------
 
 
+def _host_timeout_s(deep: bool) -> int:
+    """How long nmap may spend on one host before giving up on it."""
+    return 900 if deep else 240
+
+
+# nmap works through its targets a host group at a time, and each group can take up to the
+# per-host timeout. One run over every device therefore has no useful upper bound: 27
+# devices at the gentle profile need up to 28 minutes, and the single 15-minute limit that
+# used to cover the whole scan killed it every time, losing all of it. Scanning a few
+# groups per run keeps each run short and its limit honest, and a batch that does fail
+# costs only its own hosts.
+GROUPS_PER_BATCH = 2
+
+
+def batches(targets: list[str], cfg: ScanConfig, deep: bool) -> list[tuple[list[str], float]]:
+    """Split targets into nmap runs: [(targets, timeout in seconds)]."""
+    group = max(1, cfg.max_parallel_hosts)
+    size = group * GROUPS_PER_BATCH
+    out: list[tuple[list[str], float]] = []
+    for i in range(0, len(targets), size):
+        chunk = targets[i : i + size]
+        groups = -(-len(chunk) // group)  # ceiling division
+        out.append((chunk, groups * _host_timeout_s(deep) + 120))
+    return out
+
+
 def build_nmap_args(targets: list[str], cfg: ScanConfig, deep: bool) -> list[str]:
     args = [
         "nmap",
@@ -158,7 +184,7 @@ def build_nmap_args(targets: list[str], cfg: ScanConfig, deep: bool) -> list[str
         f"--max-rate={cfg.rate_limit_pps}",
         f"--max-hostgroup={cfg.max_parallel_hosts}",
         "--host-timeout",
-        "15m" if deep else "4m",
+        f"{_host_timeout_s(deep) // 60}m",
     ]
     args.append("-p-" if deep else f"--top-ports={cfg.light_top_ports}")
     if cfg.exclude_ports:
@@ -201,24 +227,44 @@ async def scan_services(
     present, root = await ex.which("nmap")
     if not present:
         raise RuntimeError("nmap is required for service inventory (apt install nmap)")
-    rc, out, err = await ex.run(build_nmap_args(targets, cfg, deep), timeout=3600 if deep else 900)
-    if rc != 0:
-        raise RuntimeError(f"nmap failed (rc={rc}): {err.strip()[:300]}")
-    result = parse_nmap_xml_services(out)
+    result = ServiceScanResult()
+    plan = batches(targets, cfg, deep)
+    failures: list[str] = []
+    done = 0
+    for chunk, timeout in plan:
+        rc, out, err = await ex.run(build_nmap_args(chunk, cfg, deep), timeout=timeout)
+        done += len(chunk)
+        if rc != 0:
+            failures.append(f"rc={rc}: {err.strip()[:300]}")
+            log.warning(
+                "service scan of %d hosts failed (%s); their services are left as they were",
+                len(chunk),
+                failures[-1],
+            )
+            continue
+        part = parse_nmap_xml_services(out)
+        result.hosts.extend(part.hosts)
+        result.scanned.update(part.scanned)
+        if len(plan) > 1:
+            log.info("service scan: %d of %d hosts done", done, len(targets))
+    if len(failures) == len(plan):
+        raise RuntimeError(f"nmap failed ({failures[0]})")
     if deep and cfg.deep_udp_top_ports > 0:
         if not root:
             log.warning("skipping UDP scan: needs root or CAP_NET_RAW")
         else:
-            rc, out, err = await ex.run(build_nmap_udp_args(targets, cfg), timeout=3600)
-            if rc != 0:
-                log.warning("UDP scan failed (rc=%s): %s", rc, err.strip()[:200])
-            else:
+            by_ip = {h.ip: h for h in result.hosts}
+            for chunk, timeout in plan:
+                rc, out, err = await ex.run(build_nmap_udp_args(chunk, cfg), timeout=timeout)
+                if rc != 0:
+                    log.warning("UDP scan failed (rc=%s): %s", rc, err.strip()[:200])
+                    continue
                 udp = parse_nmap_xml_services(out)
                 result.scanned.update(udp.scanned)
-                by_ip = {h.ip: h for h in result.hosts}
                 for h in udp.hosts:
                     if h.ip in by_ip:
                         by_ip[h.ip].ports.extend(h.ports)
                     else:
                         result.hosts.append(h)
+                        by_ip[h.ip] = h
     return result

@@ -160,3 +160,70 @@ def test_service_rules_from_fixture(store: Store, config: Config) -> None:
     r3 = Engine(config).run(ctx3)
     changed = [f for f in r3.emitted if f.rule_id == "inventory.service-changed"]
     assert len(changed) == 1 and changed[0].evidence["opened"] == ["8081/tcp"]
+
+
+# -- batching --------------------------------------------------------------------------------
+
+
+def _nmap_xml(ips: list[str]) -> str:
+    """Minimal nmap output: every host up with ssh open."""
+    hosts = "".join(
+        f'<host><status state="up"/><address addr="{ip}" addrtype="ipv4"/><ports>'
+        '<port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port>'
+        "</ports></host>"
+        for ip in ips
+    )
+    return f'<nmaprun><scaninfo type="connect" protocol="tcp" services="22"/>{hosts}</nmaprun>'
+
+
+class _Nmap:
+    """An executor whose nmap answers for the targets it is given, or fails for some."""
+
+    name = "fake"
+
+    def __init__(self, failing: set[str] | None = None, fail_all: bool = False) -> None:
+        self.failing = failing or set()
+        self.fail_all = fail_all
+        self.runs: list[tuple[list[str], float]] = []
+
+    async def which(self, binary: str) -> tuple[bool, bool]:
+        return True, False
+
+    async def run(self, args: list[str], timeout: float) -> tuple[int, str, str]:
+        targets = [a for a in args if a.startswith("10.0.0.")]
+        self.runs.append((targets, timeout))
+        if self.fail_all or self.failing & set(targets):
+            return -1, "", "timeout"
+        return 0, _nmap_xml(targets), ""
+
+
+def test_batches_keep_each_run_within_what_nmap_may_take() -> None:
+    from lanwatch.collectors.services import batches
+
+    cfg = ScanConfig()  # four hosts at a time
+    targets = [f"10.0.0.{n}" for n in range(1, 28)]  # the 27 devices that used to time out
+    plan = batches(targets, cfg, deep=False)
+    assert [len(chunk) for chunk, _ in plan] == [8, 8, 8, 3]
+    assert [timeout for _, timeout in plan] == [600, 600, 600, 360]  # groups x 4 min + margin
+    assert [ip for chunk, _ in plan for ip in chunk] == targets  # nothing lost or doubled
+    assert batches(targets[:2], cfg, deep=True) == [(targets[:2], 1020)]  # one group x 15 min
+    assert batches([], cfg, deep=False) == []
+
+
+async def test_a_failed_batch_costs_only_its_own_hosts() -> None:
+    from lanwatch.collectors.services import scan_services
+
+    targets = [f"10.0.0.{n}" for n in range(1, 21)]
+    ex = _Nmap(failing={"10.0.0.10"})  # the second batch of eight times out
+    result = await scan_services(ex, targets, ScanConfig(), deep=False)
+    assert [len(t) for t, _ in ex.runs] == [8, 8, 4]
+    assert all(timeout <= 600 for _, timeout in ex.runs)
+    scanned = {h.ip for h in result.hosts}
+    assert scanned == set(targets) - {f"10.0.0.{n}" for n in range(9, 17)}
+    assert result.scanned  # which ports were covered is still known
+
+    # Only when nothing at all came back is the scan an error.
+    import pytest
+
+    with pytest.raises(RuntimeError, match="nmap failed"):
+        await scan_services(_Nmap(fail_all=True), targets, ScanConfig(), deep=False)
