@@ -347,6 +347,42 @@ class Ipv6RouterNewRule(Rule):
         return out
 
 
+class DnsNotFilteredRule(Rule):
+    id = "improvement.dns-not-filtered"
+    kind = Kind.IMPROVEMENT
+    default_severity = Severity.INFO
+    description = (
+        "The DNS resolver your devices use answers for known advertising and test-malware "
+        "names: it filters nothing. A filtering resolver (Pi-hole or AdGuard Home on the "
+        "LAN, or a public one such as Quad9 or Cloudflare for Families) stops many threats "
+        "for every device at once. Only checked when scan.dns_filter_check is on."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("dns-filter"):
+            d = r.data
+            # Unknown is not "no": a verdict needs at least one test that got an answer.
+            if not d.get("working") or d.get("ads") or d.get("threats"):
+                continue
+            if d.get("ads") is None and d.get("threats") is None:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"DNS resolver {r.key} does not filter ads or malicious domains",
+                    key_parts=[r.key],
+                    evidence={
+                        "resolver": r.key,
+                        "announced_by_dhcp": d.get("announced_by_dhcp"),
+                        "ads_blocked": d.get("ads"),
+                        "threat_tests_blocked": d.get("threats"),
+                    },
+                )
+            )
+        return out
+
+
 class DhcpSettingsChangedRule(Rule):
     id = "net.dhcp-settings-changed"
     kind = Kind.SECURITY
@@ -404,4 +440,5 @@ RULES: list[Rule] = [
     InfraMacChangedRule(),
     DhcpSettingsChangedRule(),
     Ipv6RouterNewRule(),
+    DnsNotFilteredRule(),
 ]

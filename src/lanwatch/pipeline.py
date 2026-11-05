@@ -11,6 +11,7 @@ from typing import Any
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import select_backend
+from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.upnp import discover_upnp
@@ -240,6 +241,20 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
             entry["protocols"].append(a.protocol)
             entry["name"] = a.name
         store.replace_infra("name-poisoning", poisoners, snapshot_id)
+
+    if config.scan.dns_filter_check:
+        announced = {
+            str(dns) for r in store.infra("dhcp") for dns in r.data.get("dns") or [] if dns
+        }
+        results: dict[str, dict[str, Any]] = {}
+        for resolver in sorted(announced) or system_resolvers():
+            try:
+                results[resolver] = await check_resolver(resolver)
+            except Exception:
+                log.exception("DNS filtering check of %s failed", resolver)
+            else:
+                results[resolver]["announced_by_dhcp"] = resolver in announced
+        store.replace_infra("dns-filter", results, snapshot_id)
 
     store.finish_snapshot(snapshot_id, len(enriched))
     out.devices_enriched = len(enriched)

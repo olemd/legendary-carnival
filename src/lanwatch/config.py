@@ -115,6 +115,10 @@ class ScanConfig(StrictModel):
     # Needed for rootless containers. Unset = run commands locally.
     helper_socket: Path | None = None
     # Infra probes (every schedule.infra_interval_s): DHCP servers, mDNS, UPnP, IPv6.
+    # Ask the DHCP-announced DNS resolver for a few test names that filtering resolvers
+    # block, to see whether it filters ads or malicious domains. Off by default: the
+    # lookups go out to the internet through that resolver.
+    dns_filter_check: bool = False
     # Listen to ARP traffic between scans (needs the same raw-socket privilege as arp-scan).
     arp_watch: bool = True
     # Ask the local segment for a name that does not exist (LLMNR, mDNS, NetBIOS). Anything

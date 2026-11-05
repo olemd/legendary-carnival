@@ -13,6 +13,22 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% if dhcp | length > 1 %}<p class="note"><span class="sev sev-critical">critical</span> More than one DHCP server is answering.</p>{% endif %}
 {% else %}<p class="empty">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}
 
+{% if dns_filter %}
+<h2>DNS filtering</h2>
+<div class="tbl"><table><thead><tr><th>Resolver</th><th>Source</th><th>Ads and trackers</th><th>Malicious domains</th><th>Test names it blocked</th></tr></thead><tbody>
+{% for r in dns_filter %}
+<tr><td class="mono">{{ r.key }}</td><td class="muted">{{ 'DHCP' if r.data.announced_by_dhcp else 'this machine' }}</td>
+{% if not r.data.working %}<td colspan="3" class="muted">did not answer the control lookup; no verdict</td>
+{% else %}
+<td>{% if r.data.ads %}<span class="result-ok">filtered</span>{% elif r.data.ads is none %}<span class="muted">unknown</span>{% else %}not filtered{% endif %}</td>
+<td>{% if r.data.threats %}<span class="result-ok">filtered</span>{% if r.data.provider %} <span class="muted">{{ r.data.provider }}</span>{% endif %}{% elif r.data.threats is none %}<span class="muted">unknown</span>{% else %}<span class="muted">not seen</span>{% endif %}</td>
+<td class="mono">{{ r.data.blocked | join(', ') or '-' }}</td>
+{% endif %}</tr>
+{% endfor %}
+</tbody></table></div>
+<p class="muted">“Malicious domains” is tested with the public test names of Cloudflare for Families, Quad9 and OpenDNS. A resolver that filters threats with another provider's list shows as “not seen”.</p>
+{% endif %}
+
 <h2>UPnP</h2>
 {% if upnp %}
 <div class="tbl"><table><thead><tr><th>Address</th><th>Name</th><th>Manufacturer / model</th><th>Type</th><th>IGD</th><th>External IP</th><th>Mappings</th></tr></thead><tbody>
