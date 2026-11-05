@@ -1,0 +1,35 @@
+name: release
+# Pushing a tag vX.Y.Z builds the Debian package, tests it and publishes it as a GitHub
+# release. The tag must match the version in all three places it is written down.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian
+      - name: Tag matches pyproject.toml, lanwatch/__init__.py and debian/changelog
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          module=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/lanwatch/__init__.py)
+          changelog=$(dpkg-parsechangelog -S Version)
+          echo "tag=$tag pyproject=$pyproject module=$module changelog=$changelog"
+          for v in "$pyproject" "$module" "$changelog"; do
+            if [ "$v" != "$tag" ]; then
+              echo "::error::version mismatch: tag is $tag but found '$v'"
+              exit 1
+            fi
+          done
+      - run: make deb
+      - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/debian:13
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/lanwatch_*_amd64.deb --verify-tag --generate-notes

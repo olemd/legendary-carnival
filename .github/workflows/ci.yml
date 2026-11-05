@@ -18,3 +18,38 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -q
+
+  # Build the Debian package and lint it. Pinned to 24.04 so the debhelper and lintian
+  # versions do not change underneath us when ubuntu-latest moves.
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential debhelper lintian shellcheck
+      - run: shellcheck debian/bin/lanwatch debian/lanwatch.postrm tests/deb/e2e.sh tests/deb/assert.sh
+      - run: make deb
+      # The .deb, not the .changes: Ubuntu's lintian rejects "unstable" as an upload target.
+      - run: lintian --fail-on error dist/lanwatch_*_amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanwatch-deb
+          path: dist/lanwatch_*_amd64.deb
+          if-no-files-found: error
+
+  # Install that package under real systemd on each supported distribution and exercise it.
+  deb-test:
+    needs: deb
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "debian:13", "ubuntu:24.04"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lanwatch-deb
+          path: dist
+      # Rootful: the test container runs systemd and must be able to sandbox its units.
+      - run: PODMAN="sudo podman" tests/deb/e2e.sh docker.io/library/${{ matrix.image }}
