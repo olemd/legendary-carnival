@@ -130,7 +130,16 @@ Infra-probes beriker også inventaret: UPnP friendlyName/modell og mDNS-navn
 lagres som enhetsattributter og går inn i LLM-ens klassifiseringsfakta, som
 dermed får ny cache-nøkkel og reklassifiseres.
 
-Ikke dekket ennå: DNS-filtrering, NTP, firmware-sjekk mot produsent.
+Lagt til etter M6:
+- nettidentitet: IP-konflikt, endret MAC på gateway/DHCP/DNS-adresse, endrede
+  DHCP-innstillinger (DNS, NTP, ruter, domene), ny IPv6-ruter
+- angrepstegn uten speilport: lokkeporter, passiv ARP-lytter (spoofing, sveip),
+  lokkespørsmål over LLMNR/mDNS/NetBIOS
+- hygiene: firmware-sjekk for produkter som selv oppgir versjon (oppslag av siste
+  versjon hos produsent er opt-in), DNS-filtrering (opt-in, sender testoppslag ut)
+
+Utsatt: logger fra utstyr som ser all trafikk (DNS-logger, ruterens IDS), se issue #1.
+Full trafikkinspeksjon på speilport er fortsatt et ikke-mål.
 
 ## 5. LLM-laget
 
