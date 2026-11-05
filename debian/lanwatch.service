@@ -28,10 +28,11 @@ StateDirectory=lanwatch
 StateDirectoryMode=0750
 UMask=0027
 
-# This process serves the web UI and talks to the network, so it gets no capabilities at
-# all. Everything privileged is done by lanwatch-helper.service.
-CapabilityBoundingSet=
-AmbientCapabilities=
+# This process serves the web UI and talks to the network, so it gets one capability only:
+# binding ports below 1024, for the decoy ports ([decoy] in the config). No raw sockets;
+# everything that needs those is done by lanwatch-helper.service.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 # Unix (helper), IP (web UI, UPnP, HTTP) and netlink (interface listing). No raw or packet.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 NoNewPrivileges=yes

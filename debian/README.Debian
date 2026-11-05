@@ -27,8 +27,9 @@ database as the service without leaving root-owned files behind.
 Services and privileges
 -----------------------
 
-  lanwatch.service         user lanwatch, no capabilities. Scheduler, web UI, database,
-                           LLM and notification requests. Writes only /var/lib/lanwatch.
+  lanwatch.service         user lanwatch. Scheduler, web UI, database, LLM and
+                           notification requests. Writes only /var/lib/lanwatch. Its one
+                           capability is binding ports below 1024, for the decoy ports.
   lanwatch-helper.socket   /run/lanwatch/helper.sock, root:lanwatch 0660.
   lanwatch-helper.service  user lanwatch-helper, CAP_NET_RAW only. Runs nmap, arp-scan,
                            ip and ping on behalf of lanwatch.service.
@@ -48,6 +49,15 @@ on the helper as well, otherwise it refuses those scans (the Status page shows t
   sudo systemctl restart lanwatch-helper
 
 Logs: journalctl -u lanwatch -u lanwatch-helper
+
+Decoy ports
+-----------
+
+lanwatch listens on a few ports that nothing here uses (telnet, MS SQL, RDP, Android debug
+bridge by default; [decoy] in the config). A device that connects to one is scanning the
+network and becomes a finding. A port already in use when lanwatch starts is skipped; the
+Status page shows which ones are held. A held port is not available to anything else, so
+remove it from [decoy] ports before installing a real service on it.
 
 The bundled Python
 ------------------

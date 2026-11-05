@@ -87,6 +87,21 @@ esac
 echo "== installing $deb"
 pm exec -e DEBIAN_FRONTEND=noninteractive "$name" apt-get install -y -q "/dist/$deb" >/dev/null
 
+# Another machine on the same network knocks on a decoy port; assert.sh expects a finding.
+i=0
+until pm exec "$name" sh -c 'ss -ltn | grep -q ":23 "'; do
+    i=$((i + 1))
+    if [ "$i" -ge 30 ]; then
+        echo "lanwatch is not listening on decoy port 23" >&2
+        pm exec "$name" journalctl --no-pager -n 30 -u lanwatch >&2 || true
+        exit 1
+    fi
+    sleep 1
+done
+target=$(pm inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$name")
+pm run --rm --arch "$arch" --network "$name" "$IMAGE" bash -c "exec 3<>/dev/tcp/$target/23" ||
+    echo "note: the knock on $target:23 did not connect" >&2
+
 if ! pm exec -e DEB="/dist/$deb" "$name" sh /e2e/assert.sh; then
     echo "== FAILED on $IMAGE; service logs:" >&2
     pm exec "$name" journalctl --no-pager -n 60 -u lanwatch -u lanwatch-helper >&2 || true

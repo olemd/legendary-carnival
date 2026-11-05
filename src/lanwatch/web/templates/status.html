@@ -51,6 +51,17 @@
     </dl>
   </div>
   <div class="tile">
+    <div class="tile-label">Decoy ports</div>
+    <dl class="kv">
+      {% if not config.decoy.enabled %}<dt>State</dt><dd class="muted">disabled in config</dd>
+      {% elif decoys is none %}<dt>State</dt><dd class="muted">only with <code>lanwatch run</code></dd>
+      {% else %}
+      <dt>Listening</dt><dd>{% for p in decoys.listening %}<span class="mono">{{ p | port_label }}</span>{% if not loop.last %}, {% endif %}{% else %}<span class="muted">none</span>{% endfor %}</dd>
+      {% for p, why in decoys.skipped.items() %}<dt>Skipped</dt><dd><span class="mono">{{ p | port_label }}</span> <span class="muted">{{ why }}</span></dd>{% endfor %}
+      {% endif %}
+    </dl>
+  </div>
+  <div class="tile">
     <div class="tile-label">This instance</div>
     <dl class="kv">
       <dt>Version</dt><dd>{{ version }}</dd>

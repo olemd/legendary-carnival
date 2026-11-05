@@ -275,6 +275,8 @@ async def run_discovery(
         raise RuntimeError("no subnets to scan (check network.subnets / exclude_interfaces)")
     backend = await select_backend(ex, config.scan)
     log.info("discovery via %s on %s", backend.name, ", ".join(str(s) for s in subnets))
+    # The decoys use this to tell a device on the watched networks from the internet.
+    store.meta_set("net.subnets", json.dumps([str(s.network) for s in subnets]))
 
     snapshot_id = store.begin_snapshot("discovery", backend.name)
     hosts = await backend.discover(ex, subnets, config.scan)

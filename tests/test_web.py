@@ -212,3 +212,28 @@ def test_accept_with_reason_and_reopen(config: Config) -> None:
     assert r.status_code == 303
     assert fid in {f["id"] for f in client.get("/api/findings").json()}
     assert client.post(f"/findings/{fid}/reopen").status_code == 404  # already open
+
+
+async def test_status_page_shows_decoy_ports(config: Config) -> None:
+    import socket
+
+    from lanwatch.config import DecoyConfig
+    from lanwatch.decoy import Decoys
+
+    with socket.socket() as probe:
+        probe.bind(("", 0))
+        free = int(probe.getsockname()[1])
+    holder = socket.socket()
+    holder.bind(("", 0))
+    holder.listen()
+    busy = int(holder.getsockname()[1])
+    decoys = Decoys(DecoyConfig(ports=[free, busy]), lambda ip, port: None)
+    await decoys.start()
+    try:
+        page = TestClient(create_app(config, None, decoys)).get("/status").text
+        assert "Decoy ports" in page and f">{free}<" in page
+        assert f">{busy}<" in page and "in use by another service" in page
+    finally:
+        await decoys.stop()
+        holder.close()
+    assert "only with" in TestClient(create_app(config)).get("/status").text

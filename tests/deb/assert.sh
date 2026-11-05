@@ -44,16 +44,26 @@ for _ in range(60):
 raise SystemExit(1)
 PYEOF
 
-step "main service: user lanwatch, no capabilities, really sandboxed"
+step "main service: user lanwatch, may bind low ports and nothing else, really sandboxed"
 pid=$(main_pid lanwatch.service)
 [ "$(stat -c %U "/proc/$pid")" = lanwatch ] || fail "main service runs as $(stat -c %U "/proc/$pid")"
-[ "$(proc_status "$pid" CapEff)" = 0000000000000000 ] || fail "main service has effective capabilities"
-[ "$(proc_status "$pid" CapBnd)" = 0000000000000000 ] || fail "main service has a non-empty bounding set"
+# Bit 10 is CAP_NET_BIND_SERVICE, for the decoy ports. Nothing else, and no raw sockets.
+[ "$(proc_status "$pid" CapEff)" = 0000000000000400 ] || fail "main service capabilities: $(proc_status "$pid" CapEff)"
+[ "$(proc_status "$pid" CapBnd)" = 0000000000000400 ] || fail "main service bounding set: $(proc_status "$pid" CapBnd)"
 [ "$(readlink "/proc/$pid/ns/mnt")" != "$(readlink /proc/1/ns/mnt)" ] ||
     fail "main service shares PID 1's mount namespace: the sandbox was not applied"
 if journalctl -b --no-pager | grep -q "assuming containerized execution"; then
     fail "systemd skipped sandboxing (see journal)"
 fi
+
+step "the knock on decoy port 23 from another machine became a finding"
+i=0
+until lanwatch findings 2>/dev/null | grep -q "probed decoy port 23 (telnet)"; do
+    i=$((i + 1))
+    [ "$i" -lt 30 ] || fail "no decoy finding: $(lanwatch findings 2>&1 | tail -5)"
+    sleep 2
+done
+lanwatch findings | grep "probed decoy"
 
 step "CLI as root works on the service's database, discovery uses arp-scan via the helper"
 out=$(lanwatch scan --discovery-only 2>&1) || fail "scan failed: $out"

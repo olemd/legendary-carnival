@@ -109,6 +109,15 @@ host = "127.0.0.1"                      # anything else requires password
 port = 8321
 # password = "change-me"                # HTTP basic auth, user "lanwatch"
 
+[decoy]
+# Listeners on ports this machine does not use. Anything that connects is scanning the
+# network; it becomes a finding. A port already in use when lanwatch starts is skipped,
+# and so is one it may not bind (below 1024 without CAP_NET_BIND_SERVICE). A port listed
+# here is taken: remove it before installing a real service on it.
+enabled = true
+ports = [23, 1433, 3389, 5555]         # telnet, MS SQL, RDP, Android debug bridge
+ignore = []                            # source addresses never reported
+
 [rules]
 # "inventory.ip-changed" = { enabled = false }
 # "inventory.new-device" = { severity = "high" }

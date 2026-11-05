@@ -13,7 +13,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -256,6 +256,20 @@ class WebConfig(StrictModel):
     password: str | None = None
 
 
+class DecoyConfig(StrictModel):
+    """Listeners on ports nothing here uses; a connection to one is a finding."""
+
+    enabled: bool = True
+    # Classic targets of scanners and worms that a Linux box running lanwatch rarely uses
+    # itself. A port that is already in use when lanwatch starts is skipped. Remove a
+    # port here before installing a real service on it.
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] = Field(
+        default_factory=lambda: [23, 1433, 3389, 5555]
+    )
+    # Source addresses never reported, e.g. another scanner of your own.
+    ignore: list[str] = Field(default_factory=list)
+
+
 class RuleOverride(StrictModel):
     enabled: bool | None = None
     severity: Severity | None = None
@@ -271,6 +285,7 @@ class Config(StrictModel):
     overview: OverviewConfig = OverviewConfig()
     notify: NotifyConfig = NotifyConfig()
     web: WebConfig = WebConfig()
+    decoy: DecoyConfig = DecoyConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property

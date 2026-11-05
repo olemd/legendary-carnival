@@ -16,6 +16,7 @@ import typer
 
 from lanwatch import __version__
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
+from lanwatch.decoy import Decoys, record_hit
 from lanwatch.logging_setup import set_verbose, setup_logging
 from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
@@ -282,11 +283,19 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             sched = Scheduler(jobs)
             sched.install_signal_handlers()
             tasks = [asyncio.create_task(sched.run_forever())]
+
+            def decoy_hit(source: str, port: int) -> None:
+                # Run the rules right away instead of at the next scheduled round.
+                if record_hit(store, source, port):
+                    sched.trigger("discovery")
+
+            decoys = Decoys(cfg.decoy, decoy_hit)
+            tasks.append(asyncio.create_task(decoys.serve_until(sched.stopped)))
             if cfg.web.enabled:
                 from lanwatch.web.app import create_app
                 from lanwatch.web.server import make_server, serve_until
 
-                server = make_server(create_app(cfg, sched), cfg.web.host, cfg.web.port)
+                server = make_server(create_app(cfg, sched, decoys), cfg.web.host, cfg.web.port)
                 log.info("web ui on http://%s:%d", cfg.web.host, cfg.web.port)
                 tasks.append(asyncio.create_task(serve_until(server, sched.stopped)))
             await asyncio.gather(*tasks)

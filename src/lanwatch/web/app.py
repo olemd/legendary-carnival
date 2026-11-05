@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from lanwatch import __version__
 from lanwatch.collectors.base import CommandError, make_executor
 from lanwatch.config import Config
+from lanwatch.decoy import Decoys, port_label
 from lanwatch.models import FindingStatus, Severity, local_str
 from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
@@ -30,13 +31,16 @@ TEMPLATES = Path(__file__).parent / "templates"
 SEVERITY_ORDER = [s.value for s in Severity]
 
 
-def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
+def create_app(
+    config: Config, scheduler: Scheduler | None = None, decoys: Decoys | None = None
+) -> FastAPI:
     """`scheduler` is the one running in this process (`lanwatch run`). Without it
     (`lanwatch web`) the UI is read-only as far as scanning goes."""
     app = FastAPI(title="lanwatch", version=__version__, docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES))
     templates.env.filters["local"] = local_str
     templates.env.filters["duration"] = _duration
+    templates.env.filters["port_label"] = port_label
     basic = HTTPBasic(auto_error=False)
 
     def auth(creds: Annotated[HTTPBasicCredentials | None, Depends(basic)]) -> None:
@@ -354,6 +358,7 @@ def create_app(config: Config, scheduler: Scheduler | None = None) -> FastAPI:
             capability=await _scan_capability(config),
             llm=llm,
             db_bytes=db.stat().st_size if db.is_file() else 0,
+            decoys=decoys,
             devices_total=len(s.devices()),
         )
 
