@@ -1,3 +1,13 @@
+lanwatch (0.4.3) unstable; urgency=medium
+
+  * LLM: when an answer is not valid JSON, the log now says why the model
+    stopped (done_reason), how many tokens went in and out, and how the
+    answer ended. A reply cut off mid-way can then be told from a wrong one.
+  * Suggestions are made weekly by `lanwatch run`, and the status page has a
+    "Run now" button for them. Before, only `lanwatch suggest` made them.
+
+ -- olemd <olemd@glemt.net>  Fri, 06 Nov 2026 11:52:41 +0100
+
 lanwatch (0.4.2) unstable; urgency=medium
 
   * Service scans no longer fail with "ValueError: Separator is found, but
