@@ -32,8 +32,8 @@ default; to reach it from another machine set `web.host` and `web.password`.
 
 LLM: install Ollama, `ollama pull qwen3.8:27b` (or `gemma4:26b`), then `lanwatch llm check`. The LLM never
 produces findings or severities. It classifies devices (kind + one line), explains each
-finding (what, why it matters, what to do), writes a digest at 07:00 and, on request,
-structural suggestions (`lanwatch suggest`). Output is JSON-schema constrained, validated,
+finding (what, why it matters, what to do), writes a digest at 07:00 and, weekly or on request,
+structural suggestions (`lanwatch suggest`, or "Run now" on the status page). Output is JSON-schema constrained, validated,
 cached on input, and references to ids not in the input are dropped. If Ollama is down,
 scanning continues and the LLM catches up later. `lanwatch llm eval` scores a model on a
 device-classification golden set in `evals/`.

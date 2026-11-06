@@ -152,6 +152,30 @@ async def test_service_cache_validation_and_unavailable(store: Store, tmp_path: 
     await down.aclose()
 
 
+async def test_invalid_output_logs_why_generation_stopped(
+    store: Store, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A reply cut off mid-JSON must say so in the log: done_reason, token counts and the
+    tail of what came back. Without it a truncated answer looks like a model mistake."""
+    config = llm_config(tmp_path)
+    fake = FakeOllama(lambda s, u, sc: '{\n  "summary": "Rolig dag, men')
+    fake.done_reason = "length"
+    svc = LlmService(config, store, OllamaClient(config.llm, fake.client()))
+    with caplog.at_level("WARNING", logger="lanwatch.llm.tasks"):
+        out = await svc.ask(
+            "digest",
+            {"date": "d", "devices_total": 0, "devices_online": 0, "changes": "-", "findings": []},
+            Digest,
+            use_cache=False,
+        )
+    assert out is None
+    failed = [r.getMessage() for r in caplog.records if "failed validation" in r.getMessage()]
+    assert len(failed) == 2
+    assert "done_reason=length" in failed[0] and "100+50 tokens" in failed[0]
+    assert "Rolig dag, men" in failed[0]
+    await svc.aclose()
+
+
 async def test_classify_explain_digest(store: Store, tmp_path: Path) -> None:
     config = llm_config(tmp_path)
     device_ids, finding_ids = seed(store, config)

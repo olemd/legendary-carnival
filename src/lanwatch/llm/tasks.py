@@ -159,7 +159,20 @@ class LlmService:
                 parsed = model_cls.model_validate_json(result.content)
             except ValidationError as e:
                 last_error = f"invalid output: {e.errors()[0]['msg'] if e.errors() else e}"
-                log.warning("LLM output failed validation (%s): %s", prompt_name, last_error)
+                # Say why generation stopped and how the answer ended, so a cut-off reply
+                # ("length", a reload, a tiny output) can be told from a model that wrote
+                # something wrong. Only the tail is logged, to keep the journal readable.
+                log.warning(
+                    "LLM output failed validation (%s): %s [done_reason=%s, %d+%d tokens, "
+                    "%.1fs, ends with %r]",
+                    prompt_name,
+                    last_error,
+                    result.done_reason or "?",
+                    result.prompt_tokens,
+                    result.output_tokens,
+                    result.duration_s,
+                    result.content[-200:],
+                )
                 user = user + f"\n\nYour previous answer was invalid ({last_error}). Answer again."
                 continue
             self.store.llm_cache_put(key, self.config.llm.model, parsed.model_dump_json())

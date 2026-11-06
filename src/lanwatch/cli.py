@@ -318,6 +318,11 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                 last = store.meta_get("job.digest.last_run")
                 d.resume_from(float(last) if last else None)
                 jobs.append(d)
+                # Structural suggestions change slowly with the inventory: weekly is enough,
+                # and "Run now" on the status page covers the impatient case.
+                jobs.append(
+                    job("suggest", 7 * 86400, lambda: llm_hooks.write_suggestions(cfg, store))
+                )
             sched = Scheduler(jobs)
             sched.install_signal_handlers()
             tasks = [asyncio.create_task(sched.run_forever())]

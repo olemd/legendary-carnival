@@ -21,6 +21,7 @@ class FakeOllama:
         self.requests: list[dict[str, Any]] = []
         self.reject_think = False
         self.tool_handler: ToolHandler | None = None
+        self.done_reason = "stop"  # what Ollama reports as the reason generation ended
 
     def transport(self) -> httpx2.MockTransport:
         return httpx2.MockTransport(self._handle)
@@ -73,5 +74,6 @@ class FakeOllama:
                 "prompt_eval_count": 100,
                 "eval_count": 50,
                 "total_duration": 1_500_000_000,
+                "done_reason": self.done_reason,
             },
         )

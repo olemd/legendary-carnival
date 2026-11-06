@@ -37,6 +37,9 @@ class ChatResult:
     output_tokens: int
     duration_s: float
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # Why Ollama stopped generating: "stop" (finished), "length" (hit num_predict or the
+    # context window), "unload", ... Empty when the server did not say.
+    done_reason: str = ""
 
 
 @dataclass(slots=True)
@@ -168,4 +171,5 @@ class OllamaClient:
             output_tokens=int(data.get("eval_count", 0)),
             duration_s=float(data.get("total_duration", 0)) / 1e9,
             tool_calls=calls,
+            done_reason=str(data.get("done_reason") or ""),
         )
