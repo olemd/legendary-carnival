@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from lanwatch import oui
 from lanwatch.models import Finding, Kind, Severity
 from lanwatch.rules.base import Rule, RuleContext
 
@@ -21,19 +22,81 @@ class NewDeviceRule(Rule):
             d = ctx.store.device(device_id)
             if d is None:
                 continue
+            # A randomised address is most likely a phone or laptop already known under
+            # another address, so it gets the attention of a note, not of an alarm.
+            private = d.private_mac
             out.append(
                 self.finding(
                     ctx,
                     title=f"New device: {d.label} ({d.ip})",
                     key_parts=[d.key],
                     device_id=d.id,
+                    severity=Severity.LOW if private else None,
                     evidence={
                         "ip": d.ip,
                         "mac": d.mac,
                         "vendor": d.vendor,
                         "hostname": d.hostname,
                         "first_seen": d.first_seen,
+                        "private_mac": private,
                     },
+                )
+            )
+        return out
+
+
+class PrivateMacRule(Rule):
+    id = "inventory.private-mac"
+    kind = Kind.IMPROVEMENT
+    default_severity = Severity.LOW
+    description = (
+        "The device uses a randomised (locally administered) MAC address, as phones and "
+        "laptops do by default on each Wi-Fi network. Nothing is wrong, but the address may "
+        "change, and the device then shows up as a new one with no history. Turn the private "
+        "address off for your own network in the device's Wi-Fi settings if you want a stable "
+        "record, or merge the entries when it happens."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        return [
+            self.finding(
+                ctx,
+                title=f"Randomised MAC address: {d.label}",
+                key_parts=[d.key],
+                device_id=d.id,
+                evidence={"mac": d.mac, "ip": d.ip, "hostname": d.hostname},
+            )
+            for d in ctx.store.devices()
+            if d.private_mac
+        ]
+
+
+class UnregisteredMacRule(Rule):
+    id = "inventory.unregistered-mac"
+    kind = Kind.SECURITY
+    default_severity = Severity.LOW
+    description = (
+        "The first half of the device's MAC address is not assigned to any manufacturer in "
+        "the IEEE registry, and it is not a randomised address either. Real hardware always "
+        "carries a registered prefix, so this one was typed in by hand: a virtual machine "
+        "with a made-up address, or a device pretending to be another."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        registry = oui.load(ctx.config.data_dir)
+        if not registry:
+            return []  # no registry at hand: nothing to compare with
+        out: list[Finding] = []
+        for d in ctx.store.devices():
+            if not d.mac or d.private_mac or registry.lookup(d.mac) is not None:
+                continue
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"MAC prefix not in the IEEE registry: {d.label} ({d.mac})",
+                    key_parts=[d.key],
+                    device_id=d.id,
+                    evidence={"mac": d.mac, "ip": d.ip, "hostname": d.hostname},
                 )
             )
         return out
@@ -99,4 +162,10 @@ class WatchedOfflineRule(Rule):
         return out
 
 
-RULES: list[Rule] = [NewDeviceRule(), IpChangedRule(), WatchedOfflineRule()]
+RULES: list[Rule] = [
+    NewDeviceRule(),
+    IpChangedRule(),
+    WatchedOfflineRule(),
+    PrivateMacRule(),
+    UnregisteredMacRule(),
+]

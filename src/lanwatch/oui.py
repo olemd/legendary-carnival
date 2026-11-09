@@ -94,9 +94,24 @@ def parse_nmap_prefixes(text: str) -> dict[str, str]:
     return out
 
 
+_cache: dict[tuple[tuple[str, float], ...], Registry] = {}
+
+
 def load(data_dir: Path, system_file: Path = NMAP_PREFIXES) -> Registry:
-    """The downloaded registry when there is one, else nmap's copy, else nothing."""
+    """The downloaded registry when there is one, else nmap's copy, else nothing.
+
+    Parsed once per set of files and modification times: the rules ask for it every round."""
     files = sorted((data_dir / "oui").glob("*.csv"))
+    stamp = tuple((str(f), f.stat().st_mtime) for f in [*files, system_file] if f.exists())
+    if (cached := _cache.get(stamp)) is not None:
+        return cached
+    registry = _load(files, system_file)
+    _cache.clear()
+    _cache[stamp] = registry
+    return registry
+
+
+def _load(files: list[Path], system_file: Path) -> Registry:
     prefixes: dict[str, str] = {}
     for f in files:
         try:

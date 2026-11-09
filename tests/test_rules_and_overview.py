@@ -41,13 +41,13 @@ def test_baseline_then_new_device(store: Store, config: Config) -> None:
         config,
         [
             HostObservation(ip="10.0.0.1", mac="aa:bb:cc:00:00:01", source="t"),
-            HostObservation(ip="10.0.0.2", mac="aa:bb:cc:00:00:02", vendor="Acme", source="t"),
+            HostObservation(ip="10.0.0.2", mac="a8:bb:cc:00:00:02", vendor="Acme", source="t"),
         ],
     )
     res = engine.run(ctx)
     assert [f.rule_id for f in res.emitted] == ["inventory.new-device"]
     assert res.emitted[0].severity is Severity.MEDIUM
-    assert res.emitted[0].evidence["mac"] == "aa:bb:cc:00:00:02"
+    assert res.emitted[0].evidence["mac"] == "a8:bb:cc:00:00:02"
 
     # Next round without changes: event-style finding stays open.
     ctx = _round(
@@ -74,7 +74,7 @@ def test_rule_overrides(store: Store, config: Config) -> None:
             ],
         )
     )
-    assert res.skipped_rules == ["inventory.ip-changed"]
+    assert "inventory.ip-changed" in res.skipped_rules
     assert [f.severity for f in res.emitted] == [Severity.CRITICAL]
 
 

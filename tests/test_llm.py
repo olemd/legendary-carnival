@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from lanwatch.collectors.services import parse_nmap_xml_services
-from lanwatch.config import Config, LlmConfig
+from lanwatch.config import Config, LlmConfig, RuleOverride
 from lanwatch.llm import hooks
 from lanwatch.llm.client import LlmUnavailable, OllamaClient
 from lanwatch.llm.evaluate import run_eval
@@ -63,7 +63,12 @@ def smart_handler(system: str, user: str, schema: dict[str, Any]) -> dict[str, A
 
 
 def llm_config(tmp_path: Path) -> Config:
-    return Config(data_dir=tmp_path, llm=LlmConfig(enabled=True, max_calls_per_round=10))
+    return Config(
+        data_dir=tmp_path,
+        llm=LlmConfig(enabled=True, max_calls_per_round=10),
+        # The fixtures' aa:bb:cc addresses are locally administered; see conftest.config.
+        rules={"inventory.private-mac": RuleOverride(enabled=False)},
+    )
 
 
 def seed(store: Store, config: Config) -> tuple[list[int], list[str]]:
