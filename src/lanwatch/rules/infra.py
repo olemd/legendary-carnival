@@ -15,6 +15,50 @@ IOT_KINDS = {"iot", "camera", "media", "smart_home_hub", "printer", "game_consol
 TRUSTED_KINDS = {"workstation", "laptop", "server", "nas", "virtual_machine"}
 
 
+class PacketLossRule(Rule):
+    id = "net.packet-loss"
+    kind = Kind.PROBLEM
+    default_severity = Severity.MEDIUM
+    description = (
+        "Pings to the gateway (or another address listed under [latency] targets) have been "
+        "lost in each of the last three discovery rounds. A bad cable, a saturated Wi-Fi "
+        "channel, an overloaded gateway, or an outage on the way to the internet. The history "
+        "on the dashboard says since when."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        cfg = ctx.config.latency
+        out: list[Finding] = []
+        for target in ctx.store.latency_targets():
+            recent = ctx.store.latency_recent(target, 3)
+            if len(recent) < 3 or any(r.loss < cfg.loss_threshold for r in recent):
+                continue
+            loss = sum(r.loss for r in recent) / len(recent)
+            unreachable = all(r.received == 0 for r in recent)
+            out.append(
+                self.finding(
+                    ctx,
+                    title=(
+                        f"{target} unreachable for the last {len(recent)} rounds"
+                        if unreachable
+                        else f"Packet loss to {target}: {round(loss * 100)}% over the last "
+                        f"{len(recent)} rounds"
+                    ),
+                    key_parts=[target],
+                    severity=Severity.HIGH if unreachable else None,
+                    evidence={
+                        "target": target,
+                        "loss": round(loss, 3),
+                        "rounds": [
+                            {"ts": r.ts, "sent": r.sent, "received": r.received, "avg_ms": r.avg_ms}
+                            for r in recent
+                        ],
+                    },
+                )
+            )
+        return out
+
+
 class RogueDhcpRule(Rule):
     id = "net.rogue-dhcp"
     kind = Kind.SECURITY
@@ -431,6 +475,7 @@ class DhcpSettingsChangedRule(Rule):
 
 
 RULES: list[Rule] = [
+    PacketLossRule(),
     RogueDhcpRule(),
     UpnpIgdRule(),
     UpnpMappingsRule(),

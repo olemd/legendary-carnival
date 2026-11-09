@@ -106,6 +106,9 @@ Hygiene checks:
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
   or on GitHub unless `online = false`.
+- **Latency** (`[latency]`): a few pings to the gateway each discovery round. The dashboard
+  shows a day's trend, and sustained packet loss becomes a finding. Add an internet address
+  to the targets to measure the path out as well.
 - **MAC vendors** (`[oui]`): devices the scanner cannot name get their vendor from a
   fresher IEEE registry, downloaded weekly, or from nmap's installed copy with `online = false`.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP

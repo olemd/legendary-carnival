@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from lanwatch.config import Config, LlmConfig, RuleOverride, ScanConfig
+from lanwatch.config import Config, LatencyConfig, LlmConfig, RuleOverride, ScanConfig
 from lanwatch.helper import DEFAULT_SCRIPTS, Policy, validate_argv
 from lanwatch.store import Store
 
@@ -39,6 +39,7 @@ def config(tmp_path: Path) -> Config:
         data_dir=tmp_path,
         llm=LlmConfig(enabled=False),
         scan=ScanConfig(name_poisoning_check=False),
+        latency=LatencyConfig(enabled=False),
         rules={
             "inventory.private-mac": RuleOverride(enabled=False),
             "inventory.unregistered-mac": RuleOverride(enabled=False),

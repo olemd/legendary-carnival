@@ -30,6 +30,17 @@
       {% endfor %}
     </dl>
   </div>
+  {% if latency %}
+  <div class="tile">
+    <div class="tile-label">Latency to {{ latency.target }}</div>
+    <div class="tile-value">{% if latency.last_ms is not none %}{{ latency.last_ms | round(1) }} <span class="of">ms</span>{% else %}<span class="result-failed">no reply</span>{% endif %}</div>
+    {% if latency.spark %}{% set lx, ly = (latency.spark.points.split(' ') | last).split(',') %}
+    <svg class="spark" width="{{ latency.spark.width }}" height="{{ latency.spark.height }}" viewBox="0 0 {{ latency.spark.width }} {{ latency.spark.height }}" role="img"
+         aria-label="Round-trip time over the last 24 hours: between {{ latency.min_ms | round(1) }} and {{ latency.max_ms | round(1) }} ms"><polyline points="{{ latency.spark.points }}"/><circle cx="{{ lx }}" cy="{{ ly }}" r="4"/></svg>
+    {% endif %}
+    <div class="tile-note">Last 24 h: {% if latency.min_ms is not none %}{{ latency.min_ms | round(1) }}–{{ latency.max_ms | round(1) }} ms, {% endif %}{% if latency.loss_rounds %}loss in {{ latency.loss_rounds }} of {{ latency.rounds }} rounds{% else %}no loss in {{ latency.rounds }} rounds{% endif %}</div>
+  </div>
+  {% endif %}
   <div class="tile">
     <div class="tile-label">Infrastructure</div>
     <dl class="kv">

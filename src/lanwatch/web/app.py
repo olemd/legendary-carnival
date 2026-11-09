@@ -120,6 +120,7 @@ def create_app(
             digest=_latest_digest(config, s),
             events=s.events(limit=15, exclude_prefix="presence."),
             spark=_sparkline(s.snapshot_series("discovery", _days_ago(7))),
+            latency=_latency_tile(s),
         )
 
     @app.get("/devices", response_class=HTMLResponse, dependencies=deps)
@@ -482,6 +483,30 @@ def _sparkline(
         "first_ts": series[0][0],
         "last_ts": series[-1][0],
         "n": n,
+    }
+
+
+def _latency_tile(s: Store) -> dict[str, Any] | None:
+    """The first latency target (normally the gateway): newest value and a day's trend."""
+    targets = s.latency_targets()
+    if not targets:
+        return None
+    target = targets[0]
+    rows = s.latency_series(target, _days_ago(1))
+    if not rows:
+        return None
+    measured = [(r.ts, r.avg_ms) for r in rows if r.avg_ms is not None]
+    last = rows[-1]
+    return {
+        "target": target,
+        "last_ms": last.avg_ms,
+        "last_loss": round(last.loss * 100),
+        "loss_rounds": sum(1 for r in rows if r.loss > 0),
+        "rounds": len(rows),
+        # The sparkline helper takes integers; tenths of a millisecond keep the shape.
+        "spark": _sparkline([(ts, round(ms * 10)) for ts, ms in measured]),
+        "min_ms": min((ms for _, ms in measured), default=None),
+        "max_ms": max((ms for _, ms in measured), default=None),
     }
 
 

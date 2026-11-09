@@ -130,6 +130,16 @@ ignore = []                            # source addresses never reported
 enabled = true
 online = true                           # ask vendors/GitHub for the latest release
 
+[latency]
+# A few pings to the gateway every discovery round: round-trip time and loss, with a day's
+# trend on the dashboard and a finding when probes are lost three rounds in a row. "gateway"
+# means this host's default gateways; add an internet address yourself if you want that
+# path measured too, e.g. targets = ["gateway", "1.1.1.1"].
+enabled = true
+targets = ["gateway"]
+count = 4
+loss_threshold = 0.25                   # share of probes lost that counts as a bad round
+
 [oui]
 # Vendor names for MAC addresses come from the IEEE registry lists arp-scan and nmap ship,
 # which age with the package: a device whose prefix was assigned after that shows no vendor.

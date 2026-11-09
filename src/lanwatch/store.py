@@ -176,6 +176,18 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE devices ADD COLUMN watch INTEGER NOT NULL DEFAULT 0;
     """,
+    # v10: round-trip time and loss per discovery round
+    """
+    CREATE TABLE latency (
+        ts       TEXT NOT NULL,
+        target   TEXT NOT NULL,
+        sent     INTEGER NOT NULL,
+        received INTEGER NOT NULL,
+        avg_ms   REAL,
+        max_ms   REAL
+    );
+    CREATE INDEX latency_target_ts ON latency(target, ts);
+    """,
 ]
 
 
@@ -188,6 +200,20 @@ def dhcp_settings(offer: dict[str, Any]) -> dict[str, list[str]]:
         "ntp": sorted(str(x) for x in offer.get("ntp") or []),
         "domain": sorted(str(offer.get("domain") or "").split()),
     }
+
+
+@dataclass(slots=True)
+class LatencyRow:
+    ts: str
+    target: str
+    sent: int
+    received: int
+    avg_ms: float | None
+    max_ms: float | None
+
+    @property
+    def loss(self) -> float:
+        return 1.0 - self.received / self.sent if self.sent else 1.0
 
 
 @dataclass(slots=True)
@@ -289,7 +315,7 @@ class Store:
         The newest finished snapshot of every kind always stays, whatever its age: it is
         what "online now" and "last scan" are read from. Snapshots that current state
         still points to (a service's last scan, an infra record) stay as well."""
-        deleted = {"sightings": 0, "snapshots": 0, "events": 0, "notifications": 0}
+        deleted = {"sightings": 0, "snapshots": 0, "latency": 0, "events": 0, "notifications": 0}
         newest = "SELECT MAX(id) FROM snapshots WHERE finished_at IS NOT NULL GROUP BY kind"
         with self._tx():
             if rounds_before is not None:
@@ -305,6 +331,9 @@ class Store:
                                        WHERE snapshot_id IS NOT NULL)
                         AND id NOT IN (SELECT snapshot_id FROM sightings)""",
                     (rounds_before,),
+                ).rowcount
+                deleted["latency"] = self._db.execute(
+                    "DELETE FROM latency WHERE ts < ?", (rounds_before,)
                 ).rowcount
             if events_before is not None:
                 deleted["events"] = self._db.execute(
@@ -858,6 +887,45 @@ class Store:
             (kind, since),
         ).fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
+
+    # -- latency --------------------------------------------------------------
+
+    def record_latency(
+        self, target: str, sent: int, received: int, avg_ms: float | None, max_ms: float | None
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO latency(ts, target, sent, received, avg_ms, max_ms) VALUES (?,?,?,?,?,?)",
+            (iso(now_utc()), target, sent, received, avg_ms, max_ms),
+        )
+
+    def latency_targets(self) -> list[str]:
+        rows = self._db.execute("SELECT DISTINCT target FROM latency ORDER BY target").fetchall()
+        return [str(r[0]) for r in rows]
+
+    def latency_series(self, target: str, since: str) -> list[LatencyRow]:
+        """Measurements of one target since a timestamp, oldest first."""
+        rows = self._db.execute(
+            "SELECT * FROM latency WHERE target = ? AND ts >= ? ORDER BY ts", (target, since)
+        ).fetchall()
+        return [self._latency_row(r) for r in rows]
+
+    def latency_recent(self, target: str, n: int) -> list[LatencyRow]:
+        """The n newest measurements of one target, newest first."""
+        rows = self._db.execute(
+            "SELECT * FROM latency WHERE target = ? ORDER BY ts DESC LIMIT ?", (target, n)
+        ).fetchall()
+        return [self._latency_row(r) for r in rows]
+
+    @staticmethod
+    def _latency_row(r: sqlite3.Row) -> LatencyRow:
+        return LatencyRow(
+            ts=str(r["ts"]),
+            target=str(r["target"]),
+            sent=int(r["sent"]),
+            received=int(r["received"]),
+            avg_ms=r["avg_ms"],
+            max_ms=r["max_ms"],
+        )
 
     def search(self, q: str, limit: int = 50) -> dict[str, list[Any]]:
         """Substring search over devices, services and findings."""

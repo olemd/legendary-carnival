@@ -33,6 +33,12 @@
 # online = false
 # enabled = false                   # no firmware check at all
 
+# Latency: a few pings to the gateway every discovery round, trend on the dashboard, finding
+# on sustained loss. Add an internet address to also measure the path out.
+# [latency]
+# targets = ["gateway", "1.1.1.1"]
+# enabled = false
+
 # Vendor names for MAC addresses. arp-scan and nmap ship IEEE registry lists that age with
 # the package, so a device with a newly assigned prefix shows no vendor. The registry is
 # downloaded from standards-oui.ieee.org once a week (a public list, the only request made),

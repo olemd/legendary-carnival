@@ -14,6 +14,7 @@ from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import select_backend
 from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
+from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
@@ -433,6 +434,10 @@ async def run_discovery(
     if gateways:
         store.meta_set("net.gateways", json.dumps(gateways))
     store.pin_infrastructure(infrastructure_ips(store))
+    if config.latency.enabled:
+        targets = resolve_targets(config.latency.targets, gateways)
+        for r in await measure(ex, targets, config.latency.count):
+            store.record_latency(r.target, r.sent, r.received, r.avg_ms, r.max_ms)
     await _record_arp_traffic(config, store, ex, snapshot_id)
 
     ctx = RuleContext(

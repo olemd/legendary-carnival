@@ -291,6 +291,18 @@ class FirmwareConfig(StrictModel):
     online: bool = True
 
 
+class LatencyConfig(StrictModel):
+    """Round-trip time and packet loss, measured with a few pings every discovery round."""
+
+    enabled: bool = True
+    # "gateway" stands for this host's default gateways. Anything else is pinged as written,
+    # so add an internet address (say "1.1.1.1") yourself if you want the internet path too.
+    targets: list[str] = Field(default_factory=lambda: ["gateway"])
+    count: int = Field(default=4, ge=1, le=20)
+    # A finding when this share of probes (or more) is lost in each of the last three rounds.
+    loss_threshold: float = Field(default=0.25, ge=0.01, le=1.0)
+
+
 class OuiConfig(StrictModel):
     """Vendor names for MAC addresses; see lanwatch/oui.py."""
 
@@ -319,6 +331,7 @@ class Config(StrictModel):
     decoy: DecoyConfig = DecoyConfig()
     firmware: FirmwareConfig = FirmwareConfig()
     oui: OuiConfig = OuiConfig()
+    latency: LatencyConfig = LatencyConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property
