@@ -99,10 +99,10 @@ if echo "$services" | grep -E "(^|[^0-9])(23|1433|3389|5555)/tcp"; then
     fail "a decoy port was recorded as a service on this machine"
 fi
 
-step "firmware check runs (nothing here reports a version, and nothing is looked up online)"
+step "firmware check runs (nothing here reports a version, so there is nothing to look up)"
 out=$(lanwatch firmware 2>&1) || fail "firmware check failed: $out"
 echo "$out" | tail -3
-echo "$out" | grep -q "online lookups are off" || fail "unexpected firmware output"
+echo "$out" | grep -q "no device reported a firmware version" || fail "unexpected firmware output"
 
 step "UDP and version scans through the helper, as the service user"
 gateway=$(ip -4 route show default | awk '{ print $3; exit }')
