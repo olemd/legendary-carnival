@@ -4,8 +4,33 @@ set -e
 # The full, documented reference config is kept next to the user's own config.toml and
 # refreshed on every upgrade. It is copied here instead of shipped under /etc so that dpkg
 # does not treat it as a conffile: config.toml stays the only file upgrades never touch.
+# Before the copy, the old and new reference are compared, and settings that are new since
+# the previous version are listed, so an upgrade still says what became available.
+ref=/etc/lanwatch/config.toml.default
+new=/usr/share/lanwatch/config.toml.default
+
+# "section.key" for every key in a reference file, whether set or commented out.
+settings() {
+    awk '/^\[[A-Za-z0-9_.]+\]/ { s = substr($0, 2, index($0, "]") - 2) }
+         /^(# ?)?[a-z_]+ = / { k = $0; sub(/^# ?/, "", k); sub(/ =.*/, "", k); print s "." k }' "$1" \
+        | sort -u
+}
+
 if [ "$1" = configure ]; then
-    install -m 0644 /usr/share/lanwatch/config.toml.default /etc/lanwatch/config.toml.default
+    if [ -f "$ref" ]; then
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
+        settings "$ref" >"$tmp/old"
+        settings "$new" >"$tmp/new"
+        added=$(comm -13 "$tmp/old" "$tmp/new")
+        if [ -n "$added" ]; then
+            echo "lanwatch: new settings since the previous version (your config.toml is untouched):"
+            printf '%s\n' "$added" | head -20 | sed 's/^/    /'
+            [ "$(printf '%s\n' "$added" | wc -l)" -le 20 ] || echo "    ..."
+            echo "    see $ref for what they do"
+        fi
+    fi
+    install -m 0644 "$new" "$ref"
 fi
 
 #DEBHELPER#

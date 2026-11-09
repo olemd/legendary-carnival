@@ -201,8 +201,12 @@ until systemctl is-active --quiet lanwatch.service; do
     sleep 1
 done
 
-step "reinstalling (the upgrade path) leaves everything running"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q --reinstall "$DEB" >/dev/null
+step "reinstalling (the upgrade path) leaves everything running and reports new settings"
+# Pretend the previous version's reference lacked the [unifi] section: the upgrade must say so.
+sed -i '/^\[unifi\]/,/^$/d' /etc/lanwatch/config.toml.default
+upgrade_out=$(DEBIAN_FRONTEND=noninteractive apt-get install -y -q --reinstall "$DEB" 2>&1)
+echo "$upgrade_out" | grep -q "new settings since the previous version" || fail "no new-settings notice: $upgrade_out"
+echo "$upgrade_out" | grep -q "unifi.api_key" || fail "unifi.api_key not listed as new: $upgrade_out"
 systemctl is-active --quiet lanwatch-helper.socket || fail "socket inactive after reinstall"
 i=0
 until systemctl is-active --quiet lanwatch.service; do
