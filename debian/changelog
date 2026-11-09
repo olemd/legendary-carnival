@@ -1,3 +1,27 @@
+lanwatch (0.6.0) unstable; urgency=medium
+
+  * UniFi controller ([unifi], read-only, API key): per client the uplink
+    access point or switch, wired/wireless, guest access, the controller's
+    name and the network/VLAN; the networks, SSIDs and UniFi devices with
+    state, ports, radios and pending firmware. New rules
+    net.iot-on-main-network, inventory.unifi-only and
+    net.unifi-device-offline; the flat-network note groups by the
+    controller's networks. A Topology page draws gateway, UniFi devices and
+    clients as a tree, with the same tree as a list. "lanwatch unifi" reads
+    the controller on demand. See /etc/lanwatch/config.toml.default and
+    /usr/share/doc/lanwatch/unifi.md.
+  * /etc/lanwatch/config.toml is now a comment-only stub that will not
+    change between versions, so upgrades stop asking about it. The full
+    reference with every setting lives next to it as config.toml.default,
+    refreshed on each upgrade, and the upgrade lists settings that are new
+    since the previous version. This upgrade asks once more about the old
+    file; answer N to keep yours.
+  * "lanwatch config show" prints *** for a set API key, token or password.
+  * Firmware findings read "has an update available" when the latest
+    version is not known, as for UniFi devices.
+
+ -- olemd <olemd@glemt.net>  Mon, 09 Nov 2026 15:02:35 +0100
+
 lanwatch (0.5.1) unstable; urgency=medium
 
   * Discovery no longer fails when [latency] targets names an address
