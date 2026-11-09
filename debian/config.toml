@@ -1,86 +1,13 @@
 # lanwatch configuration (TOML). Every key is optional: with nothing set here, the built-in
 # defaults apply and lanwatch scans the directly attached networks.
 #
-#   All keys and their defaults:  /usr/share/doc/lanwatch/examples/config.example.toml
-#   Effective configuration:      sudo lanwatch config show
-#   Apply changes:                sudo systemctl restart lanwatch
+# This file is yours. Upgrades never touch it, and it ships empty so there is nothing to
+# merge. Every setting, its default and what it does is in the reference next to it,
+# which each upgrade refreshes:
 #
-# This file may contain secrets (web password, notification tokens). It is readable only by
-# root and the lanwatch service user.
-
-# Web UI. Loopback only by default; binding to anything else requires a password.
-# [web]
-# host = "0.0.0.0"
-# password = "change-me"            # HTTP basic auth, user "lanwatch"
-
-# Local LLM (Ollama) for explanations and the daily digest. lanwatch works without it.
-# [llm]
-# base_url = "http://localhost:11434"
-# enabled = false
-
-# Scanning. The two checks below are off by default because they send something out of
-# your network; everything else lanwatch does stays on the LAN.
-# [scan]
-# dns_filter_check = true           # does the DNS resolver DHCP hands out filter ads/malware?
-#                                   # (sends a few test lookups through that resolver)
-# vulners = true                    # match service versions against vulners.com
-
-# Notifications: findings at or above min_severity are pushed once, when they open, and so
-# is the daily digest. Home Assistant gets a notify service plus sensor.lanwatch_* entities;
-# with lanwatch_url the notification opens lanwatch when tapped and has an "Accept" button.
-# Step by step: /usr/share/doc/lanwatch/home-assistant.md. ntfy, webhook and e-mail exist too.
-# [notify]
-# min_severity = "medium"
-# [notify.home_assistant]
-# enabled = true
-# url = "http://homeassistant.local:8123"
-# token = "long-lived access token"
-# service = "notify.mobile_app_my_phone"
-# lanwatch_url = "http://192.168.1.10:8321"
-
-# Firmware check, once a day and with "sudo lanwatch firmware": the version Home Assistant,
-# ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report. Reading it stays on the
-# LAN. Whether a newer release exists is asked of the vendor or GitHub for most of them
-# (public version lists, nothing about your devices); online = false keeps it on the LAN.
-# [firmware]
-# online = false
-# enabled = false                   # no firmware check at all
-
-# What the internet sees of this network: a daily lookup of the public address in Shodan's
-# InternetDB (ports answering from outside, known vulnerabilities). Off until turned on here,
-# because it tells Shodan the network's public address.
-# [exposure]
-# enabled = true
-
-# UniFi controller (UniFi OS console, Network 9.3+): which AP or switch each client hangs
-# off, wired/wireless, guest, controller names, networks and VLANs, UniFi device state and
-# pending firmware, and the Topology page. Read-only, stays on the LAN. The key comes from
-# Settings -> Control Plane -> Integrations; the console's certificate is self-signed, so
-# either turn verification off here or pin the certificate (see /usr/share/doc/lanwatch/unifi.md).
-# [unifi]
-# enabled = true
-# url = "https://192.168.1.1"
-# api_key = "paste the key from the console here"
-# verify_tls = false
-
-# Latency: a few pings to the gateway every discovery round, trend on the dashboard, finding
-# on sustained loss. Add an internet address to also measure the path out.
-# [latency]
-# targets = ["gateway", "1.1.1.1"]
-# enabled = false
-
-# Vendor names for MAC addresses. arp-scan and nmap ship IEEE registry lists that age with
-# the package, so a device with a newly assigned prefix shows no vendor. The registry is
-# downloaded from standards-oui.ieee.org once a week (a public list, the only request made),
-# or with online = false taken from nmap's installed copy.
-# [oui]
-# online = false
-
-# Decoy ports: lanwatch listens on ports this machine does not use; a device that connects
-# is scanning the network and becomes a finding. A port in use when lanwatch starts is
-# skipped (see the Status page). A port listed here is taken, so remove it before
-# installing a real service on it.
-# [decoy]
-# ports = [23, 1433, 3389, 5555]    # telnet, MS SQL, RDP, Android debug bridge
-# ignore = ["192.168.1.9"]          # addresses never reported, e.g. your own scanner
-# enabled = false
+#   /etc/lanwatch/config.toml.default   copy the sections you want from here
+#   sudo lanwatch config show           effective configuration (secrets shown as ***)
+#   sudo systemctl restart lanwatch     apply changes
+#
+# This file may contain secrets (web password, API keys, notification tokens). It is
+# readable only by root and the lanwatch service user.

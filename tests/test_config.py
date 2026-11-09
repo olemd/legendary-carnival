@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -68,29 +69,29 @@ def test_digest_time_must_be_24h() -> None:
         load_config(None, {"schedule": {"digest_time": "7am"}}, environ={})
 
 
-def test_examples_in_the_packaged_default_config_are_valid() -> None:
-    """/etc/lanwatch/config.toml ships as comments only. Every commented-out setting in it
-    is something a person will uncomment and expect to work, so check that they all do."""
-    import re
-    import tomllib
-    from pathlib import Path
+def test_packaged_config_is_an_empty_stub() -> None:
+    """The file installed as /etc/lanwatch/config.toml is the user's and must never need a
+    merge on upgrade: comments only, pointing at the reference next to it."""
+    text = (Path(__file__).parent.parent / "debian" / "config.toml").read_text()
+    assert tomllib.loads(text) == {}
+    assert "config.toml.default" in text
 
-    from lanwatch.config import Config
 
-    path = Path(__file__).parent.parent / "debian" / "config.toml"
-    text = path.read_text()
-    assert tomllib.loads(text) == {}  # as shipped: nothing set, built-in defaults apply
-
-    setting = re.compile(r"^# (\[[a-z_.]+\]|[a-z_]+ = .+)$")
-    uncommented = "\n".join(line[2:] for line in text.splitlines() if setting.match(line))
-    data = tomllib.loads(uncommented)
-    # The sections people look for when they want to turn something on.
-    assert {"web", "llm", "scan", "firmware", "decoy"} <= set(data)
+def test_reference_config_is_valid_and_complete() -> None:
+    """deploy/config.example.toml is installed as /etc/lanwatch/config.toml.default. It must
+    load as is, and name every section, so a reader finds each setting there."""
+    text = (Path(__file__).parent.parent / "deploy" / "config.example.toml").read_text()
+    data = tomllib.loads(text)
     cfg = Config.model_validate(data)
-    assert cfg.firmware.online is False and cfg.oui.online is False
-    assert cfg.unifi.enabled is True and cfg.unifi.verify_tls is False
-    assert cfg.scan.dns_filter_check is True
-    assert cfg.decoy.ports == [23, 1433, 3389, 5555]
+    assert set(Config.model_fields) - {"data_dir", "rules"} <= set(data)
+    # Shipped defaults: nothing on, nothing leaving the LAN that is not on by default.
+    assert not cfg.unifi.enabled and not cfg.exposure.enabled and cfg.web.password is None
+    # Every section header the reference documents is explained, not just listed.
+    for section in set(Config.model_fields) - {"data_dir", "rules"}:
+        header = f"[{section}]"
+        assert header in text, header
+        idx = text.index(header)
+        assert text[idx : idx + 400].count("#") >= 1, f"{header} has no comment"
 
 
 def test_config_show_redacts_secrets(tmp_path: Path) -> None:

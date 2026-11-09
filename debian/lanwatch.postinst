@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+# The full, documented reference config is kept next to the user's own config.toml and
+# refreshed on every upgrade. It is copied here instead of shipped under /etc so that dpkg
+# does not treat it as a conffile: config.toml stays the only file upgrades never touch.
+if [ "$1" = configure ]; then
+    install -m 0644 /usr/share/lanwatch/config.toml.default /etc/lanwatch/config.toml.default
+fi
+
+#DEBHELPER#

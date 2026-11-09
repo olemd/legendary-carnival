@@ -6,5 +6,9 @@ set -e
 if [ "$1" = purge ]; then
     rm -rf /var/lib/lanwatch
 fi
+# The reference config is written by postinst, not shipped, so dpkg does not remove it.
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    rm -f /etc/lanwatch/config.toml.default
+fi
 
 #DEBHELPER#

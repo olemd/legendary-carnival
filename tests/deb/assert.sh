@@ -31,6 +31,12 @@ step "config file is readable by root and the lanwatch group only"
 perms=$(stat -c '%U:%G %a' /etc/lanwatch/config.toml)
 [ "$perms" = "root:lanwatch 640" ] || fail "config.toml is $perms"
 
+step "the reference config sits next to it, refreshed by postinst, and is not a conffile"
+cmp -s /usr/share/lanwatch/config.toml.default /etc/lanwatch/config.toml.default \
+    || fail "config.toml.default missing or stale"
+dpkg-query --showformat='${Conffiles}' --show lanwatch | grep -q "config.toml.default" \
+    && fail "config.toml.default is a conffile; upgrades would ask about it"
+
 step "web UI answers on loopback"
 "$PY" - <<'PYEOF' || fail "no healthy answer from /api/health"
 import json, time, urllib.request
@@ -204,6 +210,8 @@ until systemctl is-active --quiet lanwatch.service; do
     [ "$i" -lt 30 ] || fail "lanwatch.service inactive after reinstall"
     sleep 1
 done
+cmp -s /usr/share/lanwatch/config.toml.default /etc/lanwatch/config.toml.default \
+    || fail "config.toml.default not refreshed by the reinstall"
 lanwatch devices >/dev/null || fail "CLI broken after reinstall"
 
 step "purge removes configuration and state"

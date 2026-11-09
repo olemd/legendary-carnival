@@ -130,7 +130,9 @@ Hygiene checks:
 
 History is pruned daily (`[store] keep_*_days`), so the database stops growing.
 
-Config: see `deploy/config.example.toml`. `lanwatch config show` prints the effective
+Config: see `deploy/config.example.toml`, installed by the package as
+`/etc/lanwatch/config.toml.default` next to your own `config.toml`, which ships as an empty
+stub so upgrades never have to merge it. `lanwatch config show` prints the effective
 configuration after defaults, file, env and CLI are merged.
 
 ## Deploy

@@ -84,6 +84,12 @@ override_dh_auto_install:
 	@diff -rq -x __pycache__ src/lanwatch $(DEST)/venv/lib/$(PYLIB)/site-packages/lanwatch \
 		|| { echo "the packaged lanwatch differs from src/lanwatch (stale build cache?)" >&2; exit 1; }
 
+# The documented reference config, every key with its default. postinst copies it to
+# /etc/lanwatch/config.toml.default on each upgrade; the user's config.toml is a stub that
+# never changes between versions, so dpkg never asks about it.
+execute_after_dh_install:
+	install -D -m 0644 deploy/config.example.toml $(PKG)/usr/share/lanwatch/config.toml.default
+
 # The config file can hold secrets. Ship it unreadable to others from the first moment;
 # debian/lanwatch.tmpfiles then hands the lanwatch group read access.
 execute_after_dh_fixperms:

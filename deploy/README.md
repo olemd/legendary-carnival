@@ -112,4 +112,5 @@ bind Ollama to a LAN address (`OLLAMA_HOST=0.0.0.0`). Still local, nothing leave
 ## Config
 
 `/etc/lanwatch/config.toml` (or `~/.config/lanwatch/config.toml` rootless). Every key
-optional; see `config.example.toml`. `lanwatch config show` prints the merged result.
+optional; see `config.example.toml` (the package installs it as
+`/etc/lanwatch/config.toml.default`). `lanwatch config show` prints the merged result.

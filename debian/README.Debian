@@ -7,9 +7,9 @@ The web UI listens on http://127.0.0.1:8321 (loopback only until you set a passw
 Configuration
 -------------
 
-  /etc/lanwatch/config.toml      the only config file; every key is optional
-  /usr/share/doc/lanwatch/examples/config.example.toml
-                                 all keys with their defaults
+  /etc/lanwatch/config.toml          yours; every key is optional, upgrades never touch it
+  /etc/lanwatch/config.toml.default  the reference: every key, its default, what it does.
+                                     Refreshed on every upgrade; copy sections from it.
 
   sudo lanwatch config show      effective configuration
   sudo systemctl restart lanwatch
