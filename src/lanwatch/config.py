@@ -319,7 +319,8 @@ class UnifiConfig(StrictModel):
     enabled: bool = False
     # The UniFi OS console. lanwatch appends the Integration API path itself.
     url: str = "https://192.168.1.1"
-    # Settings -> Control Plane -> Integrations on the console (Network 9.3 or later).
+    # Settings -> Integrations in the Network app, https://<console>/network/default/integrations
+    # (Network 9.3 or later).
     api_key: str = ""
     # Site id or name; None takes the first (normally the only) site.
     site: str | None = None
