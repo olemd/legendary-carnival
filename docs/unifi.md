@@ -14,17 +14,24 @@ That feeds three rules (`net.iot-on-main-network`, `inventory.unifi-only`,
 `net.unifi-device-offline`), sharpens the flat-network note, puts UniFi firmware under the
 existing `device.firmware-outdated` rule, and draws the **Topology** page.
 
-Everything is read-only, over HTTPS, on the LAN. lanwatch uses none of the API's write
-endpoints. The API key lives in lanwatch's config file, which the package installs readable
-by root and the service user only.
+Everything lanwatch does is read-only, over HTTPS, on the LAN: none of the API's write
+endpoints are used. The key itself is not read-only, though; see section 1.
 
 ## 1. Create an API key on the console
 
 UniFi Network 9.3 or later. On the console's local web UI: **Settings → Control Plane →
 Integrations → Create API Key**. Name it `lanwatch`. The key is shown once.
 
-The key inherits the rights of the account that made it. A read-only admin account is enough
-for everything lanwatch does.
+**Treat the key like the router's admin password.** UniFi does not make read-only keys: a
+key has every right the account that created it has, and the same API has endpoints that
+block clients, change networks and edit the firewall. lanwatch calls none of them, but
+whoever holds the key could. Two things limit the damage of a leak:
+
+- Create the key from a dedicated local account with the lowest role that may create keys
+  (a *View Only* or *Site Admin* role rather than the owner account), named after lanwatch
+  so a revocation is obvious.
+- Keep it in `/etc/lanwatch/config.toml` only. The package installs that file readable by
+  root and the service user; `lanwatch config show` prints `***` for it.
 
 ## 2. Configure lanwatch
 

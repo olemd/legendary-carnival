@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lanwatch.config import ConfigError, env_overrides, load_config
+from lanwatch.config import Config, ConfigError, env_overrides, load_config
 
 
 def test_defaults_without_any_file(tmp_path: Path) -> None:
@@ -91,3 +91,26 @@ def test_examples_in_the_packaged_default_config_are_valid() -> None:
     assert cfg.unifi.enabled is True and cfg.unifi.verify_tls is False
     assert cfg.scan.dns_filter_check is True
     assert cfg.decoy.ports == [23, 1433, 3389, 5555]
+
+
+def test_config_show_redacts_secrets(tmp_path: Path) -> None:
+    from lanwatch.config import (
+        HomeAssistantConfig,
+        NotifyConfig,
+        UnifiConfig,
+        WebConfig,
+        dump_effective,
+    )
+
+    cfg = Config(
+        data_dir=tmp_path,
+        unifi=UnifiConfig(enabled=True, url="https://c", api_key="s3cret"),
+        web=WebConfig(password="hunter2"),
+        notify=NotifyConfig(
+            home_assistant=HomeAssistantConfig(enabled=True, token="t0k3n-long-value")
+        ),
+    )
+    text = dump_effective(cfg)
+    assert "s3cret" not in text and "hunter2" not in text and "t0k3n-long-value" not in text
+    assert 'api_key = "***"' in text and 'password = "***"' in text and 'token = "***"' in text
+    assert "password = null" in dump_effective(Config(data_dir=tmp_path))  # unset stays visible

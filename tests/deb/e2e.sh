@@ -85,7 +85,13 @@ running | degraded) ;;
 esac
 
 echo "== installing $deb"
-pm exec -e DEBIAN_FRONTEND=noninteractive "$name" apt-get install -y -q "/dist/$deb" >/dev/null
+# The jobs that fetch public lists (the IEEE OUI registry, vendors' release feeds) would make
+# this test depend on the internet and on those servers being up. Keep them offline here;
+# the package's own default config is validated by the unit tests. --force-confold makes
+# dpkg keep this file instead of asking about the packaged one.
+pm exec "$name" sh -c 'mkdir -p /etc/lanwatch && printf "[oui]\nonline = false\n[firmware]\nonline = false\n" >/etc/lanwatch/config.toml'
+pm exec -e DEBIAN_FRONTEND=noninteractive "$name" \
+    apt-get install -y -q -o Dpkg::Options::=--force-confold "/dist/$deb" >/dev/null
 
 # Another machine on the same network knocks on a decoy port; assert.sh expects a finding.
 i=0

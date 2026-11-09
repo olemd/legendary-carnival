@@ -513,10 +513,26 @@ def format_validation_error(e: ValidationError, file_path: Path | None) -> str:
     return "\n".join(lines)
 
 
+# Keys whose values are secrets: `config show` prints whether they are set, not what.
+SECRET_KEYS = frozenset({"api_key", "token", "password"})
+
+
 def dump_effective(cfg: Config) -> str:
-    """Effective config as TOML-ish text for `config show`."""
+    """Effective config as TOML-ish text for `config show`, secrets redacted."""
     data = cfg.model_dump(mode="json")
-    return _to_toml(data)
+    return _to_toml(_redact(data))
+
+
+def _redact(data: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in data.items():
+        if isinstance(v, dict):
+            out[k] = _redact(v)
+        elif k in SECRET_KEYS and v:
+            out[k] = "***"
+        else:
+            out[k] = v
+    return out
 
 
 def _to_toml(data: dict[str, Any], prefix: str = "") -> str:
