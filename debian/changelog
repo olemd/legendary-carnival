@@ -1,3 +1,13 @@
+lanwatch (0.5.1) unstable; urgency=medium
+
+  * Discovery no longer fails when [latency] targets names an address
+    outside the local networks (such as 1.1.1.1): the helper refused the
+    ping and the error took the whole round down. Pings now run from the
+    service itself, which needs no privilege, and a target that cannot be
+    measured is logged and skipped.
+
+ -- olemd <olemd@glemt.net>  Mon, 09 Nov 2026 12:33:15 +0100
+
 lanwatch (0.5.0) unstable; urgency=medium
 
   * Latency: a few pings to the gateway every discovery round. The dashboard
