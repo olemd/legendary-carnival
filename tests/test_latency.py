@@ -71,6 +71,9 @@ async def test_measure_pings_each_target(monkeypatch: pytest.MonkeyPatch) -> Non
     results = await measure(ex, ["192.168.1.1", "192.0.2.1", "bad"], count=4)
     assert [r.target for r in results] == ["192.168.1.1", "192.0.2.1"]
     assert ex.calls[0] == ["ping", "-c", "4", "-W", "1", "192.168.1.1"]
+    ex.calls.clear()
+    await measure(ex, ["192.168.1.1"], count=3, wait_s=2)  # the discovery recheck's patience
+    assert ex.calls == [["ping", "-c", "3", "-W", "2", "192.168.1.1"]]
 
 
 async def test_measure_falls_back_to_the_helper_and_survives_refusal(

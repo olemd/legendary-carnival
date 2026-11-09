@@ -7,6 +7,8 @@ import ipaddress
 import pytest
 
 from lanwatch import pipeline
+from lanwatch.collectors.base import LocalExecutor
+from lanwatch.collectors.latency import PingResult
 from lanwatch.config import Config, ScanConfig
 from lanwatch.models import FindingStatus, HostObservation
 from lanwatch.netinfo import Interface, Subnet
@@ -158,3 +160,139 @@ async def test_skip_hosts_are_tracked_but_never_scanned(
     out = await pipeline.run_inventory(config, store, device_ids=[rec.new_device_ids[0]])
     assert out.devices == 0 and scanned == [["192.168.1.40"]]
     assert len(store.devices()) == 3  # still tracked
+
+
+class Pinger:
+    """Stands in for latency.measure and the neighbour table: no packets leave the test."""
+
+    def __init__(self) -> None:
+        self.asked: list[list[str]] = []
+        self.answers: dict[str, str] = {}  # ip -> MAC of whoever answers the slow ping
+
+    async def measure(
+        self, ex: object, targets: list[str], count: int, wait_s: int = 1
+    ) -> list[PingResult]:
+        assert (count, wait_s) == (pipeline.RECHECK_COUNT, pipeline.RECHECK_WAIT_S)
+        self.asked.append(list(targets))
+        return [
+            PingResult(t, count, count if t in self.answers else 0, None, None) for t in targets
+        ]
+
+    async def neighbours(self, ex: object) -> dict[str, str]:
+        return dict(self.answers)
+
+
+def _discovery_round(store: Store, hosts: list[HostObservation]) -> int:
+    sid = store.begin_snapshot("discovery", "t")
+    store.record_hosts(sid, hosts)
+    store.finish_snapshot(sid, len(hosts))
+    return sid
+
+
+async def test_recheck_pings_only_who_should_be_there(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lanwatch.config import UnifiConfig
+
+    pinger = Pinger()
+    monkeypatch.setattr(pipeline, "measure", pinger.measure)
+    monkeypatch.setattr(pipeline, "neighbour_table", pinger.neighbours)
+    subnets = [Subnet(ipaddress.IPv4Network("192.168.1.0/24"), "eth0")]
+    gw = HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="t")
+    phone = HostObservation(ip="192.168.1.50", mac="aa:bb:cc:00:00:50", source="t")
+    tv = HostObservation(ip="192.168.1.60", mac="aa:bb:cc:00:00:60", source="t")
+    previous = _discovery_round(store, [gw, phone, tv])
+    store.replace_infra(
+        "unifi-client",
+        {
+            "ec:94:cb:77:99:00": {"mac": "ec:94:cb:77:99:00", "ip": "192.168.1.224"},  # asleep
+            "aa:bb:cc:00:00:77": {"mac": "aa:bb:cc:00:00:77", "ip": "10.0.20.7"},  # other VLAN
+            "aa:bb:cc:00:00:78": {"mac": "aa:bb:cc:00:00:78", "ip": None},  # no address
+            "aa:bb:cc:00:00:01": {"mac": "aa:bb:cc:00:00:01", "ip": "192.168.1.1"},  # answered
+        },
+        store.begin_snapshot("infra", "t"),
+    )
+    config.network.exclude_hosts = ["192.168.1.60"]  # never touched, also not by the recheck
+    this_round = [gw]  # the phone and the charger slept through the scan
+
+    async def recheck() -> list[HostObservation]:
+        return await pipeline.recheck_silent(
+            config,
+            store,
+            LocalExecutor(),  # never runs anything: measure and the neighbour table are fakes
+            subnets,
+            this_round,
+            previous,
+        )
+
+    config.scan.recheck_silent = True
+    assert await recheck() == [] and pinger.asked == [["192.168.1.50"]]  # unifi is off
+    config.unifi = UnifiConfig(enabled=True, url="https://console.lan", api_key="k")
+    pinger.answers = {"192.168.1.224": "ec:94:cb:77:99:00"}
+    found = await recheck()
+    assert pinger.asked[-1] == ["192.168.1.50", "192.168.1.224"]
+    assert [(h.ip, h.mac, h.source) for h in found] == [
+        ("192.168.1.224", "ec:94:cb:77:99:00", "recheck")
+    ]
+    # A reply this host has no neighbour entry for has no MAC: not recorded.
+    pinger.answers = {}
+    monkeypatch.setattr(pinger, "neighbours", lambda ex: _const({}))
+    assert await recheck() == []
+    config.scan.recheck_silent = False
+    asked = len(pinger.asked)
+    assert await recheck() == [] and len(pinger.asked) == asked  # off: no pings at all
+
+
+async def _const(value: dict[str, str]) -> dict[str, str]:
+    return value
+
+
+async def test_recheck_keeps_a_sleepy_device_online_and_still_sees_it_leave(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The point of the recheck is presence that only lanwatch's own probes vouch for: a
+    device that misses arp-scan but answers the slower ping stays online, and one that
+    answers neither goes offline in that very round."""
+    ifaces = [Interface("eth0", "aa:bb:cc:dd:ee:ff", [ipaddress.IPv4Interface("192.168.1.10/24")])]
+    backend = FakeBackend()
+    gw = HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="fake")
+    charger = HostObservation(ip="192.168.1.224", mac="ec:94:cb:77:99:00", source="fake")
+    backend.hosts = [gw, charger]
+    pinger = Pinger()
+
+    async def fake_ifaces(ex: object = None) -> list[Interface]:
+        return ifaces
+
+    async def fake_select(ex: object, cfg: ScanConfig) -> FakeBackend:
+        return backend
+
+    async def no_nmap(ex: object) -> bool:
+        return False
+
+    async def gateways(ex: object = None) -> list[str]:
+        return ["192.168.1.1"]
+
+    monkeypatch.setattr(pipeline, "default_gateways", gateways)
+    monkeypatch.setattr(pipeline, "list_interfaces", fake_ifaces)
+    monkeypatch.setattr(pipeline, "select_backend", fake_select)
+    monkeypatch.setattr(pipeline, "nmap_available", no_nmap)
+    monkeypatch.setattr(pipeline, "measure", pinger.measure)
+    monkeypatch.setattr(pipeline, "neighbour_table", pinger.neighbours)
+    config.scan.recheck_silent = True
+
+    await pipeline.run_discovery(config, store)  # baseline: everyone answered
+    assert pinger.asked == []  # nobody missing, nothing to ping
+
+    backend.hosts = [gw]  # the charger dozes through arp-scan ...
+    pinger.answers = {"192.168.1.224": "ec:94:cb:77:99:00"}  # ... but answers a patient ping
+    await pipeline.run_discovery(config, store)
+    device = store.device_by_key("ec:94:cb:77:99:00")
+    assert pinger.asked == [["192.168.1.224"]]
+    assert device is not None and device.online
+    assert not [e for e in store.events() if e.kind == "presence.offline"]
+
+    pinger.answers = {}  # now it is really gone
+    await pipeline.run_discovery(config, store)
+    device = store.device_by_key("ec:94:cb:77:99:00")
+    assert device is not None and not device.online  # this round, not 45 minutes later
+    assert [e.kind for e in store.events() if e.kind == "presence.offline"] == ["presence.offline"]

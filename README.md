@@ -97,7 +97,11 @@ with the LLM's one-line summary when available. The daily digest is pushed too.
 delivery log.
 
 Discovery backend is picked automatically: `arp-scan` (as root or with CAP_NET_RAW),
-else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table.
+else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table. Addresses that
+stay silent but should be there (online in the previous round, or listed by the UniFi
+controller) get a second, slower ping in the same round (`scan.recheck_silent`), so a
+power-saving Wi-Fi device that sleeps through the scan is not reported offline; only a
+reply counts.
 
 Service scans default to the `gentle` profile: nmap `-T2`, top 200 ports, light version
 detection, a handful of safe scripts, port 9100 never touched (printers print probe

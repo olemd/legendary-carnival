@@ -60,9 +60,12 @@ def resolve_targets(configured: list[str], gateways: list[str]) -> list[str]:
     return out
 
 
-async def measure(ex: Executor, targets: list[str], count: int) -> list[PingResult]:
-    """Ping every target `count` times, concurrently. A target ping cannot reach at all
-    still yields a result (all lost); a target ping cannot run against yields nothing.
+async def measure(
+    ex: Executor, targets: list[str], count: int, wait_s: int = 1
+) -> list[PingResult]:
+    """Ping every target `count` times, concurrently, waiting `wait_s` for each reply. A
+    target ping cannot reach at all still yields a result (all lost); a target ping cannot
+    run against yields nothing.
 
     ping needs no privilege on a modern Linux (unprivileged ICMP sockets are open to every
     group by default), so it runs in this process first. Only when that is impossible (no
@@ -71,8 +74,8 @@ async def measure(ex: Executor, targets: list[str], count: int) -> list[PingResu
     Nothing raised here reaches the discovery round: a measurement that cannot be made is
     logged and skipped."""
     local = ex if ex.name == "local" else LocalExecutor()
-    args = ["ping", "-c", str(count), "-W", "1"]
-    timeout = count * 2 + 5
+    args = ["ping", "-c", str(count), "-W", str(wait_s)]
+    timeout = count * (wait_s + 1) + 5
 
     async def one(target: str) -> PingResult | None:
         try:

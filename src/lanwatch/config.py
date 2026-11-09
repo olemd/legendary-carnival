@@ -115,6 +115,11 @@ class ScanConfig(StrictModel):
         ]
     )
     scan_new_devices_immediately: bool = True
+    # A second, slower look each discovery round at addresses that stayed silent but should
+    # be there: devices online in the previous round, and clients the UniFi controller lists
+    # on a scanned subnet. A few pings with a longer wait; only a reply counts. Catches
+    # power-saving Wi-Fi devices that sleep through arp-scan without trusting anyone's word.
+    recheck_silent: bool = True
     # Forward privileged commands to lanwatch-helper (root) over this unix socket.
     # Needed for rootless containers. Unset = run commands locally.
     helper_socket: Path | None = None
