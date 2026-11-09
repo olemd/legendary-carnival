@@ -1,0 +1,14 @@
+{
+  "management": "GATEWAY",
+  "id": "22222222-0000-0000-0000-000000000001",
+  "name": "Default",
+  "enabled": true,
+  "vlanId": 1,
+  "default": true,
+  "isolationEnabled": false,
+  "internetAccessEnabled": true,
+  "ipv4Configuration": {
+    "hostIpAddress": "192.168.1.1",
+    "prefixLength": 24
+  }
+}

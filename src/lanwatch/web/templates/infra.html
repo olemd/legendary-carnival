@@ -29,6 +29,36 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% else %}<p class="empty">Not checked yet; the daily exposure job has not run.</p>{% endif %}
 {% endif %}
 
+{% if unifi.enabled %}
+<h2>UniFi controller</h2>
+{% if unifi.error %}<p class="note"><span class="result-failed">last read failed</span> <span class="mono">{{ unifi.error }}</span>{% if unifi.last_ok %} <span class="muted">· showing the state from {{ unifi.last_ok | local }}</span>{% endif %}</p>{% endif %}
+{% if unifi.version or unifi.last_ok %}
+<p class="lede">UniFi Network {{ unifi.version or '?' }}{% if unifi.site %}, site {{ unifi.site }}{% endif %}{% if unifi.last_ok %}, read {{ unifi.last_ok | local }}{% endif %}.
+{{ unifi.clients_total }} client{{ 's' if unifi.clients_total != 1 }}{% if unifi.clients_guest %}, {{ unifi.clients_guest }} guest{% endif %}{% if unifi.clients_unknown %}, <strong>{{ unifi.clients_unknown }} never seen by lanwatch</strong> (see <a href="/findings">findings</a>){% endif %}. <a href="/topology">Topology</a>.</p>
+
+<h3>Networks</h3>
+<div class="tbl"><table><thead><tr><th>Network</th><th>VLAN</th><th>Subnet</th><th>SSIDs</th><th>Isolation</th><th>Internet</th><th>State</th></tr></thead><tbody>
+{% for r in unifi.networks %}<tr><td>{{ r.data.name }}{% if r.data.default %} <span class="muted">(default)</span>{% endif %}</td><td class="mono">{{ r.data.vlan if r.data.vlan is not none else '-' }}</td><td class="mono">{{ r.data.subnet or '-' }}</td>
+<td>{{ r.data.ssids | join(', ') or '-' }}</td><td>{% if r.data.isolation %}<span class="result-ok">isolated</span>{% elif r.data.isolation is sameas false %}<span class="muted">no</span>{% else %}-{% endif %}</td>
+<td>{% if r.data.internet_access is sameas false %}<span class="result-ok">blocked</span>{% elif r.data.internet_access %}yes{% else %}-{% endif %}</td><td>{{ 'enabled' if r.data.enabled else 'disabled' }}</td></tr>{% endfor %}
+</tbody></table></div>
+
+{% if unifi.ssids %}<h3>Wi-Fi</h3>
+<div class="tbl"><table><thead><tr><th>SSID</th><th>Type</th><th>Network</th><th>State</th></tr></thead><tbody>
+{% for r in unifi.ssids %}<tr><td>{{ r.data.name }}</td><td>{{ 'IoT-optimised' if r.data.type == 'IOT_OPTIMIZED' else 'standard' }}</td><td>{{ r.data.network_name or '-' }}</td><td>{{ 'enabled' if r.data.enabled else 'disabled' }}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+
+<h3>UniFi devices</h3>
+<div class="tbl"><table><thead><tr><th>Device</th><th>Model</th><th>State</th><th>IP</th><th>Firmware</th><th>Ports</th><th>Clients</th></tr></thead><tbody>
+{% for r in unifi.devices %}{% set d = devices_by_mac.get(r.key) %}
+<tr><td>{% if d %}<a href="/devices/{{ d.id }}">{{ r.data.name or r.data.model }}</a>{% else %}{{ r.data.name or r.data.model }}{% endif %}{% if r.data.is_gateway %} <span class="kind">gateway</span>{% elif r.data.is_access_point %} <span class="kind">access point</span>{% endif %}</td>
+<td>{{ r.data.model }}</td><td>{% if r.data.state == 'ONLINE' %}<span class="result-ok">online</span>{% else %}<span class="result-failed">{{ r.data.state | lower | replace('_', ' ') }}</span>{% endif %}</td>
+<td class="mono">{{ r.data.ip or '-' }}</td><td class="mono">{{ r.data.firmware_version or '-' }}{% if r.data.firmware_updatable %} <span class="result-failed">update available</span>{% endif %}</td>
+<td class="muted">{% if r.data.ports.total %}{{ r.data.ports.up }}/{{ r.data.ports.total }} up{% if r.data.ports.poe %}, {{ r.data.ports.poe }} PoE{% endif %}{% else %}-{% endif %}</td><td>{{ r.data.clients }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% elif not unifi.error %}<p class="empty">Not read yet; the infra round reads the controller every {{ config.schedule.infra_interval_s // 60 }} minutes, or run <code>lanwatch unifi</code>.</p>{% endif %}
+{% endif %}
+
 {% if dns_filter %}
 <h2>DNS filtering</h2>
 <div class="tbl"><table><thead><tr><th>Resolver</th><th>Source</th><th>Ads and trackers</th><th>Malicious domains</th><th>Test names it blocked</th></tr></thead><tbody>

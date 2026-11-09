@@ -1,0 +1,52 @@
+{
+  "id": "11111111-0000-0000-0000-000000000001",
+  "macAddress": "a8:bb:cc:00:00:01",
+  "ipAddress": "192.168.1.1",
+  "name": "Express",
+  "model": "UX7",
+  "state": "ONLINE",
+  "supported": true,
+  "firmwareVersion": "4.3.6",
+  "firmwareUpdatable": true,
+  "adoptedAt": "2026-01-01T00:00:00Z",
+  "configurationId": "x",
+  "features": {
+    "switching": {
+      "lags": []
+    },
+    "accessPoint": {}
+  },
+  "interfaces": {
+    "ports": [
+      {
+        "idx": 1,
+        "state": "UP",
+        "connector": "RJ45",
+        "maxSpeedMbps": 2500,
+        "speedMbps": 2500
+      },
+      {
+        "idx": 2,
+        "state": "DOWN",
+        "connector": "RJ45",
+        "maxSpeedMbps": 1000
+      }
+    ],
+    "radios": [
+      {
+        "wlanStandard": "802.11be",
+        "frequencyGHz": 5,
+        "channel": 44,
+        "channelWidthMHz": 80,
+        "txPowerMode": "AUTO"
+      },
+      {
+        "wlanStandard": "802.11be",
+        "frequencyGHz": 2.4,
+        "channel": 6,
+        "channelWidthMHz": 20,
+        "txPowerMode": "AUTO"
+      }
+    ]
+  }
+}

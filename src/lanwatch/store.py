@@ -488,7 +488,13 @@ class Store:
         return _device(row, int(row["id"]) in self._online_ids()) if row else None
 
     def device_by_key(self, key: str) -> Device | None:
-        row = self._db.execute("SELECT * FROM devices WHERE key = ?", (key,)).fetchone()
+        """By primary key, or by an address merged into the device (a phone known under
+        two MACs answers to both)."""
+        row = self._db.execute(
+            """SELECT * FROM devices WHERE key = ?1 OR id =
+               (SELECT device_id FROM device_aliases WHERE key = ?1)""",
+            (key,),
+        ).fetchone()
         return _device(row, int(row["id"]) in self._online_ids()) if row else None
 
     def set_device_name(self, device_id: int, name: str | None) -> bool:

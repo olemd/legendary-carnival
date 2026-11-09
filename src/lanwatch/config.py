@@ -309,6 +309,35 @@ class ExposureConfig(StrictModel):
     ip_lookup_url: str = "https://api.ipify.org"
 
 
+class UnifiConfig(StrictModel):
+    """Read-only link to a UniFi Network controller (Integration API); see docs/unifi.md."""
+
+    enabled: bool = False
+    # The UniFi OS console. lanwatch appends the Integration API path itself.
+    url: str = "https://192.168.1.1"
+    # Settings -> Control Plane -> Integrations on the console (Network 9.3 or later).
+    api_key: str = ""
+    # Site id or name; None takes the first (normally the only) site.
+    site: str | None = None
+    # Consoles ship a self-signed certificate: either export it and point ca_file at it,
+    # or set verify_tls = false and accept that the LAN link is unauthenticated.
+    verify_tls: bool = True
+    ca_file: Path | None = None
+    # Give unnamed lanwatch devices the name the controller has for them. Never overwrites
+    # a name set in lanwatch.
+    adopt_names: bool = True
+
+    @model_validator(mode="after")
+    def _check(self) -> UnifiConfig:
+        if self.enabled and not self.api_key:
+            raise ValueError("unifi.api_key is required when enabled")
+        if not self.url.startswith("https://"):
+            raise ValueError("unifi.url must be an https URL (the console only speaks TLS)")
+        if self.ca_file is not None and not self.verify_tls:
+            raise ValueError("unifi.ca_file and verify_tls = false contradict each other")
+        return self
+
+
 class LatencyConfig(StrictModel):
     """Round-trip time and packet loss, measured with a few pings every discovery round."""
 
@@ -351,6 +380,7 @@ class Config(StrictModel):
     oui: OuiConfig = OuiConfig()
     latency: LatencyConfig = LatencyConfig()
     exposure: ExposureConfig = ExposureConfig()
+    unifi: UnifiConfig = UnifiConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property

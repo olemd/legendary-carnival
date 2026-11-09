@@ -1,0 +1,43 @@
+{
+  "offset": 0,
+  "limit": 25,
+  "count": 3,
+  "totalCount": 3,
+  "data": [
+    {
+      "management": "GATEWAY",
+      "id": "22222222-0000-0000-0000-000000000001",
+      "name": "Default",
+      "enabled": true,
+      "vlanId": 1,
+      "default": true,
+      "metadata": {
+        "origin": "SYSTEM_DEFINED"
+      },
+      "zoneId": "z1"
+    },
+    {
+      "management": "GATEWAY",
+      "id": "22222222-0000-0000-0000-000000000002",
+      "name": "IoT",
+      "enabled": true,
+      "vlanId": 20,
+      "default": false,
+      "metadata": {
+        "origin": "USER_DEFINED"
+      },
+      "zoneId": "z2"
+    },
+    {
+      "management": "UNMANAGED",
+      "id": "22222222-0000-0000-0000-000000000003",
+      "name": "Legacy",
+      "enabled": false,
+      "vlanId": 99,
+      "default": false,
+      "metadata": {
+        "origin": "USER_DEFINED"
+      }
+    }
+  ]
+}

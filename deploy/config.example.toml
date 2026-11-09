@@ -140,6 +140,19 @@ online = true                           # ask vendors/GitHub for the latest rele
 enabled = false
 # ip_lookup_url = "https://api.ipify.org"   # asked when no UPnP gateway reports the address
 
+[unifi]
+# Read-only link to a UniFi Network controller (UniFi OS console, Network 9.3+). Per client:
+# wired/wireless, uplink device, guest, controller name, network/VLAN; the networks, SSIDs and
+# UniFi devices themselves (state, pending firmware); the Topology page; three rules. The key
+# comes from Settings -> Control Plane -> Integrations. Stays on the LAN. See docs/unifi.md.
+enabled = false
+url = "https://192.168.1.1"             # the console; lanwatch appends the API path
+api_key = ""
+# site = "Home"                         # id or name; default: the first site
+verify_tls = true                       # consoles are self-signed: pin with ca_file, or set false
+# ca_file = "/etc/lanwatch/unifi.pem"   # the console's certificate (docs/unifi.md shows the export)
+adopt_names = true                      # name unnamed devices as the controller names them
+
 [latency]
 # A few pings to the gateway every discovery round: round-trip time and loss, with a day's
 # trend on the dashboard and a finding when probes are lost three rounds in a row. "gateway"

@@ -1,0 +1,32 @@
+{
+  "offset": 0,
+  "limit": 2,
+  "count": 2,
+  "totalCount": 3,
+  "data": [
+    {
+      "type": "WIRED",
+      "id": "c1",
+      "name": "nas",
+      "connectedAt": "2026-11-09T06:00:00Z",
+      "ipAddress": "192.168.1.40",
+      "macAddress": "A8:BB:CC:00:00:40",
+      "uplinkDeviceId": "11111111-0000-0000-0000-000000000001",
+      "access": {
+        "type": "DEFAULT"
+      }
+    },
+    {
+      "type": "WIRELESS",
+      "id": "c2",
+      "name": "Visitor phone",
+      "connectedAt": "2026-11-09T07:30:00Z",
+      "ipAddress": "192.168.1.77",
+      "macAddress": "a8:bb:cc:00:00:77",
+      "uplinkDeviceId": "11111111-0000-0000-0000-000000000002",
+      "access": {
+        "type": "GUEST"
+      }
+    }
+  ]
+}

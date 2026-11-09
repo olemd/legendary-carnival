@@ -88,5 +88,6 @@ def test_examples_in_the_packaged_default_config_are_valid() -> None:
     assert {"web", "llm", "scan", "firmware", "decoy"} <= set(data)
     cfg = Config.model_validate(data)
     assert cfg.firmware.online is False and cfg.oui.online is False
+    assert cfg.unifi.enabled is True and cfg.unifi.verify_tls is False
     assert cfg.scan.dns_filter_check is True
     assert cfg.decoy.ports == [23, 1433, 3389, 5555]

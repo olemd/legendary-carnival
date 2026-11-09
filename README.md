@@ -109,6 +109,12 @@ Hygiene checks:
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
   or on GitHub unless `online = false`.
+- **UniFi controller** (`[unifi]`, read-only, every infra round, `lanwatch unifi`): with a
+  UniFi OS console on the LAN, each client's uplink device, wired/wireless, guest flag,
+  controller name and network/VLAN; the networks, SSIDs and UniFi devices with pending
+  firmware; a **Topology** page; and rules for IoT devices on the main network, clients only
+  the controller sees, and UniFi devices offline. API key, nothing leaves the LAN. See
+  [docs/unifi.md](docs/unifi.md).
 - **Internet exposure** (`[exposure]`, off by default, daily, `lanwatch exposure`): the
   public address looked up in Shodan's InternetDB, which scans the whole internet. Ports that
   answer from outside become a finding, critical when Shodan also matched the service to

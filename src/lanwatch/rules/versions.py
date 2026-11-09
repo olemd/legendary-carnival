@@ -137,8 +137,9 @@ class FirmwareOutdatedRule(Rule):
     description = (
         "A device runs an older firmware or software version than the latest release. Found "
         "by the daily firmware check ([firmware] in the config) for the products it knows: "
-        "Home Assistant, ESPHome, Shelly, Tasmota, Pi-hole, Jellyfin. Raise the severity "
-        "under [rules] if you want to be notified."
+        "Home Assistant, ESPHome, Shelly, Tasmota, Pi-hole, Jellyfin, and for UniFi gear "
+        "through the controller ([unifi]). Raise the severity under [rules] if you want to "
+        "be notified."
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
@@ -153,8 +154,12 @@ class FirmwareOutdatedRule(Rule):
             out.append(
                 self.finding(
                     ctx,
-                    title=f"{d.label}: {fw.get('product')} {fw.get('version')} is behind "
-                    f"{fw.get('latest')}",
+                    title=f"{d.label}: {fw.get('product')} {fw.get('version')} "
+                    + (
+                        f"is behind {fw.get('latest')}"
+                        if fw.get("latest")
+                        else "has an update available"
+                    ),
                     key_parts=[d.key, str(fw.get("product"))],
                     device_id=d.id,
                     evidence={

@@ -1,0 +1,41 @@
+{
+  "id": "11111111-0000-0000-0000-000000000002",
+  "macAddress": "a8:bb:cc:00:00:02",
+  "ipAddress": "192.168.1.2",
+  "name": "Loft AP",
+  "model": "U7-Pro",
+  "state": "ONLINE",
+  "supported": true,
+  "firmwareVersion": "7.1.22",
+  "firmwareUpdatable": false,
+  "configurationId": "y",
+  "uplink": {
+    "deviceId": "11111111-0000-0000-0000-000000000001"
+  },
+  "features": {
+    "accessPoint": {}
+  },
+  "interfaces": {
+    "ports": [
+      {
+        "idx": 1,
+        "state": "UP",
+        "connector": "RJ45",
+        "maxSpeedMbps": 2500,
+        "speedMbps": 1000,
+        "poe": {
+          "state": "UP"
+        }
+      }
+    ],
+    "radios": [
+      {
+        "wlanStandard": "802.11be",
+        "frequencyGHz": 6,
+        "channel": 37,
+        "channelWidthMHz": 160,
+        "txPowerMode": "AUTO"
+      }
+    ]
+  }
+}

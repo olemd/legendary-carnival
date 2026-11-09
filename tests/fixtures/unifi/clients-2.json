@@ -1,0 +1,18 @@
+{
+  "offset": 2,
+  "limit": 2,
+  "count": 1,
+  "totalCount": 3,
+  "data": [
+    {
+      "type": "VPN",
+      "id": "c3",
+      "name": "road warrior",
+      "connectedAt": "2026-11-09T08:00:00Z",
+      "ipAddress": "192.168.3.2",
+      "access": {
+        "type": "DEFAULT"
+      }
+    }
+  ]
+}

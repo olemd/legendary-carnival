@@ -218,7 +218,7 @@ details > summary:hover { color:var(--fg) }
   <nav aria-label="Main">
     {% for key, href, label in [
       ('dashboard', '/', 'Dashboard'), ('devices', '/devices', 'Devices'), ('findings', '/findings', 'Findings'),
-      ('infra', '/infra', 'Infra'), ('overview', '/overview', 'Overview'), ('digest', '/digest', 'Digest'),
+      ('infra', '/infra', 'Infra'), ('topology', '/topology', 'Topology'), ('overview', '/overview', 'Overview'), ('digest', '/digest', 'Digest'),
       ('timeline', '/timeline', 'Timeline'), ('notifications', '/notifications', 'Notifications'), ('chat', '/chat', 'Chat'),
       ('status', '/status', 'Status')] %}
     <a href="{{ href }}"{% if active == key %} aria-current="page"{% endif %}>{{ label }}</a>

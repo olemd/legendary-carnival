@@ -52,6 +52,17 @@
 # [exposure]
 # enabled = true
 
+# UniFi controller (UniFi OS console, Network 9.3+): which AP or switch each client hangs
+# off, wired/wireless, guest, controller names, networks and VLANs, UniFi device state and
+# pending firmware, and the Topology page. Read-only, stays on the LAN. The key comes from
+# Settings -> Control Plane -> Integrations; the console's certificate is self-signed, so
+# either turn verification off here or pin the certificate (see /usr/share/doc/lanwatch/unifi.md).
+# [unifi]
+# enabled = true
+# url = "https://192.168.1.1"
+# api_key = "paste the key from the console here"
+# verify_tls = false
+
 # Latency: a few pings to the gateway every discovery round, trend on the dashboard, finding
 # on sustained loss. Add an internet address to also measure the path out.
 # [latency]

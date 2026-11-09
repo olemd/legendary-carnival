@@ -234,8 +234,9 @@ class FlatNetworkRule(Rule):
     kind = Kind.IMPROVEMENT
     default_severity = Severity.INFO
     description = (
-        "IoT-class devices share a subnet with workstations or servers. A separate VLAN "
-        "limits what a compromised gadget can reach."
+        "IoT-class devices share a network with workstations or servers. A separate VLAN "
+        "limits what a compromised gadget can reach. With a UniFi controller linked, the "
+        "network is the one the controller reports; otherwise the /24 around the address."
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
@@ -243,9 +244,8 @@ class FlatNetworkRule(Rule):
         for d in ctx.store.devices():
             if not d.ip or not d.kind:
                 continue
-            try:
-                net = str(ipaddress.ip_network(f"{d.ip}/24", strict=False))
-            except ValueError:
+            net = _network_of(d)
+            if net is None:
                 continue
             bucket = (
                 "iot" if d.kind in IOT_KINDS else "trusted" if d.kind in TRUSTED_KINDS else None
@@ -270,6 +270,20 @@ class FlatNetworkRule(Rule):
                 )
             )
         return out
+
+
+def _network_of(d: Device) -> str | None:
+    """The UniFi network the device is on ("IoT (VLAN 20)") when the controller told us,
+    else the /24 around its address."""
+    u = d.attrs.get("unifi") or d.attrs.get("unifi_device")
+    net = u.get("network") if isinstance(u, dict) else None
+    if isinstance(net, dict) and net.get("name"):
+        vlan = net.get("vlan")
+        return f"{net['name']} (VLAN {vlan})" if vlan is not None else str(net["name"])
+    try:
+        return str(ipaddress.ip_network(f"{d.ip}/24", strict=False))
+    except ValueError:
+        return None
 
 
 def infrastructure_ips(store: Store) -> dict[str, str]:

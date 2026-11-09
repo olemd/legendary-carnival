@@ -15,11 +15,18 @@
   <dt>Description</dt><dd>{{ device.description or '-' }}</dd>
   {% if device.attrs.upnp %}<dt>UPnP</dt><dd>{{ device.attrs.upnp.friendly_name }} <span class="muted">{{ device.attrs.upnp.manufacturer }} {{ device.attrs.upnp.model }}</span></dd>{% endif %}
   {% if device.attrs.mdns %}<dt>mDNS</dt><dd class="mono">{{ device.attrs.mdns | join(', ') }}</dd>{% endif %}
+  {% set u = device.attrs.unifi %}{% if u %}<dt>UniFi</dt><dd>{% if u.name %}{{ u.name }} · {% endif %}{{ 'wired' if u.wired else 'wireless' }}{% if u.guest %} · <span class="kind">guest</span>{% endif %}
+      {% if u.uplink %} · via {{ u.uplink.name }}{% if u.uplink.model and u.uplink.model != u.uplink.name %} <span class="muted">{{ u.uplink.model }}</span>{% endif %}{% endif %}
+      {% if u.network %} · network {{ u.network.name }}{% if u.network.vlan is not none %} <span class="muted">VLAN {{ u.network.vlan }}</span>{% endif %}{% endif %}
+      {% if u.ssids_on_network %}<br><span class="muted">SSIDs on that network: {{ u.ssids_on_network | join(', ') }}</span>{% endif %}</dd>{% endif %}
+  {% set ud = device.attrs.unifi_device %}{% if ud %}<dt>UniFi device</dt><dd>{{ ud.model }} · {% if ud.state == 'ONLINE' %}<span class="result-ok">online</span>{% else %}<span class="result-failed">{{ ud.state | lower | replace('_', ' ') }}</span>{% endif %}
+      {% if ud.uplink %} · uplink {{ ud.uplink.name }}{% endif %}{% if ud.ports.total %} · ports {{ ud.ports.up }}/{{ ud.ports.total }} up{% endif %}
+      {% if ud.radios %} · radios {% for r in ud.radios %}{{ r.band }} GHz ch {{ r.channel }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd>{% endif %}
   {% if device.attrs.ipv6 %}<dt>IPv6</dt><dd class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</dd>{% endif %}
   <dt>First seen</dt><dd>{{ device.first_seen | local }}</dd>
   <dt>Last seen</dt><dd>{{ device.last_seen | local }}</dd>
   {% set fw = device.attrs.firmware %}{% if fw %}<dt>Firmware</dt><dd>{{ fw.product }} <span class="mono">{{ fw.version }}</span>{% if fw.model %} <span class="muted">{{ fw.model }}</span>{% endif %}
-      {% if fw.update %}<span class="result-failed">behind</span> <span class="muted">latest is <span class="mono">{{ fw.latest }}</span></span>
+      {% if fw.update %}<span class="result-failed">{{ 'behind' if fw.latest else 'update available' }}</span>{% if fw.latest %} <span class="muted">latest is <span class="mono">{{ fw.latest }}</span></span>{% endif %}
       {% elif fw.update is sameas false %}<span class="result-ok">up to date</span>
       {% else %}<span class="muted">latest release unknown</span>{% endif %}
       <span class="muted">· checked {{ fw.checked | local }}</span></dd>{% endif %}

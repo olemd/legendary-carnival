@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
+
+import httpx2
 
 from lanwatch import oui
 from lanwatch.collectors.base import Executor, make_executor
@@ -16,6 +19,16 @@ from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
+from lanwatch.collectors.unifi import (
+    TOTAL_TIMEOUT_S,
+    UnifiError,
+    UnifiSnapshot,
+    client_attrs,
+    device_attrs,
+    fetch_unifi,
+    firmware_attrs,
+    infra_rows,
+)
 from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.decoy import listening_ports
@@ -168,8 +181,107 @@ class InfraOutcome:
     igd_mappings: int = 0
     ipv6_devices: int = 0
     devices_enriched: int = 0
+    unifi_clients: int = 0
+    unifi_devices: int = 0
+    unifi_error: str | None = None
     new_findings: list[str] = field(default_factory=list)
     resolved_findings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class UnifiOutcome:
+    snapshot: UnifiSnapshot | None = None
+    clients: int = 0
+    known_clients: int = 0
+    devices: int = 0
+    enriched: set[int] = field(default_factory=set)
+    named: int = 0
+    error: str | None = None
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def collect_unifi(
+    config: Config, store: Store, snapshot_id: int, client: httpx2.AsyncClient | None = None
+) -> UnifiOutcome:
+    """Ask the controller and merge the answer: infra rows for networks, SSIDs, UniFi
+    devices and clients; per-device attrs; names for unnamed devices. A controller that
+    cannot be read leaves the previous state in place (no flapping through a reboot) and
+    never fails the round: the error is logged and kept in meta for the status page."""
+    out = UnifiOutcome()
+    try:
+        snap = await asyncio.wait_for(fetch_unifi(config.unifi, client), TOTAL_TIMEOUT_S)
+    except (UnifiError, TimeoutError) as e:
+        out.error = str(e)[:300]
+        log.warning("unifi: controller not read, keeping the previous state: %s", out.error)
+        store.meta_set("unifi.last_error", out.error)
+        return out
+    except Exception as e:
+        out.error = f"{type(e).__name__}: {str(e)[:200]}"
+        log.exception("unifi: unexpected failure, keeping the previous state")
+        store.meta_set("unifi.last_error", out.error)
+        return out
+
+    rows = infra_rows(snap, lambda mac: store.device_by_key(mac) is not None)
+    for kind, entries in rows.items():
+        store.replace_infra(kind, entries, snapshot_id)
+    store.meta_set("unifi.site", json.dumps({"id": snap.site_id, "name": snap.site_name}))
+    store.meta_set("unifi.version", snap.version or "")
+    store.meta_set("unifi.last_ok", snap.fetched_at)
+    store.meta_set("unifi.last_error", "")
+
+    for c in snap.clients:
+        if not c.mac:
+            continue
+        out.clients += 1
+        d = store.device_by_key(c.mac)
+        if d is None:
+            continue
+        out.known_clients += 1
+        if store.merge_device_attrs(d.id, {"unifi": client_attrs(c, snap)}):
+            out.enriched.add(d.id)
+        # The controller fills `name` with the hostname when nobody set an alias; only a
+        # name a person chose there is worth adopting, and only where lanwatch has none.
+        if (
+            config.unifi.adopt_names
+            and d.name is None
+            and c.name
+            and c.name.lower() != (d.hostname or "").lower()
+            and store.set_device_name(d.id, c.name)
+        ):
+            out.named += 1
+    for dev in snap.devices:
+        if not dev.mac:
+            continue
+        out.devices += 1
+        d = store.device_by_key(dev.mac)
+        if d is None:
+            continue
+        attrs: dict[str, Any] = {"unifi_device": device_attrs(dev, snap)}
+        if (
+            config.unifi.adopt_names
+            and d.name is None
+            and dev.name
+            and dev.name.lower() != (d.hostname or "").lower()
+            and store.set_device_name(d.id, dev.name)
+        ):
+            out.named += 1
+        fw = d.attrs.get("firmware")
+        # Do not overwrite a version read off the device itself by the firmware check.
+        if not isinstance(fw, dict) or fw.get("source") == "unifi":
+            attrs["firmware"] = firmware_attrs(dev, snap.fetched_at)
+        if store.merge_device_attrs(d.id, attrs):
+            out.enriched.add(d.id)
+    out.snapshot = snap
+    log.info(
+        "unifi: %s, %d clients (%d known to lanwatch), %d devices, %d named",
+        snap.site_name,
+        out.clients,
+        out.known_clients,
+        out.devices,
+        out.named,
+    )
+    return out
 
 
 async def run_infra(config: Config, store: Store, executor: Executor | None = None) -> InfraOutcome:
@@ -231,6 +343,14 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
         store.replace_infra("upnp", entries, snapshot_id)
         out.upnp_devices = len(upnp)
         out.igd_mappings = sum(len(u.mappings) for u in upnp)
+    if config.unifi.enabled:
+        uni = await collect_unifi(config, store, snapshot_id)
+        enriched |= uni.enriched
+        out.unifi_clients, out.unifi_devices, out.unifi_error = (
+            uni.clients,
+            uni.devices,
+            uni.error,
+        )
     # IPv6 routers this host has learned, on the interfaces lanwatch watches.
     routers = [r for r in await ipv6_routers(ex) if r["dev"] in iface_names]
     store.replace_infra(
@@ -285,12 +405,17 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
     rules = Engine(config).run(ctx)
     _log_new_findings(config, rules.emitted, rules.new_ids)
     log.info(
-        "infra done: %d dhcp servers, %d upnp devices, %d port mappings, %d ipv6 devices, "
+        "infra done: %d dhcp servers, %d upnp devices, %d port mappings, %d ipv6 devices%s, "
         "%d new findings, %d resolved",
         len(out.dhcp_servers),
         out.upnp_devices,
         out.igd_mappings,
         out.ipv6_devices,
+        f", unifi: {out.unifi_clients} clients, {out.unifi_devices} devices"
+        if config.unifi.enabled and not out.unifi_error
+        else " (unifi not read)"
+        if config.unifi.enabled
+        else "",
         len(rules.new_ids),
         len(rules.resolved_ids),
     )
@@ -368,6 +493,28 @@ async def run_exposure(config: Config, store: Store) -> Exposure | None:
     await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
     update_overview(store, config)
     return exposure
+
+
+async def run_unifi(config: Config, store: Store) -> UnifiOutcome:
+    """On demand (`lanwatch unifi`): read the controller, then the rules."""
+    snapshot_id = store.begin_snapshot("unifi", "integration-api")
+    out = await collect_unifi(config, store, snapshot_id)
+    store.finish_snapshot(snapshot_id, out.clients)
+    if out.error is not None:
+        return out
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
 
 
 async def run_maintenance(config: Config, store: Store) -> dict[str, int]:

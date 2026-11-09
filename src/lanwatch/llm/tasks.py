@@ -213,6 +213,17 @@ def device_facts(d: Device, services: list[ServiceRow]) -> dict[str, Any]:
         facts["upnp"] = d.attrs["upnp"]
     if d.attrs.get("mdns"):
         facts["mdns_services"] = list(d.attrs["mdns"])[:10]
+    # From the UniFi controller: only what stays put. The uplink roams with a phone and
+    # the connection time changes every round; both would churn the cache key.
+    u = d.attrs.get("unifi")
+    if isinstance(u, dict):
+        network = u.get("network")
+        facts["unifi"] = {
+            "name": u.get("name"),
+            "wired": u.get("wired"),
+            "guest": u.get("guest"),
+            "network": network.get("name") if isinstance(network, dict) else None,
+        }
     return facts
 
 

@@ -1,0 +1,38 @@
+{
+  "offset": 0,
+  "limit": 25,
+  "count": 2,
+  "totalCount": 2,
+  "data": [
+    {
+      "type": "STANDARD",
+      "id": "44444444-0000-0000-0000-000000000001",
+      "name": "Home Wi-Fi",
+      "enabled": true,
+      "network": {
+        "type": "NATIVE"
+      },
+      "securityConfiguration": {
+        "type": "WPA2_WPA3_PERSONAL"
+      },
+      "broadcastingFrequenciesGHz": [
+        2.4,
+        5,
+        6
+      ]
+    },
+    {
+      "type": "IOT_OPTIMIZED",
+      "id": "44444444-0000-0000-0000-000000000002",
+      "name": "Things",
+      "enabled": true,
+      "network": {
+        "type": "SPECIFIC",
+        "networkId": "22222222-0000-0000-0000-000000000002"
+      },
+      "securityConfiguration": {
+        "type": "WPA2_PERSONAL"
+      }
+    }
+  ]
+}

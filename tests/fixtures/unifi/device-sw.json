@@ -1,0 +1,21 @@
+{
+  "id": "11111111-0000-0000-0000-000000000003",
+  "macAddress": "a8:bb:cc:00:00:03",
+  "name": "Garage switch",
+  "model": "USW-Lite-8-PoE",
+  "state": "OFFLINE",
+  "supported": true,
+  "firmwareUpdatable": false,
+  "configurationId": "z",
+  "uplink": {
+    "deviceId": "11111111-0000-0000-0000-000000000001"
+  },
+  "features": {
+    "switching": {
+      "lags": []
+    }
+  },
+  "interfaces": {
+    "ports": []
+  }
+}

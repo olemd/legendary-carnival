@@ -3,6 +3,7 @@
 Bound to loopback by default. Binding wider requires web.password (HTTP basic auth).
 """
 
+import json
 import secrets
 import time
 from collections.abc import Iterator
@@ -26,6 +27,7 @@ from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
+from lanwatch.web.topology import build_topology
 
 TEMPLATES = Path(__file__).parent / "templates"
 SEVERITY_ORDER = [s.value for s in Severity]
@@ -315,7 +317,18 @@ def create_app(
             routers=s.infra("ipv6-router"),
             dns_filter=s.infra("dns-filter"),
             exposure=s.infra("exposure"),
+            unifi=_unifi_section(s, config),
             snapshot=s.latest_snapshot("infra"),
+        )
+
+    @app.get("/topology", response_class=HTMLResponse, dependencies=deps)
+    def topology_page(request: Request, s: StoreDep) -> HTMLResponse:
+        return page(
+            request,
+            "topology.html",
+            topo=build_topology(s) if config.unifi.enabled else None,
+            unifi_enabled=config.unifi.enabled,
+            unifi_error=s.meta_get("unifi.last_error") or None,
         )
 
     @app.get("/notifications", response_class=HTMLResponse, dependencies=deps)
@@ -485,6 +498,35 @@ def _sparkline(
         "first_ts": series[0][0],
         "last_ts": series[-1][0],
         "n": n,
+    }
+
+
+def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
+    """What the infra page shows about the controller: status line plus the stored rows."""
+    site_raw = s.meta_get("unifi.site")
+    try:
+        site = json.loads(site_raw) if site_raw else None
+    except ValueError:
+        site = None
+    clients = s.infra("unifi-client")
+    return {
+        "enabled": config.unifi.enabled,
+        "version": s.meta_get("unifi.version") or None,
+        "site": site.get("name") if isinstance(site, dict) else None,
+        "last_ok": s.meta_get("unifi.last_ok") or None,
+        "error": s.meta_get("unifi.last_error") or None,
+        "networks": sorted(
+            s.infra("unifi-network"),
+            key=lambda r: (not r.data.get("default"), r.data.get("vlan") or 0),
+        ),
+        "ssids": sorted(s.infra("unifi-ssid"), key=lambda r: str(r.data.get("name"))),
+        "devices": sorted(
+            s.infra("unifi-device"),
+            key=lambda r: (not r.data.get("is_gateway"), str(r.data.get("name"))),
+        ),
+        "clients_total": len(clients),
+        "clients_unknown": sum(1 for r in clients if not r.data.get("known")),
+        "clients_guest": sum(1 for r in clients if r.data.get("guest")),
     }
 
 

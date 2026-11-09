@@ -1,0 +1,71 @@
+{% extends "base.html" %}{% set active = 'topology' %}
+{% block title %}Topology · lanwatch{% endblock %}
+{% block content %}
+<h1>Topology</h1>
+{% if not unifi_enabled %}
+<p class="empty">The topology comes from the UniFi controller, and <code>[unifi]</code> is off. See <code>docs/unifi.md</code> for the API key and the three lines of config.</p>
+{% elif topo is none %}
+<p class="empty">No controller data yet. The infra round reads the controller every {{ config.schedule.infra_interval_s // 60 }} minutes; <code>lanwatch unifi</code> does it now.{% if unifi_error %} Last attempt failed: <span class="mono">{{ unifi_error }}</span>{% endif %}</p>
+{% else %}
+<p class="lede">{{ topo.devices }} UniFi device{{ 's' if topo.devices != 1 }}{% if topo.offline %} (<span class="result-failed">{{ topo.offline }} offline</span>){% endif %}, {{ topo.clients }} client{{ 's' if topo.clients != 1 }}{% if topo.unknown_clients %}, {{ topo.unknown_clients }} of them never seen by lanwatch{% endif %}.
+Gateway on the left, access points and switches beside it, clients under the device they hang off. Each client's network is written under its name.{% if unifi_error %} <span class="result-failed">Last read failed</span> <span class="muted mono">{{ unifi_error }}</span>; this is the previous state.{% endif %}</p>
+
+{% if topo.legend | length > 1 %}
+<ul class="legend" aria-label="Networks">
+{% for n in topo.legend %}<li><span class="swatch net-{{ n.net_class }}" aria-hidden="true"></span>{{ n.name }}{% if n.vlan is not none %} <span class="muted">VLAN {{ n.vlan }}</span>{% endif %}{% if n.default %} <span class="muted">(default)</span>{% endif %} <span class="muted">· {{ n.clients }}</span></li>{% endfor %}
+</ul>
+{% endif %}
+
+<div class="topo-scroll">
+<svg class="topo" width="{{ topo.width }}" height="{{ topo.height }}" viewBox="0 0 {{ topo.width }} {{ topo.height }}" role="img" aria-labelledby="topo-title topo-desc">
+  <title id="topo-title">Network topology</title>
+  <desc id="topo-desc">{{ topo.devices }} UniFi devices and {{ topo.clients }} clients, drawn as a tree from the gateway. The same tree follows as a list.</desc>
+  {% for x1, y1, x2, y2 in topo.edges %}<line x1="{{ x1 }}" y1="{{ y1 }}" x2="{{ x2 }}" y2="{{ y2 }}"/>
+  {% endfor %}
+  {% for n in topo.nodes %}
+  {% set body %}<rect class="node {{ n.kind }}{% if n.net_class is not none %} net-{{ n.net_class }}{% endif %}{% if n.offline %} offline{% endif %}" x="{{ n.x }}" y="{{ n.y }}" width="{{ topo.node_w }}" height="{{ topo.node_h }}" rx="4"/>
+    <text class="label" x="{{ n.x + 8 }}" y="{{ n.y + 15 }}">{{ n.label | truncate(26, true, '…') }}</text>
+    {% set note = (n.network if n.kind == 'client' else n.sub) or '' %}{% if n.offline %}{% set note = 'offline' %}{% elif n.guest %}{% set note = 'guest · ' ~ note %}{% endif %}
+    {% if note %}<text class="note" x="{{ n.x + topo.node_w - 6 }}" y="{{ n.y + 15 }}" text-anchor="end">{{ note | truncate(16, true, '…') }}</text>{% endif %}{% endset %}
+  {% if n.device_id is not none %}<a href="/devices/{{ n.device_id }}">{{ body }}</a>{% else %}{{ body }}{% endif %}
+  {% endfor %}
+</svg>
+</div>
+
+<h2>As a list</h2>
+{% macro branch(node) %}
+<li><strong>{{ node.label }}</strong>{% if node.device_id is not none %} <a class="muted" href="/devices/{{ node.device_id }}">#{{ node.device_id }}</a>{% endif %}
+  {% if node.kind in ('gateway', 'ap', 'switch') %}<span class="kind">{{ {'gateway': 'gateway', 'ap': 'access point', 'switch': 'switch'}[node.kind] }}</span>{% if node.offline %} <span class="result-failed">{{ node.state | lower | replace('_', ' ') }}</span>{% endif %}{% if node.sub %} <span class="muted">{{ node.sub }}</span>{% endif %}
+  {% elif node.kind == 'client' %}<span class="muted">{{ node.sub }}{% if node.network %} · {{ node.network }}{% endif %} · {{ 'wired' if node.wired else 'wireless' }}{% if node.guest %} · guest{% endif %}</span>{% endif %}
+  {% if node.children %}<ol>{% for c in node.children %}{{ branch(c) }}{% endfor %}</ol>{% endif %}</li>
+{% endmacro %}
+<ol class="topo-list">{% for r in topo.tree %}{{ branch(r) }}{% endfor %}</ol>
+{% endif %}
+
+<style>
+/* Node colours follow the client's network (net-0..7); the network name is also written in
+   the node and in the list, so colour is a hint, not the message. */
+.topo-scroll { overflow-x:auto; padding-bottom:.5rem }
+svg.topo line { stroke:var(--line); stroke-width:1.5 }
+svg.topo rect.node { fill:var(--sunken); stroke:var(--line); stroke-width:1 }
+svg.topo rect.gateway, svg.topo rect.ap, svg.topo rect.switch { fill:var(--surface); stroke:var(--accent); stroke-width:1.5 }
+svg.topo rect.offline { stroke-dasharray:4 3; stroke:var(--fg2) }
+svg.topo rect.more { fill:transparent; stroke:none }
+svg.topo text { font:12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; fill:var(--fg) }
+svg.topo text.note { fill:var(--muted); font-size:11px }
+svg.topo a:hover rect, svg.topo a:focus rect { stroke:var(--focus); stroke-width:2 }
+.legend { list-style:none; padding:0; margin:0 0 .8rem; display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; font-size:.9rem }
+.swatch { display:inline-block; width:.9em; height:.9em; border-radius:3px; margin-right:.4em; vertical-align:-.1em; border:1px solid var(--line) }
+.net-0 { fill:color-mix(in srgb, var(--accent) 18%, var(--sunken)); background:color-mix(in srgb, var(--accent) 18%, var(--sunken)) }
+.net-1 { fill:color-mix(in srgb, #d9822b 28%, var(--sunken)); background:color-mix(in srgb, #d9822b 28%, var(--sunken)) }
+.net-2 { fill:color-mix(in srgb, #2a9d8f 28%, var(--sunken)); background:color-mix(in srgb, #2a9d8f 28%, var(--sunken)) }
+.net-3 { fill:color-mix(in srgb, #9b5de5 28%, var(--sunken)); background:color-mix(in srgb, #9b5de5 28%, var(--sunken)) }
+.net-4 { fill:color-mix(in srgb, #c9184a 28%, var(--sunken)); background:color-mix(in srgb, #c9184a 28%, var(--sunken)) }
+.net-5 { fill:color-mix(in srgb, #588157 28%, var(--sunken)); background:color-mix(in srgb, #588157 28%, var(--sunken)) }
+.net-6 { fill:color-mix(in srgb, #8d6e63 28%, var(--sunken)); background:color-mix(in srgb, #8d6e63 28%, var(--sunken)) }
+.net-7 { fill:color-mix(in srgb, #4a6fa5 28%, var(--sunken)); background:color-mix(in srgb, #4a6fa5 28%, var(--sunken)) }
+.topo-list, .topo-list ol { padding-left:1.4rem }
+.topo-list li { margin:.15rem 0 }
+@media (forced-colors: active) { svg.topo rect.node { fill:Canvas; stroke:CanvasText } svg.topo text { fill:CanvasText } .swatch { background:CanvasText } }
+</style>
+{% endblock %}

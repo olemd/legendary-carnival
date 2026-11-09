@@ -28,6 +28,7 @@ from lanwatch.pipeline import (
     run_infra,
     run_inventory,
     run_maintenance,
+    run_unifi,
 )
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
@@ -167,7 +168,14 @@ def _infra_line(f: Any) -> str:
     return (
         f"infra: dhcp servers {', '.join(f.dhcp_servers) or '-'}; {f.upnp_devices} upnp devices, "
         f"{f.igd_mappings} port mappings; {f.ipv6_devices} devices with global IPv6; "
-        f"{len(f.new_findings)} new findings, {len(f.resolved_findings)} resolved"
+        + (
+            f"unifi: {f.unifi_clients} clients, {f.unifi_devices} devices; "
+            if f.unifi_clients or f.unifi_devices
+            else f"unifi not read ({f.unifi_error}); "
+            if f.unifi_error
+            else ""
+        )
+        + f"{len(f.new_findings)} new findings, {len(f.resolved_findings)} resolved"
     )
 
 
@@ -213,7 +221,7 @@ def firmware(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
         typer.echo("no device reported a firmware version")
     for label, fw in sorted(out.found, key=lambda x: x[0].lower()):
         state = (
-            f"behind {fw.latest}"
+            (f"behind {fw.latest}" if fw.latest else "update available")
             if fw.update
             else "up to date"
             if fw.update is False
@@ -255,6 +263,67 @@ def exposure(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
         typer.echo(f"hostnames: {', '.join(out.hostnames)}")
     if out.vulns:
         typer.echo(f"known vulnerabilities: {', '.join(out.vulns)}")
+
+
+@app.command()
+def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
+    """Read the UniFi controller now: networks, UniFi devices and the clients it sees."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not cfg.unifi.enabled:
+        typer.echo(
+            "the UniFi link is off ([unifi] enabled = false): set url and api_key, see"
+            " docs/unifi.md",
+            err=True,
+        )
+        raise typer.Exit(1)
+    with _open_store(ctx) as store:
+        out = asyncio.run(run_unifi(cfg, store))
+    if out.error is not None:
+        typer.echo(f"error: {out.error}", err=True)
+        if "401" in out.error or "403" in out.error:
+            typer.echo("the controller rejected the API key", err=True)
+        if "CERTIFICATE_VERIFY_FAILED" in out.error or "certificate" in out.error.lower():
+            typer.echo(
+                "the console's certificate is self-signed: point unifi.ca_file at its"
+                " certificate, or set verify_tls = false",
+                err=True,
+            )
+        raise typer.Exit(1)
+    snap = out.snapshot
+    assert snap is not None
+    typer.echo(f"UniFi Network {snap.version or '?'}, site {snap.site_name}")
+    typer.echo("networks:")
+    for n in snap.networks:
+        flags = ", ".join(
+            f for f, on in (("default", n.default), ("isolated", bool(n.isolation))) if on
+        )
+        typer.echo(
+            f"  {n.name[:24]:<24} VLAN {n.vlan_id or '-'!s:<5} {n.subnet or '-':<20} {flags}"
+        )
+    typer.echo("devices:")
+    for dev in snap.devices:
+        update = " update available" if dev.firmware_updatable else ""
+        typer.echo(
+            f"  {(dev.name or dev.model)[:24]:<24} {dev.model:<10} {dev.state.lower():<10} "
+            f"{dev.firmware_version or '-':<14}{update}"
+        )
+    wired = sum(1 for c in snap.clients if c.mac and c.wired)
+    wireless = sum(1 for c in snap.clients if c.mac and not c.wired)
+    guests = sum(1 for c in snap.clients if c.mac and c.guest)
+    typer.echo(
+        f"clients: {out.clients} ({wired} wired, {wireless} wireless, {guests} guest); "
+        f"{out.clients - out.known_clients} not seen by lanwatch"
+        + (f"; {out.named} devices named from the controller" if out.named else "")
+    )
+    with _open_store(ctx) as store:
+        unknown = [r.data for r in store.infra("unifi-client") if not r.data.get("known")]
+    for c in sorted(unknown, key=lambda c: str(c.get("name") or c.get("mac"))):
+        typer.echo(
+            f"  {str(c.get('name') or '-')[:24]:<24} {c.get('ip') or '-':<15} {c.get('mac'):<17} "
+            f"{c.get('network_name') or '-'}"
+        )
 
 
 @app.command()
