@@ -617,7 +617,7 @@ def firmware_attrs(dev: UnifiDevice, checked: str) -> dict[str, Any]:
         latest=None,
         update=dev.firmware_updatable,
         source="unifi",
-        model=dev.model,
+        model="",  # already in the product name; the device page would print it twice
     )
     return {**asdict(fw), "checked": checked}
 
