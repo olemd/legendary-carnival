@@ -1,3 +1,29 @@
+lanwatch (0.5.0) unstable; urgency=medium
+
+  * Latency: a few pings to the gateway every discovery round. The dashboard
+    shows the round-trip time with a day's trend, and sustained packet loss
+    becomes a finding (net.packet-loss). Add an internet address under
+    [latency] targets to measure the path out as well.
+  * Internet exposure (opt-in, [exposure]): a daily lookup of the public
+    address in Shodan's InternetDB. Ports that answer from the internet are
+    a finding, critical when Shodan matched the service to published
+    vulnerabilities. Shown on the infrastructure page; "lanwatch exposure"
+    runs it by hand. Off by default: it tells Shodan the public address.
+  * Presence: every device page shows a heatmap of the hours and weekdays
+    the device answered over the last four weeks, and names the hour it is
+    most often away.
+  * Randomised MAC addresses: a new device with a private (locally
+    administered) address is reported at low severity, and a note explains
+    why it may reappear as a new device. A prefix that no manufacturer
+    holds in the IEEE registry is a separate low finding.
+  * Home Assistant: with notify.home_assistant.lanwatch_url set, tapping a
+    notification opens lanwatch, and a single new finding gets an "Accept"
+    button ("Yes, that's mine" for a new device). docs/home-assistant.md,
+    installed with the package, covers the token, the sensors, the buttons
+    and troubleshooting.
+
+ -- olemd <olemd@glemt.net>  Mon, 09 Nov 2026 12:11:09 +0100
+
 lanwatch (0.4.4) unstable; urgency=medium
 
   * Devices the scanner could not name now get their vendor from the IEEE
