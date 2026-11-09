@@ -130,6 +130,14 @@ ignore = []                            # source addresses never reported
 enabled = true
 online = true                           # ask vendors/GitHub for the latest release
 
+[exposure]
+# Once a day: what does the internet see of this network? The public address is looked up in
+# Shodan's InternetDB (free, no key), which scans the whole internet: ports that answer from
+# outside, host names, and services matched to published vulnerabilities. Off by default
+# because it tells a third party the network's public address; everything else stays local.
+enabled = false
+# ip_lookup_url = "https://api.ipify.org"   # asked when no UPnP gateway reports the address
+
 [latency]
 # A few pings to the gateway every discovery round: round-trip time and loss, with a day's
 # trend on the dashboard and a finding when probes are lost three rounds in a row. "gateway"

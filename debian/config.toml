@@ -33,6 +33,12 @@
 # online = false
 # enabled = false                   # no firmware check at all
 
+# What the internet sees of this network: a daily lookup of the public address in Shodan's
+# InternetDB (ports answering from outside, known vulnerabilities). Off until turned on here,
+# because it tells Shodan the network's public address.
+# [exposure]
+# enabled = true
+
 # Latency: a few pings to the gateway every discovery round, trend on the dashboard, finding
 # on sustained loss. Add an internet address to also measure the path out.
 # [latency]

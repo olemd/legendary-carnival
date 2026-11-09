@@ -19,6 +19,7 @@ from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.decoy import listening_ports
+from lanwatch.exposure import Exposure, check_exposure
 from lanwatch.firmware import Firmware, check_firmware
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
@@ -347,6 +348,26 @@ async def run_firmware(
         new_findings=rules.new_ids,
         resolved_findings=rules.resolved_ids,
     )
+
+
+async def run_exposure(config: Config, store: Store) -> Exposure | None:
+    """Daily: what Shodan sees of our public address, then the rules."""
+    exposure = await check_exposure(config, store)
+    if exposure is None:
+        return None
+    snap = store.latest_snapshot("exposure")
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snap.id if snap else 0,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    return exposure
 
 
 async def run_maintenance(config: Config, store: Store) -> dict[str, int]:

@@ -59,6 +59,47 @@ class PacketLossRule(Rule):
         return out
 
 
+class InternetExposedRule(Rule):
+    id = "net.internet-exposed"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "Shodan, which scans the whole internet, sees ports answering on this network's "
+        "public address. Each one is a service reachable by anyone, through a port forward, "
+        "UPnP, or the router's own admin interface. Critical when Shodan also matched the "
+        "service to published vulnerabilities. Check the forwards on the router; if the "
+        "service is meant to be public, make sure it is up to date and accept the finding."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("exposure"):
+            ports = [int(p) for p in r.data.get("ports") or []]
+            if not ports:
+                continue
+            vulns = [str(v) for v in r.data.get("vulns") or []]
+            shown = ", ".join(map(str, ports[:8])) + (", …" if len(ports) > 8 else "")
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"Visible from the internet: {len(ports)} port"
+                    f"{'s' if len(ports) != 1 else ''} on {r.key} ({shown})"
+                    + (f", {len(vulns)} known vulnerabilities" if vulns else ""),
+                    key_parts=[r.key],
+                    severity=Severity.CRITICAL if vulns else None,
+                    evidence={
+                        "ip": r.key,
+                        "ports": ports,
+                        "hostnames": r.data.get("hostnames") or [],
+                        "vulns": vulns,
+                        "cpes": r.data.get("cpes") or [],
+                        "checked": r.data.get("checked"),
+                    },
+                )
+            )
+        return out
+
+
 class RogueDhcpRule(Rule):
     id = "net.rogue-dhcp"
     kind = Kind.SECURITY
@@ -475,6 +516,7 @@ class DhcpSettingsChangedRule(Rule):
 
 
 RULES: list[Rule] = [
+    InternetExposedRule(),
     PacketLossRule(),
     RogueDhcpRule(),
     UpnpIgdRule(),

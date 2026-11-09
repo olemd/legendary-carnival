@@ -3,7 +3,8 @@
 Continuous auditor for your own local network. Discovers devices, tracks changes,
 runs deterministic rules, keeps an always-current `overview.md`, and (from M3) uses a
 local LLM to explain findings. Nothing about your network leaves it: the only outbound
-requests fetch public version and vendor lists, and `online = false` turns those off.
+requests fetch public version and vendor lists, and `online = false` turns those off. The
+opt-in exposure check is the exception: it sends the public address to Shodan's InternetDB.
 
 Plan and design decisions: [PLAN.md](PLAN.md).
 
@@ -106,6 +107,11 @@ Hygiene checks:
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
   or on GitHub unless `online = false`.
+- **Internet exposure** (`[exposure]`, off by default, daily, `lanwatch exposure`): the
+  public address looked up in Shodan's InternetDB, which scans the whole internet. Ports that
+  answer from outside become a finding, critical when Shodan also matched the service to
+  published vulnerabilities. The one check that tells a third party the network's public
+  address, hence opt-in.
 - **Latency** (`[latency]`): a few pings to the gateway each discovery round. The dashboard
   shows a day's trend, and sustained packet loss becomes a finding. Add an internet address
   to the targets to measure the path out as well.

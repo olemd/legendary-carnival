@@ -291,6 +291,16 @@ class FirmwareConfig(StrictModel):
     online: bool = True
 
 
+class ExposureConfig(StrictModel):
+    """Daily lookup of the public address in Shodan's InternetDB; see lanwatch/exposure.py."""
+
+    # Off by default: it is the one check that tells a third party something about this
+    # network (its public address). Turn it on to learn which ports answer from the internet.
+    enabled: bool = False
+    # Asked for the public address when no UPnP gateway reports it. Plain text, one line.
+    ip_lookup_url: str = "https://api.ipify.org"
+
+
 class LatencyConfig(StrictModel):
     """Round-trip time and packet loss, measured with a few pings every discovery round."""
 
@@ -332,6 +342,7 @@ class Config(StrictModel):
     firmware: FirmwareConfig = FirmwareConfig()
     oui: OuiConfig = OuiConfig()
     latency: LatencyConfig = LatencyConfig()
+    exposure: ExposureConfig = ExposureConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property

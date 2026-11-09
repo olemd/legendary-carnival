@@ -23,6 +23,7 @@ from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
 from lanwatch.pipeline import (
     run_discovery,
+    run_exposure,
     run_firmware,
     run_infra,
     run_inventory,
@@ -227,6 +228,36 @@ def firmware(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
 
 @app.command()
+def exposure(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
+    """What the internet sees of this network now: Shodan InternetDB on the public address."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not cfg.exposure.enabled:
+        typer.echo(
+            "the exposure check is off ([exposure] enabled = false): it sends the public"
+            " address to internetdb.shodan.io, so it is opt-in",
+            err=True,
+        )
+        raise typer.Exit(1)
+    try:
+        with _open_store(ctx) as store:
+            out = asyncio.run(run_exposure(cfg, store))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from e
+    if out is None:
+        typer.echo("could not determine the public address")
+        raise typer.Exit(1)
+    typer.echo(f"{out.ip} (address from {out.ip_source})")
+    typer.echo(f"ports visible from the internet: {', '.join(map(str, out.ports)) or 'none'}")
+    if out.hostnames:
+        typer.echo(f"hostnames: {', '.join(out.hostnames)}")
+    if out.vulns:
+        typer.echo(f"known vulnerabilities: {', '.join(out.vulns)}")
+
+
+@app.command()
 def services(ctx: typer.Context, device_id: int) -> None:
     """Open services on one device."""
     with _open_store(ctx) as store:
@@ -307,6 +338,8 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             ]
             if cfg.firmware.enabled:
                 jobs.append(job("firmware", 86400, lambda: run_firmware(cfg, store)))
+            if cfg.exposure.enabled:
+                jobs.append(job("exposure", 86400, lambda: run_exposure(cfg, store)))
             if cfg.llm.enabled:
                 from lanwatch.llm import hooks as llm_hooks
 

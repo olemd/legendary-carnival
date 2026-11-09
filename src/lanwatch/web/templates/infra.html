@@ -13,6 +13,22 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% if dhcp | length > 1 %}<p class="note"><span class="sev sev-critical">critical</span> More than one DHCP server is answering.</p>{% endif %}
 {% else %}<p class="empty">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}
 
+{% if exposure or config.exposure.enabled %}
+<h2>Seen from the internet</h2>
+{% if exposure %}
+<div class="tbl"><table><thead><tr><th>Public address</th><th>Ports answering</th><th>Host names</th><th>Known vulnerabilities</th><th>Checked</th></tr></thead><tbody>
+{% for r in exposure %}
+<tr><td class="mono">{{ r.key }} <span class="muted">{{ 'from the gateway' if r.data.ip_source == 'upnp' else 'looked up' }}</span></td>
+<td class="mono">{% if r.data.ports %}{{ r.data.ports | join(', ') }}{% else %}<span class="result-ok">none</span>{% endif %}</td>
+<td class="mono">{{ r.data.hostnames | join(', ') or '-' }}</td>
+<td>{% if r.data.vulns %}<span class="result-failed">{{ r.data.vulns | join(', ') }}</span>{% else %}<span class="muted">none matched</span>{% endif %}</td>
+<td class="ev">{{ r.data.checked | local }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+<p class="muted">From Shodan's InternetDB, which scans the whole internet: the outside view of this network. Checked once a day, or with <code>lanwatch exposure</code>.</p>
+{% else %}<p class="empty">Not checked yet; the daily exposure job has not run.</p>{% endif %}
+{% endif %}
+
 {% if dns_filter %}
 <h2>DNS filtering</h2>
 <div class="tbl"><table><thead><tr><th>Resolver</th><th>Source</th><th>Ads and trackers</th><th>Malicious domains</th><th>Test names it blocked</th></tr></thead><tbody>

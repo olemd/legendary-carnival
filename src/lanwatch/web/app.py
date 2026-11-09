@@ -313,6 +313,7 @@ def create_app(
             devices_by_mac={d.mac: d for d in s.devices() if d.mac},
             routers=s.infra("ipv6-router"),
             dns_filter=s.infra("dns-filter"),
+            exposure=s.infra("exposure"),
             snapshot=s.latest_snapshot("infra"),
         )
 
