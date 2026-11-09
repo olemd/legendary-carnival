@@ -144,7 +144,8 @@ enabled = false
 # A few pings to the gateway every discovery round: round-trip time and loss, with a day's
 # trend on the dashboard and a finding when probes are lost three rounds in a row. "gateway"
 # means this host's default gateways; add an internet address yourself if you want that
-# path measured too, e.g. targets = ["gateway", "1.1.1.1"].
+# path measured too, e.g. targets = ["gateway", "1.1.1.1"]. Pings run from the service
+# itself (no privilege needed), so internet targets work without changes to the helper.
 enabled = true
 targets = ["gateway"]
 count = 4

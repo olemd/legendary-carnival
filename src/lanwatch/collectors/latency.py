@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from lanwatch.collectors.base import Executor
+from lanwatch.collectors.base import CommandError, Executor, LocalExecutor
 
 log = logging.getLogger(__name__)
 
@@ -62,19 +62,43 @@ def resolve_targets(configured: list[str], gateways: list[str]) -> list[str]:
 
 async def measure(ex: Executor, targets: list[str], count: int) -> list[PingResult]:
     """Ping every target `count` times, concurrently. A target ping cannot reach at all
-    still yields a result (all lost); a target ping cannot run against yields nothing."""
+    still yields a result (all lost); a target ping cannot run against yields nothing.
+
+    ping needs no privilege on a modern Linux (unprivileged ICMP sockets are open to every
+    group by default), so it runs in this process first. Only when that is impossible (no
+    ping binary here, or the sockets are closed) does it go through the privileged helper,
+    which refuses targets outside the attached networks unless started with --allow-net.
+    Nothing raised here reaches the discovery round: a measurement that cannot be made is
+    logged and skipped."""
+    local = ex if ex.name == "local" else LocalExecutor()
+    args = ["ping", "-c", str(count), "-W", "1"]
+    timeout = count * 2 + 5
 
     async def one(target: str) -> PingResult | None:
-        rc, out, err = await ex.run(
-            ["ping", "-c", str(count), "-W", "1", target], timeout=count * 2 + 5
-        )
-        if rc == -2:
-            log.debug("ping is not installed; latency not measured")
-            return None
-        result = parse_ping(target, out)
-        if result is None:
-            log.debug("ping %s gave no summary (rc=%s): %s", target, rc, err.strip()[:120])
-        return result
+        try:
+            rc, out, err = await local.run([*args, target], timeout=timeout)
+            if rc != -2 and "not permitted" not in err:
+                return _result(target, rc, out, err)
+            if local is ex:
+                log.debug("cannot ping %s from here (rc=%s): %s", target, rc, err.strip()[:120])
+                return None
+            rc, out, err = await ex.run([*args, target], timeout=timeout)
+            return _result(target, rc, out, err)
+        except CommandError as e:
+            log.warning("latency: %s not measured: %s", target, e)
+        except Exception:
+            log.exception("latency: ping %s failed", target)
+        return None
 
     results = await asyncio.gather(*(one(t) for t in targets))
     return [r for r in results if r is not None]
+
+
+def _result(target: str, rc: int, out: str, err: str) -> PingResult | None:
+    if rc == -2:
+        log.debug("ping is not installed; latency not measured")
+        return None
+    result = parse_ping(target, out)
+    if result is None:
+        log.debug("ping %s gave no summary (rc=%s): %s", target, rc, err.strip()[:120])
+    return result

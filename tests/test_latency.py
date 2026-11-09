@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from lanwatch.collectors import latency
+from lanwatch.collectors.base import CommandError
 from lanwatch.collectors.latency import measure, parse_ping, resolve_targets
 from lanwatch.config import Config
 from lanwatch.models import Severity, iso, now_utc
@@ -62,11 +65,37 @@ class FakeExecutor:
         return True, False
 
 
-async def test_measure_pings_each_target() -> None:
+async def test_measure_pings_each_target(monkeypatch: pytest.MonkeyPatch) -> None:
     ex = FakeExecutor({"192.168.1.1": (0, OK), "192.0.2.1": (1, LOST), "bad": (2, "ping: bad")})
+    monkeypatch.setattr(latency, "LocalExecutor", lambda: ex)
     results = await measure(ex, ["192.168.1.1", "192.0.2.1", "bad"], count=4)
     assert [r.target for r in results] == ["192.168.1.1", "192.0.2.1"]
     assert ex.calls[0] == ["ping", "-c", "4", "-W", "1", "192.168.1.1"]
+
+
+async def test_measure_falls_back_to_the_helper_and_survives_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ping here (rc -2) or ICMP sockets closed: ask the helper. The helper refusing an
+    internet target must not raise; the round goes on without that measurement."""
+    local = FakeExecutor(
+        {"192.168.1.1": (-2, ""), "1.1.1.1": (2, "ping: socket: Operation not permitted")}
+    )
+    monkeypatch.setattr(latency, "LocalExecutor", lambda: local)
+
+    class Helper(FakeExecutor):
+        name = "helper"
+
+        async def run(self, args: list[str], timeout: float) -> tuple[int, str, str]:
+            if args[-1] == "1.1.1.1":
+                raise CommandError("helper refused: target 1.1.1.1 is outside the networks")
+            return await super().run(args, timeout)
+
+    helper = Helper({"192.168.1.1": (0, OK)})
+    results = await measure(helper, ["192.168.1.1", "1.1.1.1"], count=4)
+    assert [r.target for r in results] == ["192.168.1.1"]
+    assert [c[-1] for c in local.calls] == ["192.168.1.1", "1.1.1.1"]  # tried locally first
+    assert [c[-1] for c in helper.calls] == ["192.168.1.1"]  # 1.1.1.1 raised before recording
 
 
 def _record(store: Store, target: str, text: str, ago_s: int) -> None:
