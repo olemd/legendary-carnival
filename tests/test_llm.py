@@ -300,3 +300,31 @@ def test_llm_disabled_leaves_findings_unexplained(store: Store, tmp_path: Path) 
     _, finding_ids = seed(store, config)
     assert all(not f.explanation for f in store.findings(FindingStatus.OPEN))
     assert finding_ids
+
+
+async def test_background_llm_work_runs_one_at_a_time(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scheduler's lanes run side by side; their LLM steps must not pile up on a local
+    model that answers one prompt at a time."""
+    import asyncio
+
+    config.llm.enabled = True
+    active = peak = 0
+
+    async def slow(*_: object) -> bool:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return True
+
+    monkeypatch.setattr(hooks, "_after_round", slow)
+    monkeypatch.setattr(hooks, "_write_digest", slow)
+    await asyncio.gather(
+        hooks.after_round(config, store, [1], []),
+        hooks.after_round(config, store, [2], []),
+        hooks.write_digest(config, store),
+    )
+    assert peak == 1

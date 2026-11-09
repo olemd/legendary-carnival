@@ -75,11 +75,15 @@ def create_app(
     write_deps = [Depends(auth), Depends(same_origin)]
 
     def scan_state() -> dict[str, Any] | None:
-        """The job the scheduler is running right now, if any."""
-        job = scheduler.running if scheduler is not None else None
-        if job is None or job.running_since is None:
+        """The jobs the scheduler is running right now (lanes run side by side), the
+        longest-running first, or None."""
+        busy = scheduler.running_jobs if scheduler is not None else []
+        if not busy or busy[0].running_since is None:
             return None
-        return {"job": job.name, "seconds": int(time.time() - job.running_since)}
+        return {
+            "job": ", ".join(j.name for j in busy),
+            "seconds": int(time.time() - busy[0].running_since),
+        }
 
     def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
         return templates.TemplateResponse(

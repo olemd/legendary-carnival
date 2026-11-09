@@ -1,6 +1,8 @@
-"""Minimal asyncio scheduler: jobs with fixed intervals, one job at a time. Stopping cancels
-the job in progress, a job can be requested to run now, and each job remembers how its last
-run went so the web UI can show it."""
+"""Minimal asyncio scheduler: jobs with fixed intervals, grouped in lanes. Each lane runs one
+job at a time and the lanes run side by side, so an hour-long service scan in the "scan"
+lane does not hold up the five-minute discovery round in the "main" lane. Stopping cancels
+the jobs in progress, a job can be requested to run now, and each job remembers how its
+last run went so the web UI can show it."""
 
 from __future__ import annotations
 
@@ -35,6 +37,11 @@ class Job:
     failures: int = 0
     # Daily jobs run at a fixed local time instead of on an interval.
     daily_at: str | None = None
+    # Jobs in one lane run one at a time; different lanes run concurrently.
+    lane: str = "main"
+    # Name of a job that must have completed once in this process before this one may
+    # start (a service scan needs the device list a discovery round produces).
+    after: str | None = None
     # Observable state, wall-clock seconds. Read by the web UI from another thread, which is
     # fine for plain attribute reads.
     running_since: float | None = None
@@ -43,8 +50,10 @@ class Job:
     last_error: str | None = None
 
     @classmethod
-    def daily(cls, name: str, hhmm: str, run: Callable[[], Awaitable[object]]) -> Job:
-        j = cls(name, 86400, run, daily_at=hhmm)
+    def daily(
+        cls, name: str, hhmm: str, run: Callable[[], Awaitable[object]], lane: str = "main"
+    ) -> Job:
+        j = cls(name, 86400, run, daily_at=hhmm, lane=lane)
         j.next_due = time.monotonic() + seconds_until_daily(hhmm)
         return j
 
@@ -82,13 +91,18 @@ class Scheduler:
     def __init__(self, jobs: list[Job]) -> None:
         self.jobs = jobs
         self._stop = asyncio.Event()
-        self._wake = asyncio.Event()  # set by trigger() to cut the idle wait short
-        self._lock = asyncio.Lock()
+        # Per lane: set by trigger() or a finished job to cut the idle wait short.
+        self._wake: dict[str, asyncio.Event] = {j.lane: asyncio.Event() for j in jobs}
+        self._locks: dict[str, asyncio.Lock] = {lane: asyncio.Lock() for lane in self._wake}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def stopped(self) -> asyncio.Event:
         return self._stop
+
+    @property
+    def lanes(self) -> list[str]:
+        return list(self._wake)
 
     def stop(self) -> None:
         self._stop.set()
@@ -97,18 +111,31 @@ class Scheduler:
         return next((j for j in self.jobs if j.name == name), None)
 
     @property
+    def running_jobs(self) -> list[Job]:
+        """Jobs in progress, the longest-running first."""
+        busy = [j for j in self.jobs if j.running_since is not None]
+        return sorted(busy, key=lambda j: j.running_since or 0.0)
+
+    @property
     def running(self) -> Job | None:
-        return next((j for j in self.jobs if j.running_since is not None), None)
+        """The longest-running job in progress, if any."""
+        busy = self.running_jobs
+        return busy[0] if busy else None
+
+    def _wake_all(self) -> None:
+        for e in self._wake.values():
+            e.set()
 
     def trigger(self, name: str) -> bool:
         """Make a job due now. Safe to call from any thread; False for an unknown job.
-        If another job is running, this one starts as soon as that finishes."""
+        If another job in the same lane is running, this one starts as soon as that
+        finishes."""
         job = self.job(name)
         if job is None:
             return False
         job.next_due = time.monotonic()
         if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._wake.set)
+            self._loop.call_soon_threadsafe(self._wake[job.lane].set)
         return True
 
     def install_signal_handlers(self) -> None:
@@ -116,8 +143,15 @@ class Scheduler:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stop)
 
+    def _ready(self, job: Job) -> bool:
+        """Has the job this one waits for (Job.after) completed at least once?"""
+        if job.after is None:
+            return True
+        dep = self.job(job.after)
+        return dep is None or dep.last_finished is not None
+
     async def run_job(self, job: Job) -> None:
-        async with self._lock:
+        async with self._locks[job.lane]:
             started = time.monotonic()
             job.running_since = time.time()
             try:
@@ -139,6 +173,8 @@ class Scheduler:
             job.last_finished = time.time()
             job.last_duration_s = time.monotonic() - started
             job.schedule_next()
+        # A job in another lane may have been waiting for this one (Job.after).
+        self._wake_all()
 
     async def _run_until_stopped(self, job: Job) -> None:
         """Run a job, but give up on it the moment stop() is called. A scan can take many
@@ -155,32 +191,53 @@ class Scheduler:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-    async def run_forever(self) -> None:
-        log.info(
-            "scheduler: %s",
-            ", ".join(
-                f"{j.name} daily at {j.daily_at}"
-                if j.daily_at
-                else f"{j.name} every {int(j.interval_s)}s"
-                for j in self.jobs
-            ),
-        )
-        self._loop = asyncio.get_running_loop()
+    async def _run_lane(self, lane: str) -> None:
+        jobs = [j for j in self.jobs if j.lane == lane]
+        wake = self._wake[lane]
         while not self._stop.is_set():
             now = time.monotonic()
-            due = [j for j in self.jobs if j.next_due <= now]
+            due = [j for j in jobs if j.next_due <= now and self._ready(j)]
             for job in due:
                 if self._stop.is_set():
                     break
                 await self._run_until_stopped(job)
             if self._stop.is_set():
                 break
-            self._wake.clear()
-            wait = max(0.0, min(j.next_due for j in self.jobs) - time.monotonic())
-            if wait == 0.0:
-                continue  # something was triggered while the last job ran
-            sleepers = [asyncio.create_task(e.wait()) for e in (self._stop, self._wake)]
+            wake.clear()
+            waiting = [j.next_due for j in jobs if self._ready(j)]
+            if waiting:
+                wait: float | None = max(0.0, min(waiting) - time.monotonic())
+                if wait == 0.0:
+                    continue  # something was triggered while the last job ran
+            else:
+                wait = None  # every job waits for another lane; that lane wakes this one
+            sleepers = [asyncio.create_task(e.wait()) for e in (self._stop, wake)]
             await asyncio.wait(sleepers, timeout=wait, return_when=asyncio.FIRST_COMPLETED)
             for t in sleepers:
                 t.cancel()
+
+    async def run_forever(self) -> None:
+        log.info(
+            "scheduler: %s",
+            "; ".join(
+                f"{lane}: "
+                + ", ".join(
+                    f"{j.name} daily at {j.daily_at}"
+                    if j.daily_at
+                    else f"{j.name} every {int(j.interval_s)}s"
+                    for j in self.jobs
+                    if j.lane == lane
+                )
+                for lane in self.lanes
+            ),
+        )
+        self._loop = asyncio.get_running_loop()
+        lanes = [asyncio.create_task(self._run_lane(lane)) for lane in self.lanes]
+        try:
+            await asyncio.gather(*lanes)
+        finally:
+            for t in lanes:
+                t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*lanes, return_exceptions=True)
         log.info("scheduler stopped")

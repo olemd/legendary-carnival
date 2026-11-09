@@ -109,7 +109,9 @@ Day to day, in the web UI:
 
 - **Status** shows each scheduled job (running, last result, next run) with a "Run now"
   button, whether scans have raw-socket privileges, and whether the LLM is reachable. A
-  header indicator shows when a scan is in progress.
+  header indicator shows when a scan is in progress. Service scans and the LLM jobs each
+  run in their own lane, so discovery and infra keep their schedule during an hour-long
+  inventory scan.
 - **Devices** can be renamed, re-classified, merged (one device seen under two MAC
   addresses, typically a phone with a private MAC) and forgotten. Mark a device as watched
   to get a finding when it stays offline.

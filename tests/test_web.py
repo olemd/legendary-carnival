@@ -139,6 +139,11 @@ def test_status_page_shows_jobs_and_run_now_queues_one(config: Config) -> None:
     assert "helper socket" in r.text and "2 in a row" in r.text
     assert client.get("/api/status").json()["running"]["job"] == "inventory"
     assert "Scanning: inventory" in client.get("/").text  # the header indicator
+    # Lanes run side by side: the indicator names every job in progress, longest first.
+    jobs[0].running_since = time.time() - 5
+    running = client.get("/api/status").json()["running"]
+    assert running["job"] == "inventory, discovery" and running["seconds"] >= 125
+    jobs[0].running_since = None
 
     r = client.post("/scan/discovery", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/status"
