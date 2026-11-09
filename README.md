@@ -20,6 +20,32 @@ Assistant. Runs from a Debian package, bare, in rootful podman, or rootless podm
 
 ## Quick start
 
+On Debian or Ubuntu, install the package. It bundles its own Python, starts the service
+and runs nothing as root. Each release carries an amd64 and an arm64 `.deb`:
+
+```sh
+gh release download -R olemd/legendary-carnival -p "lanwatch_*_$(dpkg --print-architecture).deb"
+sudo apt install ./lanwatch_*.deb
+```
+
+The service is now scanning the networks this machine is attached to: discovery every
+5 minutes, service inventory hourly, a deep scan weekly. The first round is the baseline;
+changes and findings accumulate from there.
+
+```sh
+sudo lanwatch devices               # the CLI works on the service's database
+sudo lanwatch findings
+sudo lanwatch config show           # effective configuration
+journalctl -u lanwatch -f
+```
+
+Web UI: http://127.0.0.1:8321 on the host, loopback only by default. To reach it from
+another machine set `web.host` and `web.password` in `/etc/lanwatch/config.toml`, then
+`sudo systemctl restart lanwatch`. Every key in that file is optional; the reference with
+every key, its default and what it does is `/etc/lanwatch/config.toml.default`.
+
+From a checkout, without installing anything but the scanners:
+
 ```sh
 sudo apt install nmap arp-scan      # arp-scan optional, nmap needed for service inventory
 uv sync
@@ -29,8 +55,7 @@ uv run lanwatch findings
 uv run lanwatch run                 # daemon: discovery 5 min, inventory 1 h, deep weekly, web UI
 ```
 
-Web UI: http://127.0.0.1:8321 while `run` (or `lanwatch web`) is active. Loopback only by
-default; to reach it from another machine set `web.host` and `web.password`.
+Web UI from a checkout: http://127.0.0.1:8321 while `run` (or `lanwatch web`) is active.
 
 LLM: install Ollama, `ollama pull qwen3.8:27b` (or `gemma4:26b`), then `lanwatch llm check`. The LLM never
 produces findings or severities. It classifies devices (kind + one line), explains each
@@ -138,17 +163,12 @@ configuration after defaults, file, env and CLI are merged.
 
 ## Deploy
 
-On Debian and Ubuntu, install the package. It bundles its own Python, starts the service,
-and runs nothing as root:
+The Debian package (see Quick start) is the recommended layout. To build it yourself:
 
 ```sh
 make deb                                          # needs debhelper and uv
 sudo apt install ./dist/lanwatch_*_amd64.deb
-sudo lanwatch findings                            # CLI on the service's database
 ```
-
-Config is `/etc/lanwatch/config.toml`; the web UI is on http://127.0.0.1:8321. Tagged
-versions also have the `.deb` attached to their GitHub release.
 
 Other layouts are in `deploy/README.md`: bare systemd, rootful podman (quadlet, host
 network, two capabilities), or rootless podman plus `lanwatch-helper`, a small daemon that
