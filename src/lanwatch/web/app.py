@@ -313,6 +313,7 @@ def create_app(
             request,
             "infra.html",
             dhcp=s.infra("dhcp"),
+            dhcp_probed=s.meta_get("dhcp.probed"),
             upnp=upnp,
             igds=[r for r in upnp if r.data.get("is_igd")],
             ipv6=[d for d in s.devices() if d.attrs.get("ipv6")],

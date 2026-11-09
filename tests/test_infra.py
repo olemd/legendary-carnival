@@ -189,6 +189,7 @@ async def test_run_infra_end_to_end(
     monkeypatch.setattr(pipeline, "discover_upnp", fake_upnp)
     out = await pipeline.run_infra(config, store, executor=Ex())
     assert out.dhcp_servers == ["192.168.1.1", "192.168.1.66"]
+    assert store.meta_get("dhcp.probed") == "yes"
     assert out.upnp_devices == 2 and out.igd_mappings == 2 and out.ipv6_devices == 1
     assert out.devices_enriched == 3
 
@@ -378,3 +379,24 @@ def test_web_infra_page(tmp_path: Path, config: Config) -> None:
     d = client.get(f"/devices/{ids['nas']}").text
     assert "_smb._tcp.local" in d and "2001:db8::40" in d
     assert json.loads(client.get("/api/devices").text)[0]["attrs"] is not None
+
+
+def test_infra_page_says_why_there_is_no_dhcp_result(config: Config) -> None:
+    """ "Needs root or the helper" was shown before the first infra round too, while the
+    helper was running fine and the round was only queued."""
+    from fastapi.testclient import TestClient
+
+    from lanwatch.web.app import create_app
+
+    with Store(config.store_path):
+        pass
+    client = TestClient(create_app(config))
+    assert "Not probed yet: the first infra round has not run." in client.get("/infra").text
+    with Store(config.store_path) as store:
+        store.finish_snapshot(store.begin_snapshot("infra", "helper"), 0)
+        store.meta_set("dhcp.probed", "no")
+    text = client.get("/infra").text
+    assert "Not probed: the DHCP probe needs root, CAP_NET_RAW or the helper." in text
+    with Store(config.store_path) as store:
+        store.meta_set("dhcp.probed", "yes")
+    assert "No DHCP server answered the last probe." in client.get("/infra").text

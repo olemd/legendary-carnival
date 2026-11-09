@@ -11,7 +11,9 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 <td class="mono">{{ r.data.router }}</td><td class="mono">{{ r.data.dns | join(', ') }}</td><td class="mono">{{ (r.data.ntp or []) | join(', ') or '-' }}</td><td>{{ r.data.domain }}</td><td class="ev">{{ r.first_seen | local }}</td></tr>{% endfor %}
 </tbody></table></div>
 {% if dhcp | length > 1 %}<p class="note"><span class="sev sev-critical">critical</span> More than one DHCP server is answering.</p>{% endif %}
-{% else %}<p class="empty">No DHCP probe result (needs root, CAP_NET_RAW or the helper).</p>{% endif %}
+{% elif not snapshot %}<p class="empty">Not probed yet: the first infra round has not run.</p>
+{% elif dhcp_probed == 'no' %}<p class="empty">Not probed: the DHCP probe needs root, CAP_NET_RAW or the helper.</p>
+{% else %}<p class="empty">No DHCP server answered the last probe.</p>{% endif %}
 
 {% if exposure or config.exposure.enabled %}
 <h2>Seen from the internet</h2>
