@@ -114,10 +114,45 @@ class HomeAssistantChannel:
         domain, _, service = self.cfg.service.partition(".")
         r = await client.post(
             f"{self.cfg.url.rstrip('/')}/api/services/{domain}/{service}",
-            json={"title": n.title, "message": n.body, "data": {"lanwatch": n.payload()}},
+            json={"title": n.title, "message": n.body, "data": self.notification_data(n)},
             headers=self._headers(),
         )
         r.raise_for_status()
+
+    def notification_data(self, n: Notification) -> dict[str, Any]:
+        """The companion app's `data`: the full payload for automations, a tag so an update
+        replaces the earlier notification about the same thing, and, with lanwatch_url set,
+        a tap that opens lanwatch plus action buttons. "Open" is a link the app follows by
+        itself; "Accept" fires a mobile_app_notification_action event with the finding id,
+        for an automation to act on (docs/home-assistant.md has one)."""
+        data: dict[str, Any] = {"lanwatch": n.payload(), "group": "lanwatch"}
+        single = n.findings[0] if len(n.findings) == 1 else None
+        if single is not None:
+            data["tag"] = f"lanwatch-{single.id}"
+        base = (self.cfg.lanwatch_url or "").rstrip("/")
+        actions: list[dict[str, str]] = []
+        if base:
+            target = (
+                f"{base}/devices/{single.device_id}"
+                if single is not None and single.device_id is not None
+                else f"{base}/findings"
+            )
+            data["url"] = target  # iOS
+            data["clickAction"] = target  # Android
+            actions.append({"action": "URI", "title": "Open in lanwatch", "uri": target})
+        if n.kind == "finding.new" and single is not None:
+            mine = single.rule_id == "inventory.new-device"
+            actions.append(
+                {"action": "LANWATCH_ACCEPT", "title": "Yes, that's mine" if mine else "Accept"}
+            )
+            data["action_data"] = {
+                "finding_id": single.id,
+                "rule_id": single.rule_id,
+                "device_id": single.device_id,
+            }
+        if actions:
+            data["actions"] = actions
+        return data
 
     async def publish_state(self, summary: dict[str, Any], client: httpx2.AsyncClient) -> None:
         """sensor.lanwatch_* entities via the states API (dashboard-friendly, not persisted

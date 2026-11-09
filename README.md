@@ -64,10 +64,12 @@ actions are logged as `chat.action` events in the timeline.
 
 Notifications: all channels off by default. Enable one or more under `[notify]`: ntfy,
 generic webhook, e-mail (SMTP), Home Assistant (a notify service plus `sensor.lanwatch_*`
-entities updated every round). Findings at or above `notify.min_severity` (default
-medium) are pushed once when they open, batched per round, with the LLM's one-line
-summary when available. The daily digest is pushed too. `lanwatch notify --test` checks
-the channels; `lanwatch notify` and the web UI show the delivery log.
+entities updated every round; tapping a notification opens lanwatch and a button accepts
+the finding, see [docs/home-assistant.md](docs/home-assistant.md)). Findings at or above
+`notify.min_severity` (default medium) are pushed once when they open, batched per round,
+with the LLM's one-line summary when available. The daily digest is pushed too.
+`lanwatch notify --test` checks the channels; `lanwatch notify` and the web UI show the
+delivery log.
 
 Discovery backend is picked automatically: `arp-scan` (as root or with CAP_NET_RAW),
 else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table.

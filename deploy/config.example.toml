@@ -95,6 +95,8 @@ url = "http://homeassistant.local:8123"
 token = ""                              # long-lived access token, required when enabled
 service = "notify.notify"               # e.g. notify.mobile_app_my_phone
 publish_sensors = true                  # sensor.lanwatch_devices_online, _devices_known, _open_findings
+# lanwatch_url = "http://192.168.1.10:8321"  # tapping a notification opens lanwatch; adds buttons
+                                        # (see docs/home-assistant.md)
 
 [notify.email]
 enabled = false

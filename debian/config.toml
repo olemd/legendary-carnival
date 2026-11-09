@@ -25,6 +25,19 @@
 #                                   # (sends a few test lookups through that resolver)
 # vulners = true                    # match service versions against vulners.com
 
+# Notifications: findings at or above min_severity are pushed once, when they open, and so
+# is the daily digest. Home Assistant gets a notify service plus sensor.lanwatch_* entities;
+# with lanwatch_url the notification opens lanwatch when tapped and has an "Accept" button.
+# Step by step: /usr/share/doc/lanwatch/home-assistant.md. ntfy, webhook and e-mail exist too.
+# [notify]
+# min_severity = "medium"
+# [notify.home_assistant]
+# enabled = true
+# url = "http://homeassistant.local:8123"
+# token = "long-lived access token"
+# service = "notify.mobile_app_my_phone"
+# lanwatch_url = "http://192.168.1.10:8321"
+
 # Firmware check, once a day and with "sudo lanwatch firmware": the version Home Assistant,
 # ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report. Reading it stays on the
 # LAN. Whether a newer release exists is asked of the vendor or GitHub for most of them

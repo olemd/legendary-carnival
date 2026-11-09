@@ -216,6 +216,10 @@ class HomeAssistantConfig(StrictModel):
     service: str = "notify.notify"  # e.g. notify.mobile_app_my_phone
     publish_sensors: bool = True  # sensor.lanwatch_* via the states API
     min_severity: Severity | None = None
+    # lanwatch's web UI as a phone on the LAN reaches it, e.g. "http://192.168.1.10:8321".
+    # When set, a notification opens the device or finding in lanwatch when tapped, and
+    # carries an "Open" button; see docs/home-assistant.md for the "Accept" button.
+    lanwatch_url: str | None = None
 
     @model_validator(mode="after")
     def _token_required(self) -> HomeAssistantConfig:
@@ -223,6 +227,10 @@ class HomeAssistantConfig(StrictModel):
             raise ValueError("notify.home_assistant.token is required when enabled")
         if "." not in self.service:
             raise ValueError("notify.home_assistant.service must be domain.service")
+        if self.lanwatch_url is not None and not self.lanwatch_url.startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError("notify.home_assistant.lanwatch_url must be an http(s) URL")
         return self
 
 

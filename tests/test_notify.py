@@ -129,7 +129,12 @@ async def test_webhook_payload_and_ha_calls() -> None:
     svc = rec.calls[1]
     assert svc.url.path == "/api/services/notify/mobile_app_phone"
     assert svc.headers["Authorization"] == "Bearer T"
-    assert json.loads(svc.content)["message"] == "B"
+    sent = json.loads(svc.content)
+    assert sent["message"] == "B" and sent["data"]["tag"] == "lanwatch-f1"
+    # Without lanwatch_url there is nothing to open, but a single new finding can be accepted.
+    assert sent["data"]["actions"] == [{"action": "LANWATCH_ACCEPT", "title": "Accept"}]
+    assert sent["data"]["action_data"] == {"finding_id": "f1", "rule_id": "r.x", "device_id": 3}
+    assert "url" not in sent["data"]
     states = [c.url.path for c in rec.calls[2:]]
     assert states == [
         "/api/states/sensor.lanwatch_devices_online",
@@ -275,3 +280,46 @@ def test_cli_notify_and_web_page(tmp_path: Path) -> None:
     assert page.status_code == 200 and "hello" in page.text and "failed" in page.text
     r = runner.invoke(app, ["--data-dir", str(tmp_path), "notify"])
     assert "ERR webhook" in r.output and "ok  ntfy" in r.output
+
+
+def test_ha_notification_actions_with_lanwatch_url() -> None:
+    from lanwatch.models import FindingRow
+
+    def row(fid: str, rule: str, device_id: int | None) -> FindingRow:
+        return FindingRow(
+            id=fid,
+            rule_id=rule,
+            severity=Severity.MEDIUM,
+            kind=Kind.SECURITY,
+            title=fid,
+            device_id=device_id,
+            evidence={},
+            first_seen="2026-11-04T10:00:00+00:00",
+            last_seen="2026-11-04T10:00:00+00:00",
+            status=FindingStatus.OPEN,
+            explanation=None,
+        )
+
+    ha = ch.HomeAssistantChannel(
+        HomeAssistantConfig(enabled=True, token="T", lanwatch_url="http://lan:8321/")
+    )
+    # One new device: tap opens its page, and the button asks whether it is yours.
+    data = ha.notification_data(
+        ch.Notification(
+            "finding.new", "T", "B", Severity.MEDIUM, [row("a", "inventory.new-device", 7)]
+        )
+    )
+    assert data["url"] == data["clickAction"] == "http://lan:8321/devices/7"
+    assert [a["title"] for a in data["actions"]] == ["Open in lanwatch", "Yes, that's mine"]
+    assert data["actions"][0]["uri"] == "http://lan:8321/devices/7"
+    # Several findings at once: open the list, and no accept button (it would be ambiguous).
+    data = ha.notification_data(
+        ch.Notification(
+            "finding.new", "T", "B", Severity.MEDIUM, [row("a", "r.x", 7), row("b", "r.y", None)]
+        )
+    )
+    assert data["url"] == "http://lan:8321/findings" and "tag" not in data
+    assert [a["action"] for a in data["actions"]] == ["URI"] and "action_data" not in data
+    # A resolved finding or the digest: open, but nothing to accept.
+    data = ha.notification_data(ch.Notification("digest", "T", "B"))
+    assert [a["action"] for a in data["actions"]] == ["URI"]
