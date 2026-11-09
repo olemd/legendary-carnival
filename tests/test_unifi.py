@@ -657,6 +657,12 @@ def test_cli_unifi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     r = runner.invoke(app, ["--config", str(cfg), "--data-dir", str(tmp_path), "unifi"])
     assert r.exit_code == 0, r.output
     assert "UniFi Network 10.1.84, site Home" in r.output and "update available" in r.output
+    # Device columns are as wide as their longest entry: a long model name ("USW-Lite-8-PoE")
+    # no longer runs into the state column.
+    rows = r.output.split("devices:\n", 1)[1].split("clients:", 1)[0].splitlines()
+    assert len(rows) == 3
+    states = {row.index(state) for row in rows for state in ("online", "offline") if state in row}
+    assert len(states) == 1, rows
     assert "clients: 2 (1 wired, 1 wireless, 1 guest); 2 not seen by lanwatch" in r.output
     assert "Visitor phone" in r.output
 
