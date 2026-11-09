@@ -14,7 +14,7 @@ from typing import Annotated, Any
 
 import typer
 
-from lanwatch import __version__
+from lanwatch import __version__, oui
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
 from lanwatch.decoy import Decoys, publish_listening, record_hit
 from lanwatch.logging_setup import set_verbose, setup_logging
@@ -281,7 +281,12 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                 j.resume_from(float(last) if last else None)
                 return j
 
-            jobs = [
+            jobs = []
+            if cfg.oui.online:
+                # First in line: on a fresh install the registry is then in place before
+                # the first discovery round names its devices.
+                jobs.append(job("oui", 7 * 86400, lambda: oui.refresh(cfg)))
+            jobs += [
                 job(
                     "discovery",
                     cfg.schedule.discovery_interval_s,

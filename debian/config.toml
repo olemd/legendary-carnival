@@ -33,6 +33,12 @@
 # online = true
 # enabled = false                   # no firmware check at all
 
+# Vendor names for MAC addresses. arp-scan and nmap ship IEEE registry lists that age with
+# the package, so a device with a newly assigned prefix shows no vendor. This downloads the
+# registry from standards-oui.ieee.org once a week; it is the only thing it sends out.
+# [oui]
+# online = true
+
 # Decoy ports: lanwatch listens on ports this machine does not use; a device that connects
 # is scanning the network and becomes a finding. A port in use when lanwatch starts is
 # skipped (see the Status page). A port listed here is taken, so remove it before

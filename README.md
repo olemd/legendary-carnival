@@ -105,6 +105,8 @@ Hygiene checks:
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; looking up the latest release at the vendor or
   on GitHub needs `online = true`.
+- **MAC vendors** (`[oui]`): devices the scanner cannot name get their vendor from a
+  fresher IEEE registry, downloaded weekly with `online = true`, else nmap's installed copy.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
   hands out blocks ads or known-malicious test names.
 

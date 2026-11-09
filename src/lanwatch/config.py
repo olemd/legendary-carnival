@@ -290,6 +290,15 @@ class FirmwareConfig(StrictModel):
     online: bool = False
 
 
+class OuiConfig(StrictModel):
+    """Vendor names for MAC addresses; see lanwatch/oui.py."""
+
+    # Download the IEEE registry (standards-oui.ieee.org) once a week, so devices with a
+    # prefix newer than the lists arp-scan and nmap ship get a vendor name. Leaves the
+    # network; off, the copy installed with nmap is used instead.
+    online: bool = False
+
+
 class RuleOverride(StrictModel):
     enabled: bool | None = None
     severity: Severity | None = None
@@ -307,6 +316,7 @@ class Config(StrictModel):
     web: WebConfig = WebConfig()
     decoy: DecoyConfig = DecoyConfig()
     firmware: FirmwareConfig = FirmwareConfig()
+    oui: OuiConfig = OuiConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property

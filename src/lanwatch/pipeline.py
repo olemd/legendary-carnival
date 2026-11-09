@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from lanwatch import oui
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import select_backend
@@ -418,6 +419,8 @@ async def run_discovery(
     hosts = [h for h in hosts if h.ip not in own]
     hosts.extend(HostObservation(ip=ip, mac=mac, source="self") for ip, mac in own.items())
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
+    # The backend's own OUI list may predate the device's prefix; try a fresher registry.
+    hosts = oui.fill_vendors(hosts, oui.load(config.data_dir))
 
     is_baseline = store.finished_snapshot_count("discovery") == 0
     previous = store.latest_snapshot("discovery")
