@@ -1,3 +1,15 @@
+lanwatch (0.4.4) unstable; urgency=medium
+
+  * Devices the scanner could not name now get their vendor from the IEEE
+    registry: arp-scan ships an OUI list from March 2024, so every prefix
+    assigned since (e4:65:b8, Espressif, among many) showed no vendor. The
+    registry is downloaded weekly by a new "oui" job; with [oui] online =
+    false, nmap's installed copy is used instead.
+  * Firmware and OUI online lookups are on by default. Both fetch public
+    lists and send nothing about the network; online = false turns them off.
+
+ -- olemd <olemd@glemt.net>  Mon, 09 Nov 2026 10:32:13 +0100
+
 lanwatch (0.4.3) unstable; urgency=medium
 
   * LLM: when an answer is not valid JSON, the log now says why the model
