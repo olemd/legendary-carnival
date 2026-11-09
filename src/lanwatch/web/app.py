@@ -156,6 +156,7 @@ def create_app(
             findings=findings,
             last_inventory=s.last_inventory_at(device_id),
             events=s.events(device_id=device_id, limit=50),
+            presence=_presence_grid(s.presence(device_id, _days_ago(PRESENCE_DAYS))),
             aliases=s.device_aliases(device_id),
             others=others,
             same_host={o.id for o in others if host and (o.hostname or "").lower() == host},
@@ -484,6 +485,44 @@ def _sparkline(
         "first_ts": series[0][0],
         "last_ts": series[-1][0],
         "n": n,
+    }
+
+
+PRESENCE_DAYS = 28
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _presence_grid(rows: list[tuple[str, bool]]) -> dict[str, Any] | None:
+    """Weekday x hour (local time): the share of discovery rounds in that hour the device
+    answered. None when there are no rounds yet. Rounds run every few minutes, so a cell
+    normally holds several rounds per week; a 50% cell means "there half the time"."""
+    if not rows:
+        return None
+    seen = [[0] * 24 for _ in range(7)]
+    total = [[0] * 24 for _ in range(7)]
+    for ts, answered in rows:
+        t = datetime.fromisoformat(ts).astimezone()
+        total[t.weekday()][t.hour] += 1
+        seen[t.weekday()][t.hour] += int(answered)
+    grid = [
+        [None if total[d][h] == 0 else seen[d][h] / total[d][h] for h in range(24)]
+        for d in range(7)
+    ]
+    answered_total = sum(a for _, a in rows)
+    # The hour the device is most often away during, if it is ever away.
+    gaps: list[tuple[float, int, int]] = [
+        (p, d, h) for d in range(7) for h in range(24) if (p := grid[d][h]) is not None
+    ]
+    quietest = min(gaps, default=None)
+    return {
+        "days": WEEKDAYS,
+        "grid": grid,
+        "rounds": len(rows),
+        "share": answered_total / len(rows),
+        "first": rows[0][0],
+        "quietest": None
+        if quietest is None or quietest[0] >= 1.0
+        else {"day": WEEKDAYS[quietest[1]], "hour": quietest[2], "share": quietest[0]},
     }
 
 

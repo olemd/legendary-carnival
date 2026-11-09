@@ -103,6 +103,14 @@ tr[class^="f-"] > td:first-child { box-shadow:inset 3px 0 0 var(--stripe) }
 .tile-value { font-size:2.1rem; font-weight:700; line-height:1.15; margin:.15rem 0 .35rem }
 .tile-value .of { font-size:.9rem; font-weight:500; color:var(--muted) }
 .tile-note { color:var(--muted); font-size:.82rem }
+/* Presence heatmap: --p (0..1) sets the cell colour between empty and the accent. The share
+   is also in each cell's title and visually-hidden text, so colour is never the only cue. */
+table.heat { table-layout:fixed; width:100%; max-width:52rem; border-collapse:separate; border-spacing:2px }
+table.heat th { font-weight:500; color:var(--muted); font-size:.72rem; padding:0 .15rem; text-align:left; border:0 }
+table.heat th[scope=row] { width:2.4rem }
+table.heat td { height:1.1rem; padding:0; border:0; border-radius:3px;
+  background:color-mix(in srgb, var(--accent) calc(var(--p, 0) * 100%), var(--sunken)) }
+table.heat td.none { background:repeating-linear-gradient(45deg, var(--sunken) 0 3px, transparent 3px 6px) }
 svg.spark { display:block; max-width:100%; height:auto; margin:.2rem 0 .3rem; overflow:visible }
 svg.spark polyline { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; stroke-linecap:round }
 svg.spark circle { fill:var(--accent); stroke:var(--surface); stroke-width:2 }

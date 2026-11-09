@@ -26,6 +26,22 @@
   <dt>Last service scan</dt><dd>{{ last_inventory | local }}</dd>
 </dl>
 
+{% if presence %}
+<h2>Presence, last 4 weeks</h2>
+<p class="muted">Answered {{ (presence.share * 100) | round | int }}% of {{ presence.rounds }} discovery rounds since {{ presence.first | local }}.
+{% if presence.quietest %}Most often away {{ presence.quietest.day }} {{ '%02d' | format(presence.quietest.hour) }}:00–{{ '%02d' | format(presence.quietest.hour + 1) }}:00 (there {{ (presence.quietest.share * 100) | round | int }}% of the time).{% else %}Never missed a round.{% endif %}</p>
+<div class="tbl"><table class="heat" aria-label="Presence by weekday and hour, local time">
+<thead><tr><th><span class="vh">Day</span></th>{% for h in range(24) %}<th scope="col"{% if h % 3 %} aria-hidden="true"{% endif %}>{{ '%02d' | format(h) if h % 3 == 0 else '' }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in presence.grid %}<tr><th scope="row">{{ presence.days[loop.index0] }}</th>
+{% set day = presence.days[loop.index0] %}{% for p in row %}{% set h = loop.index0 %}
+{% if p is none %}<td class="none" title="{{ day }} {{ '%02d' | format(h) }}:00: no rounds"><span class="vh">no data</span></td>
+{% else %}<td style="--p:{{ p | round(2) }}" title="{{ day }} {{ '%02d' | format(h) }}:00: there {{ (p * 100) | round | int }}% of the time"><span class="vh">{{ (p * 100) | round | int }}%</span></td>{% endif %}
+{% endfor %}</tr>
+{% endfor %}
+</tbody></table></div>
+{% endif %}
+
 <h2>Edit</h2>
 <form class="edit" method="post" action="/devices/{{ device.id }}/edit">
   <label for="d-name">Name</label>

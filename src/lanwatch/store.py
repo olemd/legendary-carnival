@@ -568,6 +568,19 @@ class Store:
             missed += 1
         return missed
 
+    def presence(self, device_id: int, since: str) -> list[tuple[str, bool]]:
+        """(finished_at, answered) for every finished discovery round since a timestamp,
+        oldest first. The device page draws its week-by-hour presence from this."""
+        rows = self._db.execute(
+            """SELECT s.finished_at,
+                      EXISTS(SELECT 1 FROM sightings WHERE snapshot_id = s.id AND device_id = ?)
+               FROM snapshots s
+               WHERE s.kind = 'discovery' AND s.finished_at IS NOT NULL AND s.finished_at >= ?
+               ORDER BY s.id""",
+            (device_id, since),
+        ).fetchall()
+        return [(str(r[0]), bool(r[1])) for r in rows]
+
     def delete_device(self, device_id: int) -> bool:
         """Forget a device and everything recorded about it. Timeline events stay, without
         a link. If the device is still on the network, the next discovery adds it as new."""
