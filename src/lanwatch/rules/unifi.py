@@ -110,6 +110,14 @@ class UnifiOnlyClientRule(Rule):
         return out
 
 
+def _name_and_model(name: str, model: object) -> str:
+    """ "stue (AC Pro)", or just the model for a device nobody renamed (the controller then
+    uses the model as its name)."""
+    if not model or str(model).lower() == name.lower():
+        return name
+    return f"{name} ({model})"
+
+
 class UnifiDeviceOfflineRule(Rule):
     id = "net.unifi-device-offline"
     kind = Kind.PROBLEM
@@ -132,7 +140,7 @@ class UnifiDeviceOfflineRule(Rule):
             out.append(
                 self.finding(
                     ctx,
-                    title=f"UniFi {r.data.get('model')} {name} is {how}",
+                    title=f"UniFi {_name_and_model(name, r.data.get('model'))} is {how}",
                     key_parts=[r.key],
                     device_id=d.id if d else None,
                     evidence={

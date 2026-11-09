@@ -397,7 +397,7 @@ async def test_run_unifi_and_rules(store: Store, config: Config) -> None:
     assert only.evidence["guest"] is True
     offline = rules["net.unifi-device-offline"]
     assert (
-        offline.title == "UniFi USW-Lite-8-PoE Garage switch is offline"
+        offline.title == "UniFi Garage switch (USW-Lite-8-PoE) is offline"
         and offline.device_id is None
     )
     assert offline.severity is Severity.HIGH
@@ -437,6 +437,29 @@ async def test_iot_on_main_network_rule(store: Store, config: Config) -> None:
         "unifi-ssid", {"s": {"name": "Things", "type": "IOT_OPTIMIZED", "enabled": True}}, sid
     )
     assert len(IotOnMainNetworkRule().evaluate(_ctx(store, config))) == 1
+
+
+def test_offline_title_names_the_model_once(store: Store, config: Config) -> None:
+    """A switch nobody renamed carries its model as its name: "UniFi USW Pro Max 24 USW Pro
+    Max 24 is offline" said it twice."""
+    sid = store.begin_snapshot("infra", "t")
+    store.replace_infra(
+        "unifi-device",
+        {
+            "a8:bb:cc:00:00:24": {"name": "USW Pro Max 24", "model": "USW Pro Max 24"},
+            "a8:bb:cc:00:00:25": {"name": None, "model": "USW Flex Mini"},
+            "a8:bb:cc:00:00:26": {"name": "stue", "model": "AC Pro"},
+        },
+        sid,
+    )
+    rows = {r.key: {**r.data, "state": "OFFLINE"} for r in store.infra("unifi-device")}
+    store.replace_infra("unifi-device", rows, sid)
+    titles = sorted(f.title for f in UnifiDeviceOfflineRule().evaluate(_ctx(store, config)))
+    assert titles == [
+        "UniFi USW Flex Mini is offline",
+        "UniFi USW Pro Max 24 is offline",
+        "UniFi stue (AC Pro) is offline",
+    ]
 
 
 async def test_flat_network_rule_groups_by_controller_network(store: Store, config: Config) -> None:
