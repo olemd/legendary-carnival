@@ -76,8 +76,9 @@ else `nmap -sn`, else a plain ping sweep plus the kernel neighbour table.
 
 Service scans default to the `gentle` profile: nmap `-T2`, top 200 ports, light version
 detection, a handful of safe scripts, port 9100 never touched (printers print probe
-garbage). New devices get a light scan as soon as they appear. `lanwatch rules` lists the
-rules with their effective severity.
+garbage). A device that cannot take a scan at all goes in `scan.skip_hosts`: it is
+discovered and tracked like the rest, but nmap never touches it. New devices get a light
+scan as soon as they appear. `lanwatch rules` lists the rules with their effective severity.
 
 Day to day, in the web UI:
 

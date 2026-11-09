@@ -20,6 +20,7 @@ resolve_hostnames = true
 light_top_ports = 200                   # hourly and new-device scans
 deep_udp_top_ports = 50                 # weekly deep scan, needs root/CAP_NET_RAW; 0 disables
 exclude_ports = [9100]                  # never probed
+skip_hosts = []                         # IPs or MACs tracked but never port-scanned (gear that crashes under nmap)
 version_detection = true
 scripts = ["ssl-cert", "ssh2-enum-algos", "smb-protocols", "vnc-info", "http-title"]
 scan_new_devices_immediately = true

@@ -35,7 +35,7 @@ from lanwatch.decoy import listening_ports
 from lanwatch.exposure import Exposure, check_exposure
 from lanwatch.firmware import Firmware, check_firmware
 from lanwatch.llm import hooks as llm_hooks
-from lanwatch.models import Finding, HostObservation, ServiceDiff, iso, now_utc
+from lanwatch.models import Device, Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
     default_gateways,
     ipv6_routers,
@@ -109,6 +109,13 @@ async def run_inventory(
             )
         )
         targets = {k: v for k, v in targets.items() if k in due}
+    if config.scan.skip_hosts:
+        # Devices that do not tolerate nmap (scan.skip_hosts): discovered and tracked as
+        # usual, never port-scanned, whichever way this scan was requested.
+        skipped = [d for d in targets.values() if _excluded(d, config.scan.skip_hosts)]
+        if skipped:
+            log.info("skipping %s (scan.skip_hosts)", ", ".join(d.label for d in skipped))
+            targets = {k: v for k, v in targets.items() if not _excluded(v, config.scan.skip_hosts)}
     ips = [d.ip for d in targets.values() if d.ip]
     kind = "deep" if deep else "inventory"
     if not ips:
@@ -427,9 +434,10 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
     return out
 
 
-def _excluded(h: HostObservation, excludes: list[str]) -> bool:
+def _excluded(h: HostObservation | Device, excludes: list[str]) -> bool:
+    """Is this host named in the list, by IP or by MAC (case-insensitive)?"""
     ex = {e.lower() for e in excludes}
-    return h.ip in ex or (h.mac is not None and h.mac in ex)
+    return h.ip in ex or (h.mac is not None and h.mac.lower() in ex)
 
 
 @dataclass(slots=True)

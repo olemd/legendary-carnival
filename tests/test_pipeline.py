@@ -123,3 +123,38 @@ async def test_run_inventory_with_fake_nmap(
     assert out2.devices == 2 and out2.new_findings == []
     out3 = await pipeline.run_inventory(config, store, deep=True)
     assert out3.devices == 0 and scanned[-1] != scanned[-2]
+
+
+async def test_skip_hosts_are_tracked_but_never_scanned(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scan.skip_hosts names devices by IP or MAC (any case). They stay in the inventory,
+    and no scan, scheduled or asked for by device id, puts them in nmap's target list."""
+    from lanwatch.collectors.services import ServiceScanResult
+
+    sid = store.begin_snapshot("discovery", "t")
+    rec = store.record_hosts(
+        sid,
+        [
+            HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="t"),
+            HostObservation(ip="192.168.1.40", source="t"),
+            HostObservation(ip="192.168.1.77", source="t"),
+        ],
+    )
+    store.finish_snapshot(sid, 3)
+    config.scan.skip_hosts = ["AA:BB:CC:00:00:01", "192.168.1.77"]
+    scanned: list[list[str]] = []
+
+    async def fake_scan(
+        ex: object, targets: list[str], cfg: ScanConfig, deep: bool
+    ) -> ServiceScanResult:
+        scanned.append(sorted(targets))
+        return ServiceScanResult(hosts=[])
+
+    monkeypatch.setattr(pipeline, "scan_services", fake_scan)
+    await pipeline.run_inventory(config, store)
+    assert scanned == [["192.168.1.40"]]
+    # Asking for the skipped device by id does not override the list either.
+    out = await pipeline.run_inventory(config, store, device_ids=[rec.new_device_ids[0]])
+    assert out.devices == 0 and scanned == [["192.168.1.40"]]
+    assert len(store.devices()) == 3  # still tracked

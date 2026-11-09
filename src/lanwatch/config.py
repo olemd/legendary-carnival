@@ -99,6 +99,10 @@ class ScanConfig(StrictModel):
     deep_udp_top_ports: int = Field(default=50, ge=0, le=1000)
     # Never probed. 9100 (raw printing) makes printers print probe garbage.
     exclude_ports: list[int] = Field(default_factory=lambda: [9100])
+    # Devices (IP or MAC) that are discovered and tracked like any other, but never
+    # port-scanned: some embedded gear crashes or reboots when nmap probes it. Empty by
+    # default on purpose: a device that cannot take a scan is worth knowing about first.
+    skip_hosts: list[str] = Field(default_factory=list)
     version_detection: bool = True
     # nmap scripts, all from the "safe" category, run only against open ports.
     scripts: list[str] = Field(
