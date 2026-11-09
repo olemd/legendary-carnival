@@ -27,17 +27,18 @@
 
 # Firmware check, once a day and with "sudo lanwatch firmware": the version Home Assistant,
 # ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report. Reading it stays on the
-# LAN. Whether a newer release exists has to be asked of the vendor or GitHub for most of
-# them, and that is off until you turn it on here.
+# LAN. Whether a newer release exists is asked of the vendor or GitHub for most of them
+# (public version lists, nothing about your devices); online = false keeps it on the LAN.
 # [firmware]
-# online = true
+# online = false
 # enabled = false                   # no firmware check at all
 
 # Vendor names for MAC addresses. arp-scan and nmap ship IEEE registry lists that age with
-# the package, so a device with a newly assigned prefix shows no vendor. This downloads the
-# registry from standards-oui.ieee.org once a week; it is the only thing it sends out.
+# the package, so a device with a newly assigned prefix shows no vendor. The registry is
+# downloaded from standards-oui.ieee.org once a week (a public list, the only request made),
+# or with online = false taken from nmap's installed copy.
 # [oui]
-# online = true
+# online = false
 
 # Decoy ports: lanwatch listens on ports this machine does not use; a device that connects
 # is scanning the network and becomes a finding. A port in use when lanwatch starts is

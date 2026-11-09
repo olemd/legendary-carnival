@@ -2,8 +2,9 @@
 
 Kontinuerlig agent som holder oversikt over eget lokalnett, oppdager problemer,
 svakheter og forbedringsmuligheter, og bruker en lokal LLM til å forklare og
-prioritere. Alt kjører lokalt. Ingenting forlater nettverket uten eksplisitt
-opt-in.
+prioritere. Alt kjører lokalt. Ingenting om nettverket forlater det: de eneste
+utgående forespørslene henter offentlige versjons- og leverandørlister, og de kan
+slås av.
 
 Arbeidsnavn på pakken: `lanwatch`.
 

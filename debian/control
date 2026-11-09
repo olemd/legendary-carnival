@@ -21,7 +21,8 @@ Description: continuous auditor for your own local network
  lanwatch discovers the devices on your LAN, inventories their open services,
  evaluates rules against what it finds and reports changes and findings through
  a local web UI and notifications. An optional local LLM (Ollama) explains
- findings; nothing leaves the network unless you enable it.
+ findings. Nothing about the network leaves it: the only outbound requests
+ fetch public version and vendor lists, and those can be turned off.
  .
  The package is self-contained: it ships its own Python interpreter and
  libraries under /usr/lib/lanwatch. The service runs as an unprivileged user

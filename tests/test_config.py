@@ -87,5 +87,6 @@ def test_examples_in_the_packaged_default_config_are_valid() -> None:
     # The sections people look for when they want to turn something on.
     assert {"web", "llm", "scan", "firmware", "decoy"} <= set(data)
     cfg = Config.model_validate(data)
-    assert cfg.firmware.online is True and cfg.scan.dns_filter_check is True
+    assert cfg.firmware.online is False and cfg.oui.online is False
+    assert cfg.scan.dns_filter_check is True
     assert cfg.decoy.ports == [23, 1433, 3389, 5555]

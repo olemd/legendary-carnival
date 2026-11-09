@@ -2,7 +2,8 @@
 
 Continuous auditor for your own local network. Discovers devices, tracks changes,
 runs deterministic rules, keeps an always-current `overview.md`, and (from M3) uses a
-local LLM to explain findings. Nothing leaves your network.
+local LLM to explain findings. Nothing about your network leaves it: the only outbound
+requests fetch public version and vendor lists, and `online = false` turns those off.
 
 Plan and design decisions: [PLAN.md](PLAN.md).
 
@@ -103,10 +104,10 @@ Hygiene checks:
 
 - **Firmware** (`[firmware]`, daily, `lanwatch firmware`): the version Home Assistant,
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
-  exists. Reading versions stays on the LAN; looking up the latest release at the vendor or
-  on GitHub needs `online = true`.
+  exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
+  or on GitHub unless `online = false`.
 - **MAC vendors** (`[oui]`): devices the scanner cannot name get their vendor from a
-  fresher IEEE registry, downloaded weekly with `online = true`, else nmap's installed copy.
+  fresher IEEE registry, downloaded weekly, or from nmap's installed copy with `online = false`.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
   hands out blocks ads or known-malicious test names.
 

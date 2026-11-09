@@ -15,9 +15,10 @@ answer the question themselves, each read the way its maker documents:
 
 Reading the running version stays on the LAN: an mDNS question, or one unauthenticated GET
 to a device that already has that port open. "(online)" lookups ask the vendor or GitHub
-what the latest release is; they are the only part that leaves the network and happen only
-with [firmware] online = true. Shelly and Pi-hole compare for themselves, so they need no
-online lookup from here. A device that requires a password is left alone.
+what the latest release is; they are the only part that leaves the network (public version
+lists, nothing about your devices) and stop with [firmware] online = false. Shelly and
+Pi-hole compare for themselves, so they need no online lookup from here. A device that
+requires a password is left alone.
 
 Never requested: anything that changes a device. In particular Shelly's /ota takes
 parameters that start an update, and only the bare path is ever fetched.

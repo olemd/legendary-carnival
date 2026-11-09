@@ -285,9 +285,10 @@ class FirmwareConfig(StrictModel):
     # Read running versions from devices: mDNS, and one unauthenticated GET to a few
     # well-known local URLs on devices that have that port open. Stays on the LAN.
     enabled: bool = True
-    # Also ask vendors and GitHub what the latest release is. The only part that leaves
-    # the network; without it only devices that compare for themselves report updates.
-    online: bool = False
+    # Also ask vendors and GitHub what the latest release is. Leaves the network (public
+    # version lists, nothing about your devices); off, only devices that compare for
+    # themselves report updates.
+    online: bool = True
 
 
 class OuiConfig(StrictModel):
@@ -295,8 +296,9 @@ class OuiConfig(StrictModel):
 
     # Download the IEEE registry (standards-oui.ieee.org) once a week, so devices with a
     # prefix newer than the lists arp-scan and nmap ship get a vendor name. Leaves the
-    # network; off, the copy installed with nmap is used instead.
-    online: bool = False
+    # network (a public list, nothing about your devices); off, the copy installed with
+    # nmap is used instead.
+    online: bool = True
 
 
 class RuleOverride(StrictModel):

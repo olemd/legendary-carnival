@@ -8,8 +8,9 @@ names the hosts the discovery backend could not, from a fresher copy of the regi
 Sources, longest prefix wins (MA-S, 36 bit, over MA-M, 28 bit, over MA-L, 24 bit):
 
   1. The registry downloaded by the weekly "oui" job into <data_dir>/oui/: the MA-L, MA-M
-     and MA-S CSV files published at standards-oui.ieee.org. Only with [oui] online = true;
-     the download is the one thing this module sends off the LAN.
+     and MA-S CSV files published at standards-oui.ieee.org. The download is the one thing
+     this module sends off the LAN (a public list, nothing about your devices); it stops
+     with [oui] online = false.
   2. Otherwise nmap's nmap-mac-prefixes, which Debian refreshes with each nmap release and
      which is already installed (nmap is a dependency).
 

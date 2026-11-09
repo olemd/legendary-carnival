@@ -125,16 +125,17 @@ ignore = []                            # source addresses never reported
 # Once a day: which version do devices run, and is a newer one out? Covers Home Assistant,
 # ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin. Reading the running version stays on the
 # LAN. Shelly and Pi-hole say themselves whether an update exists; for the others the
-# latest release has to be looked up at the vendor or on GitHub, which needs online = true.
+# latest release is looked up at the vendor or on GitHub (public version lists, nothing about
+# your devices is sent). online = false keeps everything on the LAN.
 enabled = true
-online = false                          # ask vendors/GitHub for the latest release
+online = true                           # ask vendors/GitHub for the latest release
 
 [oui]
 # Vendor names for MAC addresses come from the IEEE registry lists arp-scan and nmap ship,
 # which age with the package: a device whose prefix was assigned after that shows no vendor.
-# online = true downloads the registry from standards-oui.ieee.org once a week (the only
-# network request this makes); off, the copy installed with nmap is used.
-online = false
+# The registry is downloaded from standards-oui.ieee.org once a week (a public list, the only
+# request this makes). online = false uses the copy installed with nmap instead.
+online = true
 
 [rules]
 # "inventory.ip-changed" = { enabled = false }
