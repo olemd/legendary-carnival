@@ -30,6 +30,7 @@ from lanwatch.overview import update as update_overview
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 from lanwatch.web.topology import build_topology
+from lanwatch.web.ups import ups_block, ups_tile
 
 TEMPLATES = Path(__file__).parent / "templates"
 SEVERITY_ORDER = [s.value for s in Severity]
@@ -129,6 +130,7 @@ def create_app(
             events=s.events(limit=15, exclude_prefix="presence."),
             spark=_sparkline(s.snapshot_series("discovery", _days_ago(7))),
             latency=_latency_tile(s),
+            ups=ups_tile(s, config),
         )
 
     @app.get("/devices", response_class=HTMLResponse, dependencies=deps)
@@ -169,6 +171,7 @@ def create_app(
             others=others,
             same_host={o.id for o in others if host and (o.hostname or "").lower() == host},
             kinds=[k.value for k in DeviceKind],
+            ups=ups_block(s, config, d, request.query_params.get("range", "24h")),
         )
 
     @app.post("/devices/{device_id}/edit", dependencies=write_deps)

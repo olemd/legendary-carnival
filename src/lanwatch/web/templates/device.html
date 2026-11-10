@@ -36,6 +36,8 @@
   <dt>Last service scan</dt><dd>{{ last_inventory | local }}</dd>
 </dl>
 
+{% if ups %}{% include "_ups.html" %}{% endif %}
+
 {% if presence %}
 <h2>Presence, last 4 weeks</h2>
 <p class="muted">Answered {{ (presence.share * 100) | round | int }}% of {{ presence.rounds }} discovery rounds since {{ presence.first | local }}.
