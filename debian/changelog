@@ -1,3 +1,31 @@
+lanwatch (0.7.0) unstable; urgency=medium
+
+  * The scheduler runs jobs in lanes. Service scans (inventory, deep) have
+    their own lane and so do the LLM jobs (digest, suggestions), so
+    discovery and the infra probes keep their schedule during a long scan;
+    on a fresh install they used to wait behind the first inventory and
+    deep scan. Within a lane jobs still run one at a time. The header
+    indicator lists every running job.
+  * Discovery takes a second, slower look at addresses that stayed silent
+    but should be there: devices that were online in the previous round
+    and, with [unifi] enabled, clients the controller lists on a scanned
+    subnet. Three pings with a two-second wait; only a reply counts. A
+    power-saving Wi-Fi device that sleeps through the scan is no longer
+    reported offline and back online. New setting scan.recheck_silent, on
+    by default.
+  * New setting scan.skip_hosts: devices (IP or MAC) that are discovered
+    and tracked like the rest but never port-scanned, for gear that crashes
+    or reboots under nmap. Empty by default.
+  * The infrastructure page tells apart "not probed yet", "the DHCP probe
+    needs root, CAP_NET_RAW or the helper" and "no DHCP server answered";
+    it used to blame missing privileges before the first infra round.
+  * UniFi: the offline finding names the model once ("UniFi USW Pro Max 24
+    is offline"), "lanwatch unifi" sizes its device columns to their
+    contents, and the documentation covers UniFi OS Server and where the
+    API key is created in Network 10.
+
+ -- olemd <olemd@glemt.net>  Tue, 10 Nov 2026 10:02:59 +0100
+
 lanwatch (0.6.0) unstable; urgency=medium
 
   * UniFi controller ([unifi], read-only, API key): per client the uplink
