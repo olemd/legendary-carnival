@@ -402,9 +402,15 @@ def _track_router_mismatches(store: Store, neighbours: list[Neighbour], snapshot
     before = {r.key: r.data for r in store.infra("router-arp-mismatch")}
     entries: dict[str, dict[str, Any]] = {}
     for n in neighbours:
-        seen = sorted({mac for _, mac in holders.get(n.ip, []) if mac})
+        held = holders.get(n.ip, [])
+        seen = sorted({mac for _, mac in held if mac})
         if not seen or n.mac in seen:
             continue  # lanwatch has no MAC for it this round, or the two agree
+        # ip_holders names a device by its own MAC. A merged device answering with its
+        # other address is still that device: compare who it is, not which MAC it used.
+        routed = store.device_by_key(n.mac)
+        if routed is not None and routed.id in {device_id for device_id, _ in held}:
+            continue
         prev = before.get(n.ip) or {}
         same = prev.get("router_mac") == n.mac and prev.get("lanwatch_macs") == seen
         entries[n.ip] = {

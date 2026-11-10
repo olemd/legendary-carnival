@@ -333,3 +333,40 @@ async def test_router_without_lease_table(
     assert out.system is not None and out.system.vendor == "net-snmp"
     assert out.leases is None and store.infra("router-dhcp") == []
     assert snmp.JNX_DHCP_BINDINGS not in (rec / "args").read_text()
+
+
+async def test_merged_device_answering_with_its_other_mac_is_no_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    """A device merged from two MAC addresses (a phone with a private one) is known by the
+    first. When it answers with the other, that is the MAC the router has for the address;
+    both name the same device, so there is nothing to report."""
+    from lanwatch.models import HostObservation
+    from lanwatch.rules.base import RuleContext
+    from lanwatch.rules.engine import Engine
+
+    config.snmp = snmp_config()
+
+    def discovery(mac: str) -> None:
+        sid = store.begin_snapshot("discovery", "t")
+        store.record_hosts(sid, [HostObservation(ip="192.168.1.20", mac=mac, source="t")])
+        store.finish_snapshot(sid, 1)
+
+    discovery("aa:bb:cc:00:00:99")
+    discovery("aa:bb:cc:00:00:20")
+    keep = store.device_by_key("aa:bb:cc:00:00:99")
+    other = store.device_by_key("aa:bb:cc:00:00:20")
+    assert keep is not None and other is not None
+    assert store.merge_devices(keep.id, other.id)
+    discovery("aa:bb:cc:00:00:20")  # the router has .20 as aa..20 too
+    assert store.ip_holders()["192.168.1.20"] == [(keep.id, "aa:bb:cc:00:00:99")]
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    _router_fixtures(tmp_path)
+
+    for _ in range(2):
+        sid = store.begin_snapshot("infra", "t")
+        out = await pipeline.collect_snmp(config, store, sid)
+        assert out.error is None and out.mismatches == 0
+        ctx = RuleContext(store, config, sid, None, is_baseline=False)
+        emitted = Engine(config).run(ctx).emitted
+        assert [f for f in emitted if f.rule_id == "net.router-arp-mismatch"] == []
