@@ -1,3 +1,38 @@
+lanwatch (0.8.0) unstable; urgency=medium
+
+  * Router over SNMPv3 ([snmp], read-only, off by default): what the
+    router is, its ARP and IPv6 neighbour table and, on Juniper, its DHCP
+    leases, every infra round or with "lanwatch snmp". Each device shows
+    the interface the router reaches it on and whether it holds a lease;
+    the infrastructure page has the whole table. The tables are never
+    taken as presence: addresses the router knows but the scan missed get
+    the recheck's slower ping. Authentication and encryption only, no
+    v1/v2c communities. Needs snmpbulkwalk; the package now recommends
+    snmp. See docs/snmp.md.
+  * New rule net.router-arp-mismatch: the router ties an address to
+    another MAC than the one that answered lanwatch, two reads in a row.
+    Critical for the gateway, DHCP and DNS addresses.
+  * airMAX radios ([airos], read-only, off by default): model, airOS
+    version and the link each radio is part of, with signal, noise, CCQ
+    and airMAX quality from both ends, every infra round or with
+    "lanwatch airos". Uses the radio's read-only account over HTTPS, with
+    the certificate pinned on first contact; "lanwatch airos --accept-cert
+    HOST" pins a new one. One login attempt per round and none after a
+    rejected password until the configured credentials change, because
+    airOS locks the account after three failures; "lanwatch airos
+    --retry-login HOST" tries once more when the account was fixed on the
+    radio instead. The firmware check covers the radios. See
+    docs/airos.md.
+  * Six new rules for the radios: airos.link-down, airos.link-poor,
+    airos.link-degraded (worse than the link's own learned normal, which
+    is kept for about a week while the link is down),
+    airos.channel-overlap (a 2.4 GHz link on top of Wi-Fi channels),
+    airos.certificate-changed and airos.login-rejected.
+  * The chat's rule list carries the first sentence of each description,
+    so the whole list fits in one tool result.
+
+ -- olemd <olemd@glemt.net>  Tue, 10 Nov 2026 17:03:55 +0100
+
 lanwatch (0.7.0) unstable; urgency=medium
 
   * The scheduler runs jobs in lanes. Service scans (inventory, deep) have
