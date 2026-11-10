@@ -20,6 +20,7 @@ from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
+from lanwatch.collectors.snmp import SnmpClient, SnmpError, SystemInfo
 from lanwatch.collectors.unifi import (
     TOTAL_TIMEOUT_S,
     UnifiError,
@@ -193,6 +194,7 @@ class InfraOutcome:
     unifi_clients: int = 0
     unifi_devices: int = 0
     unifi_error: str | None = None
+    snmp_error: str | None = None
     new_findings: list[str] = field(default_factory=list)
     resolved_findings: list[str] = field(default_factory=list)
 
@@ -293,6 +295,80 @@ async def collect_unifi(
     return out
 
 
+@dataclass(slots=True)
+class SnmpOutcome:
+    host: str | None = None
+    system: SystemInfo | None = None
+    error: str | None = None
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def snmp_host(config: Config, ex: Executor | None = None) -> str | None:
+    """The configured router, else this host's first default gateway."""
+    if config.snmp.host:
+        return config.snmp.host
+    gateways = await default_gateways(ex)
+    return gateways[0] if gateways else None
+
+
+async def collect_snmp(config: Config, store: Store, ex: Executor | None = None) -> SnmpOutcome:
+    """Read the router over SNMPv3 and keep what it said in meta. A router that cannot be
+    read keeps the previous state and never fails the round; the error is kept for the
+    status page."""
+    out = SnmpOutcome(host=await snmp_host(config, ex))
+    if out.host is None:
+        out.error = "no snmp.host set and no default gateway to use instead"
+    else:
+        try:
+            async with SnmpClient(config.snmp, out.host) as client:
+                out.system = await client.system()
+        except SnmpError as e:
+            out.error = str(e)[:400]
+        except Exception as e:
+            log.exception("snmp: unexpected failure, keeping the previous state")
+            out.error = f"{type(e).__name__}: {str(e)[:200]}"
+    if out.error is not None:
+        log.warning("snmp: %s not read, keeping the previous state: %s", out.host, out.error)
+        store.meta_set("snmp.last_error", out.error)
+        return out
+    assert out.system is not None
+    store.meta_set("snmp.host", out.host or "")
+    store.meta_set("snmp.system", json.dumps(out.system.as_dict()))
+    store.meta_set("snmp.last_ok", iso(now_utc()))
+    store.meta_set("snmp.last_error", "")
+    log.info(
+        "snmp: %s is %s (%s), up %.0f days",
+        out.host,
+        out.system.name or "?",
+        out.system.vendor or out.system.object_id,
+        out.system.uptime_s / 86400,
+    )
+    return out
+
+
+async def run_snmp(config: Config, store: Store) -> SnmpOutcome:
+    """On demand (`lanwatch snmp`): read the router, then the rules."""
+    snapshot_id = store.begin_snapshot("snmp", "snmpv3")
+    out = await collect_snmp(config, store)
+    store.finish_snapshot(snapshot_id, 0 if out.error else 1)
+    if out.error is not None:
+        return out
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
+
+
 async def run_infra(config: Config, store: Store, executor: Executor | None = None) -> InfraOutcome:
     """DHCP/mDNS broadcast probes, UPnP discovery and IGD mappings, IPv6 exposure."""
     ex = executor or make_executor(config.scan.helper_socket)
@@ -362,6 +438,9 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
             uni.devices,
             uni.error,
         )
+    if config.snmp.enabled:
+        snmp = await collect_snmp(config, store, ex)
+        out.snmp_error = snmp.error
     # IPv6 routers this host has learned, on the interfaces lanwatch watches.
     routers = [r for r in await ipv6_routers(ex) if r["dev"] in iface_names]
     store.replace_infra(

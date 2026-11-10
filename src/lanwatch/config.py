@@ -348,6 +348,46 @@ class UnifiConfig(StrictModel):
         return self
 
 
+class SnmpConfig(StrictModel):
+    """Read-only SNMPv3 link to the router; see docs/snmp.md.
+
+    SNMPv3 with authentication and encryption (authPriv) only: v1/v2c send the community
+    in clear text and give anyone who learns it the same view, so lanwatch does not speak
+    them. MD5 and DES are refused as well. SHA-1 is allowed: SNMPv3 uses it as an HMAC,
+    which the known SHA-1 collision attacks do not break, and UniFi gateways and switches
+    offer nothing else. SHA-256 is the default."""
+
+    enabled: bool = False
+    # The router's address. None: this host's default gateway.
+    host: str | None = None
+    user: str = "lanwatch"
+    # "SHA" is SHA-1 (HMAC-SHA-96): the weakest allowed, for agents that have nothing newer.
+    auth_protocol: Literal["SHA-256", "SHA-384", "SHA-512", "SHA"] = "SHA-256"
+    auth_password: str = ""
+    # "AES" is AES-128, the one AES variant every SNMPv3 agent has (Junos has no other).
+    priv_protocol: Literal["AES", "AES-256"] = "AES"
+    priv_password: str = ""
+    timeout_s: int = Field(default=5, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def _check(self) -> SnmpConfig:
+        if not self.enabled:
+            return self
+        for key in ("auth_password", "priv_password"):
+            value: str = getattr(self, key)
+            if len(value) < 8:
+                # RFC 3414: agents refuse shorter passphrases.
+                raise ValueError(f"snmp.{key} must be at least 8 characters")
+            if any(c.isspace() or c == "#" for c in value):
+                # net-snmp reads them from a config file where these end the value.
+                raise ValueError(f"snmp.{key} must not contain spaces or '#'")
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", self.user):
+            raise ValueError("snmp.user must be 1-32 letters, digits, '.', '_' or '-'")
+        if self.host is not None and not re.fullmatch(r"[A-Za-z0-9.:_-]{1,253}", self.host):
+            raise ValueError("snmp.host must be an IP address or a host name")
+        return self
+
+
 class LatencyConfig(StrictModel):
     """Round-trip time and packet loss, measured with a few pings every discovery round."""
 
@@ -391,6 +431,7 @@ class Config(StrictModel):
     latency: LatencyConfig = LatencyConfig()
     exposure: ExposureConfig = ExposureConfig()
     unifi: UnifiConfig = UnifiConfig()
+    snmp: SnmpConfig = SnmpConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property
@@ -524,7 +565,7 @@ def format_validation_error(e: ValidationError, file_path: Path | None) -> str:
 
 
 # Keys whose values are secrets: `config show` prints whether they are set, not what.
-SECRET_KEYS = frozenset({"api_key", "token", "password"})
+SECRET_KEYS = frozenset({"api_key", "token", "password", "auth_password", "priv_password"})
 
 
 def dump_effective(cfg: Config) -> str:

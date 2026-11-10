@@ -28,6 +28,7 @@ from lanwatch.pipeline import (
     run_infra,
     run_inventory,
     run_maintenance,
+    run_snmp,
     run_unifi,
 )
 from lanwatch.rules.engine import all_rules
@@ -328,6 +329,34 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             f"  {str(c.get('name') or '-')[:24]:<24} {c.get('ip') or '-':<15} {c.get('mac'):<17} "
             f"{c.get('network_name') or '-'}"
         )
+
+
+@app.command()
+def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
+    """Read the router over SNMPv3 now: what it is and how long it has been up."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not cfg.snmp.enabled:
+        typer.echo(
+            "the SNMP link is off ([snmp] enabled = false): set auth_password and"
+            " priv_password, see docs/snmp.md",
+            err=True,
+        )
+        raise typer.Exit(1)
+    with _open_store(ctx) as store:
+        out = asyncio.run(run_snmp(cfg, store))
+    if out.error is not None:
+        typer.echo(f"error reading {out.host or 'the router'}: {out.error}", err=True)
+        raise typer.Exit(1)
+    sys_ = out.system
+    assert sys_ is not None
+    days, rest = divmod(int(sys_.uptime_s), 86400)
+    typer.echo(f"{out.host}: {sys_.name or '(no name)'}, {sys_.vendor or sys_.object_id}")
+    typer.echo(f"  {sys_.descr}")
+    typer.echo(f"  up {days} days {rest // 3600} hours")
+    if sys_.location:
+        typer.echo(f"  location: {sys_.location}")
 
 
 @app.command()
