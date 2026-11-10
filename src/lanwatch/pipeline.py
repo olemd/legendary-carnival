@@ -26,6 +26,9 @@ from lanwatch.collectors.airos import (
     same_credentials,
     track_links,
 )
+from lanwatch.collectors.audit_snmp import AuditResult
+from lanwatch.collectors.audit_snmp import audit as audit_snmp
+from lanwatch.collectors.audit_snmp import available as audit_available
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import neighbour_table, select_backend
@@ -160,6 +163,10 @@ async def run_inventory(
         open_ports = [f"{p.port}/{p.proto}" for p in host.ports if p.state == "open"]
         log.debug("%s (%s): %s", d.ip, d.label, ", ".join(open_ports) or "no open ports")
     store.finish_snapshot(snapshot_id, len(diffs))
+    if config.snmp_audit.enabled and (deep or device_ids is not None):
+        # Weekly with the deep scan, and for new (or named) devices: the SNMP default
+        # credential probe, on the same targets (scan.skip_hosts already left out).
+        await snmp_audit(store, [d for d in targets.values() if d.ip])
 
     ctx = RuleContext(
         store=store,
@@ -608,6 +615,70 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
     )
     # Re-classify enriched devices: new facts (UPnP model, mDNS names) change the cache key.
     await llm_hooks.after_round(config, store, sorted(enriched), rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
+
+
+async def snmp_audit(store: Store, devices: list[Device]) -> list[tuple[Device, AuditResult]]:
+    """Probe the devices for SNMP default credentials and store what answered as
+    attrs.snmp_audit (with the time), where the rules pick it up."""
+    if not devices:
+        return []
+    if not audit_available():
+        log.info("snmp audit: snmpget missing (the snmp package), not probing")
+        return []
+    results = await audit_snmp([d.ip for d in devices if d.ip])
+    by_ip = {r.ip: r for r in results}
+    at = iso(now_utc())
+    out: list[tuple[Device, AuditResult]] = []
+    for d in devices:
+        r = by_ip.get(d.ip or "")
+        if r is None:
+            continue
+        store.merge_device_attrs(d.id, {"snmp_audit": r.as_dict(at)})
+        out.append((d, r))
+    answered = [f"{d.label} ({', '.join(r.communities)})" for d, r in out if r.communities]
+    log.info(
+        "snmp audit: %d devices probed, %d with an SNMPv3 agent%s",
+        len(out),
+        sum(1 for _, r in out if r.v3_agent),
+        f"; default communities answer on {'; '.join(answered)}" if answered else "",
+    )
+    return out
+
+
+@dataclass(slots=True)
+class SnmpAuditOutcome:
+    results: list[tuple[Device, AuditResult]] = field(default_factory=list)
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def run_snmp_audit(config: Config, store: Store, host: str | None = None) -> SnmpAuditOutcome:
+    """On demand (`lanwatch snmp-audit [HOST]`): probe one device, or every online one,
+    then the rules."""
+    if host is not None:
+        d = store.device_by_ip(host)
+        if d is None:
+            raise ValueError(f"no device with the address {host}")
+        devices = [d]
+    else:
+        devices = [d for d in store.devices(online_only=True) if d.ip]
+    devices = [d for d in devices if not _excluded(d, config.scan.skip_hosts)]
+    out = SnmpAuditOutcome(results=await snmp_audit(store, devices))
+    snapshot_id = store.begin_snapshot("snmp-audit", "snmpget")
+    store.finish_snapshot(snapshot_id, len(out.results))
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
     await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
     update_overview(store, config)
     out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids

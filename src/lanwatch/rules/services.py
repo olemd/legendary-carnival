@@ -12,6 +12,7 @@ from typing import Any
 
 from lanwatch.models import Device, Finding, Kind, ServiceRow, Severity
 from lanwatch.rules.base import Rule, RuleContext
+from lanwatch.rules.snmp_audit import AUDIT_RULES
 
 
 def _device_services(ctx: RuleContext) -> list[tuple[Device, list[ServiceRow]]]:
@@ -262,4 +263,5 @@ RULES: list[Rule] = [
     SshWeakAlgorithmsRule(),
     TlsCertificateRule(),
     ServiceChangedRule(),
+    *AUDIT_RULES,
 ]

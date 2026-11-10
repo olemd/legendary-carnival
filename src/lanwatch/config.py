@@ -320,6 +320,17 @@ class FirmwareConfig(StrictModel):
     online: bool = True
 
 
+class SnmpAuditConfig(StrictModel):
+    """Probe for SNMP default credentials; see lanwatch/collectors/audit_snmp.py.
+
+    Every device is asked once per deep scan (weekly) and once when it is new: SNMPv1 and
+    v2c with `public` and `private`, and SNMPv3 whether an agent is there. A GET of
+    sysDescr only, never a SET or a walk, and skipped for scan.skip_hosts. lanwatch's own
+    polling stays SNMPv3 authPriv; this is the only place it speaks v1/v2c."""
+
+    enabled: bool = True
+
+
 class ExposureConfig(StrictModel):
     """Daily lookup of the public address in Shodan's InternetDB; see lanwatch/exposure.py."""
 
@@ -476,6 +487,7 @@ class Config(StrictModel):
     airos: AirosConfig = AirosConfig()
     unifi: UnifiConfig = UnifiConfig()
     snmp: SnmpConfig = SnmpConfig()
+    snmp_audit: SnmpAuditConfig = SnmpAuditConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
     @property
