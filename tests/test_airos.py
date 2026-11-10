@@ -332,6 +332,51 @@ def test_cli_airos_off(tmp_path: Path) -> None:
     assert r.exit_code == 1 and "docs/airos.md" in r.output
 
 
+async def test_wireless_links_on_infra_and_device_pages(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Off: no section. Read: the radio, its link with SNR from both ends, and the device
+    line. A radio that failed shows the error over the state it last had."""
+    from fastapi.testclient import TestClient
+
+    from lanwatch.web.app import create_app
+
+    assert 'id="radios"' not in TestClient(create_app(config)).get("/infra").text
+    config.airos = airos_config()
+    with Store(config.store_path) as store:
+        sid = store.begin_snapshot("discovery", "t")
+        store.record_hosts(sid, [HostObservation(ip=HOST, mac="02:00:00:00:0a:01", source="t")])
+        store.finish_snapshot(sid, 1)
+        _patch(monkeypatch, FakeRadio())
+        await pipeline.collect_airos(config, store, store.begin_snapshot("infra", "t"))
+        device = store.device_by_key("02:00:00:00:0a:01")
+        assert device is not None
+    client = TestClient(create_app(config))
+    infra = client.get("/infra").text
+    assert 'id="radios"' in infra and "radio-a" in infra and "access point (bridge)" in infra
+    assert "2444 MHz, 20 MHz wide" in infra and "100 Mbit/s" in infra
+    assert "29 / 34 dB" in infra  # -67 - -96 here, -64 - -98 there
+    assert "76 % / 44 %" in infra and "240 / 162 Mbit/s" in infra
+    page = client.get(f"/devices/{device.id}").text
+    assert "airOS" in page and "linked with radio-b" in page and "Ethernet 100 Mbit/s" in page
+    assert "02:00:00:00:0e:01" in page  # the radio's other MAC address
+    # Switched off, the facts stay stored but are not shown: they would only go stale.
+    config.airos = AirosConfig()
+    page = TestClient(create_app(config)).get(f"/devices/{device.id}").text
+    assert "linked with radio-b" not in page and 'id="radios"' not in page
+    config.airos = airos_config()
+
+    with Store(config.store_path) as store:
+        (row,) = store.infra("airos")
+        store.replace_infra(
+            "airos",
+            {HOST: {**row.data, "error": "login not accepted: HTTP 200"}},
+            store.begin_snapshot("infra", "t"),
+        )
+    infra = TestClient(create_app(config)).get("/infra").text
+    assert "last read failed" in infra and "login not accepted" in infra and "radio-a" in infra
+
+
 def test_station_side_takes_airmax_figures_from_its_own_status() -> None:
     """On a station, sta.cgi lists the AP with airMAX quality and capacity 0; the figures
     for the link are in the station's own status.cgi (polling)."""

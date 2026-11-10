@@ -96,6 +96,38 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% endfor %}
 {% else %}<p class="empty">No UPnP devices answered.</p>{% endif %}
 
+{% if radios.enabled %}
+<h2 id="radios">Wireless links</h2>
+<p class="lede">airMAX radios, read with their read-only account every {{ config.schedule.infra_interval_s // 60 }} minutes. Signal and noise in dBm; SNR is the difference. CCQ is the share of frames that got through the first time.</p>
+{% for r in radios.radios %}{% set d = r.data %}
+<h3>{% if r.device %}<a href="/devices/{{ r.device.id }}">{{ d.hostname or r.host }}</a>{% else %}{{ d.hostname or r.host }}{% endif %} <span class="muted mono">{{ r.host }}</span></h3>
+{% if d.error %}<p class="note"><span class="result-failed">{% if d.pin_failed %}certificate changed{% else %}last read failed{% endif %}</span> <span class="mono">{{ d.error }}</span>{% if d.read_at %} <span class="muted">· showing the state from {{ d.read_at | local }}</span>{% endif %}</p>{% endif %}
+{% if r.read %}
+<dl class="kv">
+  <dt>Radio</dt><dd>{{ d.model }} · airOS <span class="mono">{{ d.firmware }}</span> · {{ 'access point' if d.mode.startswith('ap') else 'station' if d.mode.startswith('sta') else d.mode }} ({{ d.netrole }}) · up {{ d.uptime_s | duration }}</dd>
+  <dt>Channel</dt><dd>{{ d.frequency_mhz or '?' }} MHz{% if d.channel_width_mhz %}, {{ d.channel_width_mhz }} MHz wide{% endif %}{% if d.essid %} · SSID <span class="mono">{{ d.essid }}</span>{% endif %}{% if d.security %} · {{ d.security }}{% endif %}{% if d.tx_power is not none %} · {{ d.tx_power }} dBm out{% endif %}</dd>
+  <dt>Ethernet</dt><dd>{% if r.ethernet %}{{ r.ethernet.speed or '?' }} Mbit/s{% if r.ethernet.full_duplex is sameas false %} <span class="result-failed">half duplex</span>{% endif %}{% else %}<span class="muted">not connected</span>{% endif %}</dd>
+</dl>
+{% if r.stations %}
+<div class="tbl"><table><thead><tr><th>Linked with</th><th>Signal here / there</th><th>Noise here / there</th><th>SNR here / there</th><th>CCQ</th><th>airMAX quality / capacity</th><th>Rate tx / rx</th><th>Link up</th><th>Far end runs</th></tr></thead><tbody>
+{% for st in r.stations %}
+<tr><td>{% if st.device %}<a href="/devices/{{ st.device.id }}">{{ st.remote_hostname or st.name or st.mac }}</a>{% else %}{{ st.remote_hostname or st.name or st.mac }}{% endif %} <span class="muted mono">{{ st.ip or '' }}</span></td>
+<td class="mono">{{ st.signal if st.signal is not none else '?' }} / {{ st.remote_signal if st.remote_signal is not none else '?' }}</td>
+<td class="mono">{{ st.noise if st.noise is not none else '?' }} / {{ st.remote_noise if st.remote_noise is not none else '?' }}</td>
+<td class="mono">{% if st.signal is not none and st.noise is not none %}{{ st.signal - st.noise }}{% else %}?{% endif %} / {% if st.remote_signal is not none and st.remote_noise is not none %}{{ st.remote_signal - st.remote_noise }}{% else %}?{% endif %} dB</td>
+<td>{{ st.ccq if st.ccq is not none else '?' }} %</td>
+<td>{% if st.airmax_quality %}{{ st.airmax_quality }} % / {{ st.airmax_capacity }} %{% else %}<span class="muted">not measured yet</span>{% endif %}</td>
+<td class="mono">{{ '%g' | format(st.tx_mbps) if st.tx_mbps is not none else '?' }} / {{ '%g' | format(st.rx_mbps) if st.rx_mbps is not none else '?' }} Mbit/s</td>
+<td class="muted">{{ st.uptime_s | duration if st.uptime_s else '-' }}</td>
+<td class="mono muted">{{ (st.remote_version or '-') | replace('XM.ar7240.', '') }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}<p class="note"><span class="result-failed">no link</span> <span class="muted">the radio is up but linked with no other radio{% if d.signal is not none %}; it hears {{ d.signal }} dBm against {{ d.noise }} dBm noise{% endif %}</span></p>{% endif %}
+<p class="muted">Read {{ d.read_at | local }}.</p>
+{% elif not d.error %}<p class="empty">Not read yet; run <code>lanwatch airos</code> or wait for the infra round.</p>{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if routers %}
 <h2>IPv6 routers</h2>
 <div class="tbl"><table><thead><tr><th>Interface</th><th>Router address</th><th>MAC</th><th>Device</th><th>First seen</th></tr></thead><tbody>

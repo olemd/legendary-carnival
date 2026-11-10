@@ -322,6 +322,7 @@ def create_app(
             routers=s.infra("ipv6-router"),
             dns_filter=s.infra("dns-filter"),
             exposure=s.infra("exposure"),
+            radios=_airos_section(s, config),
             unifi=_unifi_section(s, config),
             snapshot=s.latest_snapshot("infra"),
         )
@@ -504,6 +505,45 @@ def _sparkline(
         "last_ts": series[-1][0],
         "n": n,
     }
+
+
+def _airos_section(s: Store, config: Config) -> dict[str, Any]:
+    """The infra page's wireless links: each configured airMAX radio as last read, in the
+    order of airos.hosts, with the lanwatch device behind it and its link partner."""
+    rows = {r.key: r for r in s.infra("airos")}
+    by_mac = {d.mac: d for d in s.devices() if d.mac}
+    radios: list[dict[str, Any]] = []
+    for host in config.airos.hosts:
+        row = rows.get(host)
+        data = row.data if row else {"host": host}
+        stations = [st for st in data.get("stations") or [] if isinstance(st, dict)]
+        radios.append(
+            {
+                "host": host,
+                "data": data,
+                "read": bool(data.get("read_at")),
+                "device": by_mac.get(str(data.get("mac"))) or s.device_by_ip(host),
+                "stations": [
+                    {
+                        **st,
+                        "device": by_mac.get(str(st.get("mac")))
+                        or s.device_by_ip(str(st.get("ip"))),
+                    }
+                    for st in stations
+                ],
+                "ethernet": next(
+                    (
+                        i
+                        for i in data.get("interfaces") or []
+                        if isinstance(i, dict)
+                        and i.get("name") in ("eth0", "eth1")
+                        and i.get("plugged")
+                    ),
+                    None,
+                ),
+            }
+        )
+    return {"enabled": config.airos.enabled, "radios": radios}
 
 
 def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
