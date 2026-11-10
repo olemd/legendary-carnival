@@ -93,7 +93,8 @@ your radios.
 A point-to-point link is reported once, under the pair of radios, with the worse end's
 figures. The link's normal is learned from the link itself: lanwatch watches it for half
 a day before judging it, so a link that was always weak is not reported as degraded (but
-may be as poor), and one that got worse is. With `[unifi]` enabled, the channel advice
+may be as poor), and one that got worse is. A link that drops keeps its normal for about
+a week, so one that comes back weaker is reported too. With `[unifi]` enabled, the channel advice
 names your own access points in the way and suggests the one of channels 1, 6 and 11
 they use least.
 

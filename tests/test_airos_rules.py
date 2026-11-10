@@ -95,6 +95,30 @@ def test_track_links_counts_reads_without_a_link() -> None:
     assert airos.track_links(track, _radio(A, [_station(MAC_B, "b")]))["no_link_reads"] == 0
 
 
+def test_track_links_remembers_the_normal_across_a_dropped_link() -> None:
+    """The link drops and comes back 15 dB weaker: that is judged against what was learned
+    before the drop, not taken as a new normal."""
+    track: dict[str, Any] | None = None
+    for _ in range(airos.BASELINE_WARMUP):
+        track = airos.track_links(track, _radio(A, [_station(MAC_B, "b", -65, 80)]))
+    track = airos.track_links(track, _radio(A, []))
+    assert track["no_link_reads"] == 1
+    assert track["links"][MAC_B]["normal_signal"] == pytest.approx(-65)
+    for n in (1, 2):
+        track = airos.track_links(track, _radio(A, [_station(MAC_B, "b", -80, 80)]))
+        assert track["links"][MAC_B]["degraded_reads"] == n
+    assert track["links"][MAC_B]["normal_signal"] == pytest.approx(-65)
+    assert "absent_reads" not in track["links"][MAC_B]
+
+
+def test_track_links_forgets_a_station_that_stays_away() -> None:
+    track = airos.track_links(None, _radio(A, [_station(MAC_B, "b")]))
+    for _ in range(airos.LINK_MEMORY_READS):
+        track = airos.track_links(track, _radio(A, []))
+    assert track["links"][MAC_B]["absent_reads"] == airos.LINK_MEMORY_READS
+    assert airos.track_links(track, _radio(A, []))["links"] == {}
+
+
 def _store_rows(store: Store, rows: dict[str, dict[str, Any]]) -> int:
     sid = store.begin_snapshot("infra", "t")
     store.replace_infra("airos", rows, sid)

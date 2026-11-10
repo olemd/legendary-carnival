@@ -403,12 +403,17 @@ BASELINE_WARMUP = 48
 DEGRADED_SIGNAL_DB = 6
 DEGRADED_CCQ_POINTS = 20
 POOR_CCQ = 60
+# A station missing from a read (the link dropped, the far end restarted) keeps what was
+# learned about it for about a week of reads. A link that comes back worse is then judged
+# against its old normal instead of teaching lanwatch a new one.
+LINK_MEMORY_READS = 96 * 7
 
 
 def track_links(previous: dict[str, Any] | None, radio: AirosStatus) -> dict[str, Any]:
     """Counters the link rules read, carried from one read of the radio to the next:
     reads in a row without a link, and per station its learned normal and how many reads
-    in a row it was below that normal, or below POOR_CCQ."""
+    in a row it was below that normal, or below POOR_CCQ. A station that is not linked in
+    this read keeps its entry untouched, with a count of the reads it was away."""
     prev = _dict(previous)
     prev_links = _dict(prev.get("links"))
     links: dict[str, Any] = {}
@@ -443,6 +448,10 @@ def track_links(previous: dict[str, Any] | None, radio: AirosStatus) -> dict[str
             "degraded_reads": int(p.get("degraded_reads") or 0) + 1 if degraded else 0,
             "poor_reads": int(p.get("poor_reads") or 0) + 1 if st.ccq < POOR_CCQ else 0,
         }
+    for mac, p in prev_links.items():
+        absent = int(_dict(p).get("absent_reads") or 0) + 1
+        if mac not in links and absent <= LINK_MEMORY_READS:
+            links[mac] = {**_dict(p), "absent_reads": absent}
     return {
         "no_link_reads": int(prev.get("no_link_reads") or 0) + 1 if not radio.stations else 0,
         "links": links,
