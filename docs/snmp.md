@@ -173,6 +173,9 @@ The same rules apply to every login: authPriv, no MD5 or DES, passphrases of 8 c
 or more. Each device is read on its own; one that fails keeps its last good state and
 does not stop the others.
 
+A UPS management card listed this way is recognised and read in full: power, battery,
+self-test, firmware, findings and graphs. See [ups.md](ups.md).
+
 ## 3. Check it
 
 ```
