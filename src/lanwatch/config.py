@@ -381,6 +381,10 @@ class SnmpConfig(StrictModel):
             if any(c.isspace() or c == "#" for c in value):
                 # net-snmp reads them from a config file where these end the value.
                 raise ValueError(f"snmp.{key} must not contain spaces or '#'")
+            if value.startswith('"'):
+                # net-snmp takes it as the start of a quoted value and drops the quotes,
+                # so it would log in with another password than the one written here.
+                raise ValueError(f"snmp.{key} must not start with a double quote")
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", self.user):
             raise ValueError("snmp.user must be 1-32 letters, digits, '.', '_' or '-'")
         if self.host is not None and not re.fullmatch(r"[A-Za-z0-9.:_-]{1,253}", self.host):

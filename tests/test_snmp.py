@@ -112,6 +112,10 @@ def test_config_is_v3_authpriv_only() -> None:
         snmp_config(priv_password="short")
     with pytest.raises(ValidationError, match="spaces"):
         snmp_config(auth_password="has a space")
+    # net-snmp would read a leading double quote as the start of a quoted value.
+    with pytest.raises(ValidationError, match="double quote"):
+        snmp_config(priv_password='"quoted-secret"')
+    assert snmp_config(auth_password='quote"inside').auth_password == 'quote"inside'
     with pytest.raises(ValidationError, match="user"):
         snmp_config(user="bad user")
     # Off, nothing is required.
