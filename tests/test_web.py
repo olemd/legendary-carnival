@@ -242,3 +242,114 @@ async def test_status_page_shows_decoy_ports(config: Config) -> None:
         await decoys.stop()
         holder.close()
     assert "only with" in TestClient(create_app(config)).get("/status").text
+
+
+def test_router_on_status_infra_and_device_pages(config: Config) -> None:
+    """SNMP off: the status tile says so and the infra page has no router section. On, with
+    a read stored: the tile, the table with lease, static and disagreement notes, and the
+    line on the device page."""
+    import json
+
+    from lanwatch.config import SnmpConfig
+
+    _seed(config)
+    client = TestClient(create_app(config))
+    assert "disabled in config; see docs/snmp.md" in client.get("/status").text
+    assert 'id="router"' not in client.get("/infra").text
+
+    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+    with Store(config.store_path) as store:
+        sid = store.begin_snapshot("infra", "t")
+        store.meta_set("snmp.host", "192.168.1.1")
+        store.meta_set("snmp.last_ok", "2026-11-10T09:00:00+00:00")
+        store.meta_set("snmp.last_error", "")
+        store.meta_set(
+            "snmp.system",
+            json.dumps(
+                {
+                    "name": "gw-test",
+                    "vendor": "Juniper",
+                    "object_id": "1.3.6.1.4.1.2636.1.1.1.2.133",
+                    "descr": "Juniper Networks, Inc. srx300 internet router",
+                    "uptime_s": 3 * 86400,
+                }
+            ),
+        )
+        known = store.devices()[0]
+        assert known.mac and known.ip
+        store.replace_infra(
+            "router-arp",
+            {
+                known.ip: {"ip": known.ip, "mac": known.mac, "interface": "irb.0", "static": False},
+                "192.168.1.77": {
+                    "ip": "192.168.1.77",
+                    "mac": "aa:bb:cc:00:00:77",
+                    "interface": "irb.0",
+                    "static": False,
+                },
+                # The ISP's router on the WAN side (a public address; Python counts the
+                # documentation ranges as private): never expected to hold a lease.
+                "80.0.0.1": {
+                    "ip": "80.0.0.1",
+                    "mac": "ee:ee:ee:00:00:01",
+                    "interface": "ge-0/0/0.0",
+                    "static": False,
+                },
+            },
+            sid,
+        )
+        store.replace_infra(
+            "router-dhcp",
+            {known.ip: {"ip": known.ip, "mac": known.mac, "since": "2026-11-01 08:00:00 CET"}},
+            sid,
+        )
+        store.replace_infra(
+            "router-arp-mismatch",
+            {
+                "192.168.1.77": {
+                    "ip": "192.168.1.77",
+                    "router_mac": "aa:bb:cc:00:00:77",
+                    "lanwatch_macs": ["aa:bb:cc:00:00:99"],
+                    "rounds": 2,
+                }
+            },
+            sid,
+        )
+        store.merge_device_attrs(
+            known.id,
+            {
+                "router": {
+                    "arp_interface": "irb.0",
+                    "dhcp_lease": True,
+                    "dhcp_lease_since": "2026-11-01 08:00:00 CET",
+                }
+            },
+        )
+    client = TestClient(create_app(config))
+    status = client.get("/status").text
+    assert "gw-test" in status and "Juniper" in status and "3 d" in status
+    infra = client.get("/infra").text
+    assert 'id="router"' in infra and "Router: gw-test" in infra
+    assert "since 2026-11-01 08:00:00 CET" in infra
+    assert "2 with a MAC lanwatch has no device for" in infra
+    assert "1 where the router and lanwatch disagree" in infra
+    assert "lanwatch saw aa:bb:cc:00:00:99" in infra
+    wan = infra[infra.index("80.0.0.1") :]
+    wan = wan[: wan.index("</tr>")]
+    assert "none" not in wan  # no lease is expected outside the LAN
+    lan = infra[infra.index("192.168.1.77") :]
+    assert "none" in lan[: lan.index("</tr>")]  # a LAN address without a lease says so
+    assert infra.index("192.168.1.77") < infra.index("80.0.0.1")  # LAN first
+    device = client.get(f"/devices/{known.id}").text
+    assert "DHCP lease since 2026-11-01 08:00:00 CET" in device and "irb.0" in device
+    # Switched off, the facts stay stored but are not shown: they would only go stale.
+    config.snmp = SnmpConfig()
+    off = TestClient(create_app(config))
+    assert "DHCP lease since" not in off.get(f"/devices/{known.id}").text
+    assert 'id="router"' not in off.get("/infra").text
+    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+
+    with Store(config.store_path) as store:
+        store.meta_set("snmp.last_error", "Timeout: No Response (no answer: ...)")
+    status = TestClient(create_app(config)).get("/status").text
+    assert "failed" in status and "Timeout: No Response" in status and "last good read" in status

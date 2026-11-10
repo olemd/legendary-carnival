@@ -20,6 +20,7 @@ from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
+from lanwatch.collectors.snmp import DhcpLease, Neighbour, SnmpClient, SnmpError, SystemInfo
 from lanwatch.collectors.unifi import (
     TOTAL_TIMEOUT_S,
     UnifiError,
@@ -193,6 +194,7 @@ class InfraOutcome:
     unifi_clients: int = 0
     unifi_devices: int = 0
     unifi_error: str | None = None
+    snmp_error: str | None = None
     new_findings: list[str] = field(default_factory=list)
     resolved_findings: list[str] = field(default_factory=list)
 
@@ -293,6 +295,157 @@ async def collect_unifi(
     return out
 
 
+@dataclass(slots=True)
+class SnmpOutcome:
+    host: str | None = None
+    system: SystemInfo | None = None
+    neighbours: list[Neighbour] = field(default_factory=list)
+    # None: the router has no DHCP lease table lanwatch can read (not a Juniper, or no
+    # DHCP server on it). An empty list is a DHCP server with no leases.
+    leases: list[DhcpLease] | None = None
+    enriched: set[int] = field(default_factory=set)
+    mismatches: int = 0
+    error: str | None = None
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def snmp_host(config: Config, ex: Executor | None = None) -> str | None:
+    """The configured router, else this host's first default gateway."""
+    if config.snmp.host:
+        return config.snmp.host
+    gateways = await default_gateways(ex)
+    return gateways[0] if gateways else None
+
+
+async def collect_snmp(
+    config: Config, store: Store, snapshot_id: int, ex: Executor | None = None
+) -> SnmpOutcome:
+    """Read the router over SNMPv3: what it is, its ARP table and (Juniper) its DHCP
+    leases. None of it counts as presence: a router keeps an ARP entry or a lease for many
+    minutes after a device has gone. The tables tell the discovery recheck where else to
+    look, and give a second view of who holds each address to compare with lanwatch's own.
+    A router that cannot be read keeps the previous state and never fails the round; the
+    error is kept for the status page."""
+    out = SnmpOutcome(host=await snmp_host(config, ex))
+    if out.host is None:
+        out.error = "no snmp.host set and no default gateway to use instead"
+    else:
+        try:
+            async with SnmpClient(config.snmp, out.host) as client:
+                out.system = await client.system()
+                out.neighbours = await client.neighbours()
+                if out.system.vendor == "Juniper":
+                    out.leases = await client.juniper_leases()
+        except SnmpError as e:
+            out.error = str(e)[:400]
+        except Exception as e:
+            log.exception("snmp: unexpected failure, keeping the previous state")
+            out.error = f"{type(e).__name__}: {str(e)[:200]}"
+    if out.error is not None:
+        log.warning("snmp: %s not read, keeping the previous state: %s", out.host, out.error)
+        store.meta_set("snmp.last_error", out.error)
+        return out
+    assert out.system is not None
+    store.meta_set("snmp.host", out.host or "")
+    store.meta_set("snmp.system", json.dumps(out.system.as_dict()))
+    store.meta_set("snmp.last_ok", iso(now_utc()))
+    store.meta_set("snmp.last_error", "")
+    store.replace_infra("router-arp", {n.ip: n.as_dict() for n in out.neighbours}, snapshot_id)
+    if out.leases is not None:
+        store.replace_infra("router-dhcp", {x.ip: x.as_dict() for x in out.leases}, snapshot_id)
+    out.enriched = _router_device_facts(store, out.neighbours, out.leases)
+    out.mismatches = _track_router_mismatches(store, out.neighbours, snapshot_id)
+    log.info(
+        "snmp: %s is %s (%s), up %d days; %d ARP entries%s%s",
+        out.host,
+        out.system.name or "?",
+        out.system.vendor or out.system.object_id,
+        out.system.uptime_s // 86400,  # whole days, as `lanwatch snmp` prints them
+        len(out.neighbours),
+        f", {len(out.leases)} DHCP leases" if out.leases is not None else "",
+        f", {out.mismatches} addresses held by another MAC than lanwatch saw"
+        if out.mismatches
+        else "",
+    )
+    return out
+
+
+def _router_device_facts(
+    store: Store, neighbours: list[Neighbour], leases: list[DhcpLease] | None
+) -> set[int]:
+    """attrs.router on known devices: the router has them in its ARP table, and (when it
+    serves DHCP and lanwatch can read the leases) since when they hold a lease, or that
+    they hold none, so their address is set by hand or comes from another server."""
+    by_mac = {x.mac: x for x in leases or []}
+    enriched: set[int] = set()
+    for n in neighbours:
+        d = store.device_by_key(n.mac)
+        if d is None:
+            continue
+        facts: dict[str, Any] = {"arp_interface": n.interface}
+        if leases is not None:
+            lease = by_mac.get(n.mac)
+            facts["dhcp_lease"] = lease is not None
+            facts["dhcp_lease_since"] = lease.since if lease else None
+        if store.merge_device_attrs(d.id, {"router": facts}):
+            enriched.add(d.id)
+    return enriched
+
+
+def _track_router_mismatches(store: Store, neighbours: list[Neighbour], snapshot_id: int) -> int:
+    """Addresses where the router's ARP table names another MAC than the one that answered
+    lanwatch in the newest discovery round. The two reads are minutes apart, so a single
+    disagreement can be an address that just changed hands; `rounds` counts how many reads
+    in a row saw the same disagreement, and the rule waits for two."""
+    holders = store.ip_holders()
+    before = {r.key: r.data for r in store.infra("router-arp-mismatch")}
+    entries: dict[str, dict[str, Any]] = {}
+    for n in neighbours:
+        held = holders.get(n.ip, [])
+        seen = sorted({mac for _, mac in held if mac})
+        if not seen or n.mac in seen:
+            continue  # lanwatch has no MAC for it this round, or the two agree
+        # ip_holders names a device by its own MAC. A merged device answering with its
+        # other address is still that device: compare who it is, not which MAC it used.
+        routed = store.device_by_key(n.mac)
+        if routed is not None and routed.id in {device_id for device_id, _ in held}:
+            continue
+        prev = before.get(n.ip) or {}
+        same = prev.get("router_mac") == n.mac and prev.get("lanwatch_macs") == seen
+        entries[n.ip] = {
+            "ip": n.ip,
+            "router_mac": n.mac,
+            "lanwatch_macs": seen,
+            "interface": n.interface,
+            "rounds": int(prev.get("rounds") or 0) + 1 if same else 1,
+        }
+    store.replace_infra("router-arp-mismatch", entries, snapshot_id)
+    return len(entries)
+
+
+async def run_snmp(config: Config, store: Store) -> SnmpOutcome:
+    """On demand (`lanwatch snmp`): read the router, then the rules."""
+    snapshot_id = store.begin_snapshot("snmp", "snmpv3")
+    out = await collect_snmp(config, store, snapshot_id)
+    store.finish_snapshot(snapshot_id, len(out.enriched))
+    if out.error is not None:
+        return out
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
+
+
 async def run_infra(config: Config, store: Store, executor: Executor | None = None) -> InfraOutcome:
     """DHCP/mDNS broadcast probes, UPnP discovery and IGD mappings, IPv6 exposure."""
     ex = executor or make_executor(config.scan.helper_socket)
@@ -362,6 +515,10 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
             uni.devices,
             uni.error,
         )
+    if config.snmp.enabled:
+        snmp = await collect_snmp(config, store, snapshot_id, ex)
+        enriched |= snmp.enriched
+        out.snmp_error = snmp.error
     # IPv6 routers this host has learned, on the interfaces lanwatch watches.
     routers = [r for r in await ipv6_routers(ex) if r["dev"] in iface_names]
     store.replace_infra(
@@ -595,11 +752,12 @@ async def recheck_silent(
     previous_snapshot_id: int | None,
 ) -> list[HostObservation]:
     """Ping, more patiently than the scan did, the addresses that should have answered and
-    did not: devices seen in the previous round, and clients the UniFi controller lists on
-    a scanned subnet. Power-saving Wi-Fi devices often sleep through an ARP probe but answer
-    a ping that waits a second or two. Only a reply counts, and the MAC comes from this
-    host's neighbour table, so a device that has really gone is still offline this round;
-    the controller only says where to look again."""
+    did not: devices seen in the previous round, clients the UniFi controller lists, and
+    addresses in the router's ARP table and DHCP leases (read over SNMP), on a scanned
+    subnet. Power-saving Wi-Fi devices often sleep through an ARP probe but answer a ping
+    that waits a second or two. Only a reply counts, and the MAC comes from this host's
+    neighbour table, so a device that has really gone is still offline this round; the
+    controller and the router only say where to look again."""
     if not config.scan.recheck_silent:
         return []
     seen_ips = {h.ip for h in hosts}
@@ -628,6 +786,11 @@ async def recheck_silent(
         for r in store.infra("unifi-client"):
             ip, mac = r.data.get("ip"), r.data.get("mac")
             consider(ip if isinstance(ip, str) else None, mac if isinstance(mac, str) else None)
+    if config.snmp.enabled:
+        for kind in ("router-arp", "router-dhcp"):
+            for r in store.infra(kind):
+                ip, mac = r.data.get("ip"), r.data.get("mac")
+                consider(ip if isinstance(ip, str) else None, mac if isinstance(mac, str) else None)
     if not targets:
         return []
     if len(targets) > RECHECK_MAX:

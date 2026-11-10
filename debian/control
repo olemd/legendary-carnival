@@ -15,7 +15,7 @@ Depends: libc6 (>= 2.28),
          ca-certificates,
          systemd,
          ${misc:Depends}
-Recommends: arp-scan, iputils-ping
+Recommends: arp-scan, iputils-ping, snmp
 Suggests: git
 Description: continuous auditor for your own local network
  lanwatch discovers the devices on your LAN, inventories their open services,

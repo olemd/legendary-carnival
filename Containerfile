@@ -12,7 +12,7 @@ RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.13-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nmap arp-scan iproute2 iputils-ping git ca-certificates \
+ && apt-get install -y --no-install-recommends nmap arp-scan iproute2 iputils-ping snmp git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/.venv /app/.venv
 COPY evals /app/evals

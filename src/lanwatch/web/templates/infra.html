@@ -61,6 +61,25 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% elif not unifi.error %}<p class="empty">Not read yet; the infra round reads the controller every {{ config.schedule.infra_interval_s // 60 }} minutes, or run <code>lanwatch unifi</code>.</p>{% endif %}
 {% endif %}
 
+{% if router.enabled %}
+<h2 id="router">Router{% if router.system and router.system.name %}: {{ router.system.name }}{% endif %}</h2>
+{% if router.error %}<p class="note"><span class="result-failed">last read failed</span> <span class="mono">{{ router.error }}</span>{% if router.last_ok %} <span class="muted">· showing the state from {{ router.last_ok | local }}</span>{% endif %}</p>{% endif %}
+{% if router.rows %}
+<p class="lede">The router's ARP table{% if router.has_leases %} and DHCP leases{% endif %}, read over SNMPv3{% if router.last_ok %} {{ router.last_ok | local }}{% endif %}.
+{{ router.rows | length }} address{{ 'es' if router.rows | length != 1 }}{% if router.unknown %}, <strong>{{ router.unknown }} with a MAC lanwatch has no device for</strong>{% endif %}{% if router.mismatches %}, <strong class="result-failed">{{ router.mismatches }} where the router and lanwatch disagree</strong> (see <a href="/findings">findings</a>){% endif %}.
+None of this counts as presence: lanwatch pings the addresses it missed once more, and only a reply makes a device online.</p>
+<div class="tbl"><table><thead><tr><th>Address</th><th>MAC</th><th>Device</th><th>Interface</th>{% if router.has_leases %}<th>DHCP lease</th>{% endif %}<th>Note</th></tr></thead><tbody>
+{% for r in router.rows %}
+<tr><td class="mono">{{ r.ip }}</td><td class="mono">{{ r.mac or '-' }}</td>
+<td>{% if r.device %}<a href="/devices/{{ r.device.id }}">{{ r.device.label }}</a>{% else %}<span class="muted">not known to lanwatch</span>{% endif %}</td>
+<td class="mono muted">{{ r.interface or '-' }}</td>
+{% if router.has_leases %}<td>{% if r.lease %}since {{ r.lease.since or '?' }}{% elif r.in_arp and r.private %}<span class="muted">none{% if r.static %} (static ARP){% endif %}</span>{% else %}-{% endif %}</td>{% endif %}
+<td>{% if r.mismatch_confirmed %}<span class="result-failed">lanwatch saw {{ r.mismatch.lanwatch_macs | join(', ') }}</span>{% elif r.mismatch %}<span class="muted">lanwatch saw {{ r.mismatch.lanwatch_macs | join(', ') }}; checking again next read</span>{% elif not r.in_arp %}<span class="muted">lease only, not in ARP</span>{% endif %}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% elif not router.error %}<p class="empty">Not read yet; the infra round reads the router every {{ config.schedule.infra_interval_s // 60 }} minutes, or run <code>lanwatch snmp</code>.</p>{% endif %}
+{% endif %}
+
 {% if dns_filter %}
 <h2>DNS filtering</h2>
 <div class="tbl"><table><thead><tr><th>Resolver</th><th>Source</th><th>Ads and trackers</th><th>Malicious domains</th><th>Test names it blocked</th></tr></thead><tbody>

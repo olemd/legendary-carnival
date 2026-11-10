@@ -147,6 +147,14 @@ Hygiene checks:
   firmware; a **Topology** page; and rules for IoT devices on the main network, clients only
   the controller sees, and UniFi devices offline. API key, nothing leaves the LAN. See
   [docs/unifi.md](docs/unifi.md).
+- **Router over SNMP** (`[snmp]`, off by default, read-only, every infra round,
+  `lanwatch snmp`): the router's ARP and IPv6 neighbour table and, on Juniper, its DHCP
+  leases. Each device shows the interface the router reaches it on and whether it holds a
+  lease, an address the router ties to another MAC than the one that answered lanwatch
+  becomes a finding, and addresses the router knows but the scan missed get the second,
+  slower ping. SNMPv3 with authentication and encryption only, through net-snmp's
+  `snmpbulkwalk` (the `snmp` package); nothing leaves the LAN. See
+  [docs/snmp.md](docs/snmp.md).
 - **Internet exposure** (`[exposure]`, off by default, daily, `lanwatch exposure`): the
   public address looked up in Shodan's InternetDB, which scans the whole internet. Ports that
   answer from outside become a finding, critical when Shodan also matched the service to

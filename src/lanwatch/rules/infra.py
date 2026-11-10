@@ -402,6 +402,56 @@ class InfraMacChangedRule(Rule):
         return out
 
 
+class RouterArpMismatchRule(Rule):
+    id = "net.router-arp-mismatch"
+    kind = Kind.SECURITY
+    default_severity = Severity.HIGH
+    description = (
+        "The router's ARP table (read over SNMP) ties an address to another MAC address "
+        "than the one that answered lanwatch for it, in two reads in a row. The router "
+        "then sends that address's traffic to a different device than the one lanwatch "
+        "sees there: an address conflict, or a device that told the router it is the "
+        "other one (ARP spoofing). Critical when the address is the gateway, the DHCP "
+        "server or a DNS server."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        if not ctx.config.snmp.enabled:
+            return []
+        infra = infrastructure_ips(ctx.store)
+        out: list[Finding] = []
+        for r in ctx.store.infra("router-arp-mismatch"):
+            if int(r.data.get("rounds") or 0) < 2:
+                continue
+            ip = r.key
+            router_mac = str(r.data.get("router_mac"))
+            seen = [str(m) for m in r.data.get("lanwatch_macs") or []]
+            role = infra.get(ip)
+            routed = ctx.store.device_by_key(router_mac)
+            answered = [ctx.store.device_by_key(m) for m in seen]
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"The router sends {ip}"
+                    + (f" ({role.lower()})" if role else "")
+                    + f" to {routed.label if routed else router_mac}, but "
+                    + ", ".join(d.label if d else m for d, m in zip(answered, seen, strict=True))
+                    + " answers for it",
+                    key_parts=[ip, router_mac, *seen],
+                    device_id=answered[0].id if answered and answered[0] else None,
+                    severity=Severity.CRITICAL if role else None,
+                    evidence={
+                        "ip": ip,
+                        "role": role,
+                        "router_mac": router_mac,
+                        "lanwatch_macs": seen,
+                        "router_interface": r.data.get("interface"),
+                    },
+                )
+            )
+        return out
+
+
 class Ipv6RouterNewRule(Rule):
     id = "net.ipv6-router-new"
     kind = Kind.SECURITY
@@ -539,6 +589,7 @@ RULES: list[Rule] = [
     FlatNetworkRule(),
     IpConflictRule(),
     InfraMacChangedRule(),
+    RouterArpMismatchRule(),
     DhcpSettingsChangedRule(),
     Ipv6RouterNewRule(),
     DnsNotFilteredRule(),
