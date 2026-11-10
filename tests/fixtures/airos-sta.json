@@ -1,0 +1,27 @@
+[
+ {
+  "mac": "02:00:00:00:0B:01",
+  "name": "radio-b",
+  "lastip": "192.168.1.6",
+  "signal": -67,
+  "rssi": 29,
+  "noisefloor": -96,
+  "ccq": 70,
+  "tx": 240.0,
+  "rx": 162.0,
+  "uptime": 2498586,
+  "airmax": {
+   "priority": 2,
+   "quality": 76,
+   "signal": -65,
+   "capacity": 44
+  },
+  "remote": {
+   "hostname": "radio-b",
+   "platform": "NanoStation loco M2",
+   "version": "XM.ar7240.v6.3.11.33396.230425.1742",
+   "signal": -64,
+   "noisefloor": -98
+  }
+ }
+]

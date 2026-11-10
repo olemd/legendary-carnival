@@ -1,0 +1,94 @@
+{
+ "host": {
+  "uptime": 2498631,
+  "time": "2026-11-10 11:40:26",
+  "fwversion": "v6.3.11",
+  "fwprefix": "XM",
+  "hostname": "radio-a",
+  "devmodel": "NanoStation loco M2 ",
+  "netrole": "bridge"
+ },
+ "wireless": {
+  "mode": "ap",
+  "essid": "link",
+  "hide_essid": 1,
+  "apmac": "02:00:00:00:0a:01",
+  "frequency": "2444 MHz",
+  "channel": 37,
+  "chwidth": 20,
+  "opmode": "11nght40minus",
+  "signal": -67,
+  "rssi": 29,
+  "noisef": -96,
+  "txpower": 9,
+  "ccq": 718,
+  "count": 1,
+  "security": "WPA2",
+  "polling": {
+   "enabled": 1,
+   "quality": 76,
+   "capacity": 44
+  }
+ },
+ "interfaces": [
+  {
+   "ifname": "lo",
+   "hwaddr": "00:00:00:00:00:00",
+   "enabled": true,
+   "status": {
+    "plugged": 1,
+    "speed": 0,
+    "duplex": 255
+   }
+  },
+  {
+   "ifname": "eth0",
+   "hwaddr": "02:00:00:00:0E:01",
+   "enabled": true,
+   "status": {
+    "plugged": 1,
+    "speed": 100,
+    "duplex": 1
+   }
+  },
+  {
+   "ifname": "wifi0",
+   "hwaddr": "02:00:00:00:0A:01",
+   "enabled": true,
+   "status": {
+    "plugged": 1,
+    "speed": 0,
+    "duplex": 255
+   }
+  },
+  {
+   "ifname": "ath0",
+   "hwaddr": "02:00:00:00:0A:01",
+   "enabled": true,
+   "status": {
+    "plugged": 1,
+    "speed": 300,
+    "duplex": 255
+   }
+  },
+  {
+   "ifname": "br0",
+   "hwaddr": "02:00:00:00:0A:01",
+   "enabled": true,
+   "status": {
+    "plugged": 1,
+    "speed": 0,
+    "duplex": 255
+   }
+  }
+ ],
+ "services": {
+  "dhcpc": 0,
+  "dhcpd": 0,
+  "pppoe": 0
+ },
+ "firewall": {
+  "iptables": 0,
+  "ebtables": 1
+ }
+}

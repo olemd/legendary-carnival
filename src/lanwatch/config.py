@@ -318,6 +318,33 @@ class ExposureConfig(StrictModel):
     ip_lookup_url: str = "https://api.ipify.org"
 
 
+class AirosConfig(StrictModel):
+    """Read-only link to Ubiquiti airMAX radios (airOS 6 and 8); see docs/airos.md."""
+
+    enabled: bool = False
+    # The radios, by address. Listed rather than guessed: lanwatch logs in to each one.
+    hosts: list[str] = Field(default_factory=list)
+    # The read-only account (System -> Read-Only Account), never the administrator.
+    username: str = ""
+    password: str = ""
+    timeout_s: int = Field(default=8, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def _check(self) -> AirosConfig:
+        if not self.enabled:
+            return self
+        if not self.hosts:
+            raise ValueError("airos.hosts must list at least one radio when enabled")
+        for host in self.hosts:
+            if not re.fullmatch(r"[A-Za-z0-9.:_-]{1,253}", host):
+                raise ValueError(f"airos.hosts: {host!r} is not an IP address or host name")
+        if len(set(self.hosts)) != len(self.hosts):
+            raise ValueError("airos.hosts lists a radio twice")
+        if not self.username or not self.password:
+            raise ValueError("airos.username and airos.password are required when enabled")
+        return self
+
+
 class UnifiConfig(StrictModel):
     """Read-only link to a UniFi Network controller (Integration API); see docs/unifi.md."""
 
@@ -390,6 +417,7 @@ class Config(StrictModel):
     oui: OuiConfig = OuiConfig()
     latency: LatencyConfig = LatencyConfig()
     exposure: ExposureConfig = ExposureConfig()
+    airos: AirosConfig = AirosConfig()
     unifi: UnifiConfig = UnifiConfig()
     rules: dict[str, RuleOverride] = Field(default_factory=dict)
 
