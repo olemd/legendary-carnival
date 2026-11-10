@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ import httpx2
 from lanwatch import oui
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
-from lanwatch.collectors.discovery import select_backend
+from lanwatch.collectors.discovery import neighbour_table, select_backend
 from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
@@ -37,6 +38,7 @@ from lanwatch.firmware import Firmware, check_firmware
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Device, Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
+    Subnet,
     default_gateways,
     ipv6_routers,
     is_local_address,
@@ -575,6 +577,76 @@ async def _record_arp_traffic(config: Config, store: Store, ex: Executor, snapsh
     )
 
 
+# Second look at silent addresses: pings per address, seconds to wait for each reply, and
+# at most this many addresses per round (a failed scan should not turn into a ping storm).
+RECHECK_COUNT = 3
+RECHECK_WAIT_S = 2
+RECHECK_MAX = 64
+
+
+async def recheck_silent(
+    config: Config,
+    store: Store,
+    ex: Executor,
+    subnets: list[Subnet],
+    hosts: list[HostObservation],
+    previous_snapshot_id: int | None,
+) -> list[HostObservation]:
+    """Ping, more patiently than the scan did, the addresses that should have answered and
+    did not: devices seen in the previous round, and clients the UniFi controller lists on
+    a scanned subnet. Power-saving Wi-Fi devices often sleep through an ARP probe but answer
+    a ping that waits a second or two. Only a reply counts, and the MAC comes from this
+    host's neighbour table, so a device that has really gone is still offline this round;
+    the controller only says where to look again."""
+    if not config.scan.recheck_silent:
+        return []
+    seen_ips = {h.ip for h in hosts}
+    seen_macs = {h.mac for h in hosts if h.mac}
+    excluded = {e.lower() for e in config.network.exclude_hosts}
+    targets: list[str] = []
+
+    def consider(ip: str | None, mac: str | None) -> None:
+        if not ip or ip in seen_ips or ip in targets or ip in excluded:
+            return
+        if mac is not None and (mac.lower() in seen_macs or mac.lower() in excluded):
+            return  # answered under another address; the scan has it
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return
+        if any(addr in s.network for s in subnets):
+            targets.append(ip)
+
+    if previous_snapshot_id is not None:
+        for did in sorted(store.sighting_device_ids(previous_snapshot_id)):
+            d = store.device(did)
+            if d is not None:
+                consider(d.ip, d.mac)
+    if config.unifi.enabled:
+        for r in store.infra("unifi-client"):
+            ip, mac = r.data.get("ip"), r.data.get("mac")
+            consider(ip if isinstance(ip, str) else None, mac if isinstance(mac, str) else None)
+    if not targets:
+        return []
+    if len(targets) > RECHECK_MAX:
+        log.info("recheck: %d silent addresses, pinging the first %d", len(targets), RECHECK_MAX)
+        targets = targets[:RECHECK_MAX]
+    results = await measure(ex, targets, RECHECK_COUNT, RECHECK_WAIT_S)
+    answered = [r.target for r in results if r.received]
+    neigh = await neighbour_table(ex) if answered else {}
+    # A reply without a neighbour entry has no MAC to tie it to a device: not recorded.
+    out = [
+        HostObservation(ip=ip, mac=neigh[ip], source="recheck") for ip in answered if neigh.get(ip)
+    ]
+    log.info(
+        "recheck: %d of %d silent addresses answered a slower ping%s",
+        len(out),
+        len(targets),
+        f": {', '.join(h.ip for h in out)}" if out else "",
+    )
+    return out
+
+
 async def run_discovery(
     config: Config, store: Store, executor: Executor | None = None
 ) -> DiscoveryOutcome:
@@ -595,12 +667,15 @@ async def run_discovery(
     own = dict(self_observations(ifaces, subnets))
     hosts = [h for h in hosts if h.ip not in own]
     hosts.extend(HostObservation(ip=ip, mac=mac, source="self") for ip, mac in own.items())
+    previous = store.latest_snapshot("discovery")
+    hosts.extend(
+        await recheck_silent(config, store, ex, subnets, hosts, previous.id if previous else None)
+    )
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
     # The backend's own OUI list may predate the device's prefix; try a fresher registry.
     hosts = oui.fill_vendors(hosts, oui.load(config.data_dir))
 
     is_baseline = store.finished_snapshot_count("discovery") == 0
-    previous = store.latest_snapshot("discovery")
     rec = store.record_hosts(snapshot_id, hosts)
     store.finish_snapshot(snapshot_id, len(rec.seen_device_ids))
     log.debug("answered: %s", ", ".join(sorted(h.ip for h in hosts)) or "nobody")

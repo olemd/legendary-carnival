@@ -145,6 +145,8 @@ is not supported yet.
   page shows the previous state and the error. `lanwatch unifi -v` repeats it with details.
 - **Clients the controller sees but lanwatch does not**: expected for other VLANs (lanwatch
   scans the segments the host sits on) and for guest or isolated clients. Accept the finding
-  if that is the design.
+  if that is the design. A client with an address on a scanned subnet gets a second,
+  slower ping each discovery round (`scan.recheck_silent`); if it answers that, it is
+  recorded like any other device and the finding resolves.
 - **A phone shows up twice**: a randomised MAC on one side and the controller's record on
   the other. Merge the entries on the device page; lanwatch then matches both addresses.

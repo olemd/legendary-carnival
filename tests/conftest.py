@@ -38,7 +38,7 @@ def config(tmp_path: Path) -> Config:
     return Config(
         data_dir=tmp_path,
         llm=LlmConfig(enabled=False),
-        scan=ScanConfig(name_poisoning_check=False),
+        scan=ScanConfig(name_poisoning_check=False, recheck_silent=False),
         latency=LatencyConfig(enabled=False),
         rules={
             "inventory.private-mac": RuleOverride(enabled=False),
