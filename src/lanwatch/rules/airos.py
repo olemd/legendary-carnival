@@ -322,7 +322,8 @@ class AirosLoginRejectedRule(Rule):
         "An airMAX radio rejected lanwatch's read-only login. lanwatch does not try those "
         "credentials on it again (airOS locks the account after three failures), so the "
         "radio is no longer read until airos.username or airos.password changes. Check the "
-        "read-only account on the radio (enabled, and applied)."
+        "read-only account on the radio (enabled, and applied); if the fault was there and "
+        "the config was right, run `lanwatch airos --retry-login HOST` afterwards."
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:

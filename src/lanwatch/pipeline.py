@@ -563,8 +563,9 @@ class AirosOutcome:
 async def collect_airos(config: Config, store: Store, snapshot_id: int) -> AirosOutcome:
     """Read every configured airMAX radio. A radio that cannot be read keeps its previous
     state with the error added, and never fails the round. Credentials a radio rejected
-    are not tried on it again until they change (airOS locks the account after three
-    failures); a radio whose certificate changed is not sent the password at all."""
+    are not tried on it again until they change, or `lanwatch airos --retry-login` forgets
+    the rejection (airOS locks the account after three failures); a radio whose
+    certificate changed is not sent the password at all."""
     cfg = config.airos
     out = AirosOutcome()
     previous = {r.key: r.data for r in store.infra("airos")}
@@ -575,7 +576,9 @@ async def collect_airos(config: Config, store: Store, snapshot_id: int) -> Airos
             if rejected and same_credentials(rejected, cfg.username, cfg.password):
                 raise AirosAuthError(
                     "the radio rejected these credentials before; lanwatch will not try "
-                    "again until airos.password (or username) changes"
+                    "again until airos.password (or username) changes. If the account "
+                    "was fixed on the radio instead, run "
+                    f"`lanwatch airos --retry-login {host}`"
                 )
             if rejected:
                 store.meta_delete(f"airos.rejected.{host}")  # new credentials: try them

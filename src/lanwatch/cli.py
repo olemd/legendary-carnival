@@ -278,6 +278,16 @@ def airos(
             " now. Only after checking why it changed (reset, replaced radio).",
         ),
     ] = None,
+    retry_login: Annotated[
+        str | None,
+        typer.Option(
+            "--retry-login",
+            metavar="HOST",
+            help="Forget that this radio rejected the login and try the configured"
+            " credentials on it once more. Only after fixing the account on the radio:"
+            " airOS locks it after three failures.",
+        ),
+    ] = None,
     verbose: VerboseOpt = False,
 ) -> None:
     """Read the airMAX radios now: model, firmware, and the link each one is part of."""
@@ -298,6 +308,13 @@ def airos(
         with _open_store(ctx) as store:
             store.meta_delete(f"airos.pin.{accept_cert}")
         typer.echo(f"{accept_cert}: pinned certificate forgotten; pinning the current one")
+    if retry_login is not None:
+        if retry_login not in cfg.airos.hosts:
+            typer.echo(f"{retry_login} is not in airos.hosts", err=True)
+            raise typer.Exit(1)
+        with _open_store(ctx) as store:
+            store.meta_delete(f"airos.rejected.{retry_login}")
+        typer.echo(f"{retry_login}: rejected login forgotten; trying the credentials once more")
     with _open_store(ctx) as store:
         out = asyncio.run(run_airos(cfg, store))
     for host in cfg.airos.hosts:

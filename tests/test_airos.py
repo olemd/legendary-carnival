@@ -334,6 +334,36 @@ def test_cli_airos_off(tmp_path: Path) -> None:
     assert r.exit_code == 1 and "docs/airos.md" in r.output
 
 
+def test_cli_retry_login_tries_remembered_credentials_once_more(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The account was wrong on the radio, not in the config: once it is fixed there, the
+    same credentials have to be tried again, and only when asked."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        f'[airos]\nenabled = true\nhosts = ["{HOST}"]\n'
+        f'username = "analyst"\npassword = "{PASSWORD}"\n'
+    )
+    with Store(Config(data_dir=tmp_path).store_path) as store:
+        store.meta_set(f"airos.rejected.{HOST}", airos.credentials_tag("analyst", PASSWORD))
+    radio = FakeRadio()
+    _patch(monkeypatch, radio)
+    base = ["--config", str(cfg), "--data-dir", str(tmp_path), "airos"]
+
+    r = CliRunner().invoke(app, base)
+    assert r.exit_code == 1 and f"--retry-login {HOST}" in r.output
+    assert radio.logins == []  # a plain run still leaves the radio alone
+
+    r = CliRunner().invoke(app, [*base, "--retry-login", "192.168.1.99"])
+    assert r.exit_code == 1 and "not in airos.hosts" in r.output
+
+    r = CliRunner().invoke(app, [*base, "--retry-login", HOST])
+    assert r.exit_code == 0 and "radio-a" in r.output
+    assert len(radio.logins) == 1
+    with Store(Config(data_dir=tmp_path).store_path) as store:
+        assert store.meta_get(f"airos.rejected.{HOST}") is None
+
+
 async def test_wireless_links_on_infra_and_device_pages(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:

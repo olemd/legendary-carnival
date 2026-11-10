@@ -54,10 +54,16 @@ pinned (section 4). After that the infra job reads the radios every round
 **One login attempt.** airOS 6.3.14 and later lock an account after three failed logins.
 When a radio does not clearly accept the login, lanwatch stops: it remembers that this
 username and password failed on that radio (a salted hash, not the password) and does not
-try them there again. Fix the account on the radio or the password in the config; a
-changed password is tried on the next round. Any reply to the login other than the
-expected redirect counts as a failure, so an unfamiliar firmware can never use up the
-attempts.
+try them there again. A changed password in the config is tried on the next round. Any
+reply to the login other than the expected redirect counts as a failure, so an unfamiliar
+firmware can never use up the attempts.
+
+When the fault was on the radio (the account not enabled, or not applied) and the config
+was right all along, fix the radio and then tell lanwatch to try once more:
+
+```
+sudo lanwatch airos --retry-login 192.168.1.20
+```
 
 **Certificate pinning.** The radios serve a self-signed certificate, which nothing can
 vouch for. lanwatch keeps the certificate it sees the first time and from then on lets
