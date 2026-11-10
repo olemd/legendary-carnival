@@ -1,8 +1,8 @@
 # lanwatch and a UniFi controller
 
 With a UniFi Network controller on the LAN (a UniFi OS console such as the Express, Dream
-Machine or Cloud Gateway, or a Cloud Key), lanwatch can read what the controller knows and
-no scan can see:
+Machine or Cloud Gateway, a Cloud Key, or UniFi OS Server on your own hardware), lanwatch
+can read what the controller knows and no scan can see:
 
 - per client: wired or wireless, which access point or switch it hangs off, guest or not,
   the name set in the controller, when it connected, and which network (VLAN) it is on;
@@ -19,8 +19,15 @@ endpoints are used. The key itself is not read-only, though; see section 1.
 
 ## 1. Create an API key on the console
 
-UniFi Network 9.3 or later. On the console's local web UI: **Settings → Control Plane →
-Integrations → Create API Key**. Name it `lanwatch`. The key is shown once.
+UniFi Network 9.3 or later. In the Network application on the console's local web UI, open
+the Integrations page and choose **Create API Key**. Name it `lanwatch`. The key is shown
+once.
+
+Where that page sits in the menus has moved between Network versions (**Settings → Control
+Plane → Integrations** in 9.x; in 10.x the Control Plane section may only show Updates,
+Backups, Console and Push Notifications). The address works in all of them:
+`https://<console>/network/default/integrations`, with your site's name in place of
+`default` if it has another.
 
 **Treat the key like the router's admin password.** UniFi does not make read-only keys: a
 key has every right the account that created it has, and the same API has endpoints that
@@ -120,8 +127,11 @@ and is not used by lanwatch. The network a client is on is derived from its addr
 the gateway-managed subnets, so a client without an address, or on a network the gateway
 does not manage, shows no network.
 
-Self-hosted Network applications (not a UniFi OS console) serve the API under a different
-path and are not supported yet.
+UniFi OS Server (the self-hosted UniFi OS, on a Linux machine or in a container) serves the
+API like a console and works as described here; behind a reverse proxy with a public
+certificate, `verify_tls = true` works without `ca_file`. The older standalone Network
+application (no UniFi OS, normally on port 8443) serves the API under a different path and
+is not supported yet.
 
 ## Troubleshooting
 

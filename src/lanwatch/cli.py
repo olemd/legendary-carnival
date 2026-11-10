@@ -303,11 +303,15 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             f"  {n.name[:24]:<24} VLAN {n.vlan_id or '-'!s:<5} {n.subnet or '-':<20} {flags}"
         )
     typer.echo("devices:")
+    # Columns as wide as their longest entry: model names run from "U6 Lite" to
+    # "USW Pro Max 16 PoE", and a fixed width let the long ones run into the state.
+    name_w = min(24, max((len(d.name or d.model) for d in snap.devices), default=0))
+    model_w = max((len(d.model) for d in snap.devices), default=0)
     for dev in snap.devices:
         update = " update available" if dev.firmware_updatable else ""
         typer.echo(
-            f"  {(dev.name or dev.model)[:24]:<24} {dev.model:<10} {dev.state.lower():<10} "
-            f"{dev.firmware_version or '-':<14}{update}"
+            f"  {(dev.name or dev.model)[:24]:<{name_w}}  {dev.model:<{model_w}}  "
+            f"{dev.state.lower():<8} {dev.firmware_version or '-':<14}{update}".rstrip()
         )
     wired = sum(1 for c in snap.clients if c.mac and c.wired)
     wireless = sum(1 for c in snap.clients if c.mac and not c.wired)
