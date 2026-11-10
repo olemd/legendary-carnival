@@ -141,6 +141,14 @@ Hygiene checks:
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
   or on GitHub unless `online = false`.
+- **airMAX radios** (`[airos]`, off by default, read-only, every infra round,
+  `lanwatch airos`): for point-to-point links built from Ubiquiti airMAX radios (NanoStation,
+  LiteBeam and the like), each radio's model and firmware and the link it is part of, with
+  signal, noise, CCQ and airMAX quality from both ends. Rules for a link that is down, poor
+  or worse than its own learned normal, a 2.4 GHz link on top of your Wi-Fi channels, a
+  changed certificate and a rejected login. Uses the radio's read-only account over HTTPS,
+  with the certificate pinned on first contact; the firmware check above covers the radios
+  too. See [docs/airos.md](docs/airos.md).
 - **UniFi controller** (`[unifi]`, read-only, every infra round, `lanwatch unifi`): with a
   UniFi OS console or UniFi OS Server on the LAN, each client's uplink device, wired/wireless, guest flag,
   controller name and network/VLAN; the networks, SSIDs and UniFi devices with pending
