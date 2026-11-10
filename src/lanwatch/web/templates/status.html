@@ -20,7 +20,7 @@
 </tr>
 {% endfor %}
 </tbody></table></div>
-<p class="muted">Jobs run one at a time. “Run now” queues the job behind whatever is running.</p>
+<p class="muted">Service scans (inventory, deep) run in their own lane, and so do the LLM jobs: discovery, infra and the other short jobs keep their schedule while a long scan runs. Within a lane jobs run one at a time, and “Run now” queues the job behind whatever is running in its lane.</p>
 {% else %}
 <p class="empty">This process only serves the web UI (<code>lanwatch web</code>). Scans are run by <code>lanwatch run</code> or from the command line.</p>
 {% endif %}

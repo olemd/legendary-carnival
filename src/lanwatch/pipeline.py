@@ -305,6 +305,8 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
     out = InfraOutcome(snapshot_id=snapshot_id)
 
     probes = await run_probes(ex, iface_names, config.scan, root)
+    # The infra page tells "could not probe" (no raw sockets) from "nobody answered".
+    store.meta_set("dhcp.probed", "yes" if probes.probed_dhcp else "no")
     if probes.probed_dhcp:
         store.replace_infra(
             "dhcp", {f"{o.interface}/{o.server}": o.as_dict() for o in probes.dhcp}, snapshot_id

@@ -379,8 +379,14 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
                 return wrapper
 
-            def job(name: str, interval: int, fn: Callable[[], Awaitable[object]]) -> Job:
-                j = Job(name, interval, persisted(name, fn))
+            def job(
+                name: str,
+                interval: int,
+                fn: Callable[[], Awaitable[object]],
+                lane: str = "main",
+                after: str | None = None,
+            ) -> Job:
+                j = Job(name, interval, persisted(name, fn), lane=lane, after=after)
                 last = store.meta_get(f"job.{name}.last_run")
                 j.resume_from(float(last) if last else None)
                 return j
@@ -396,15 +402,22 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                     cfg.schedule.discovery_interval_s,
                     lambda: run_discovery(cfg, store),
                 ),
+                # Service scans take their own lane: an hour of nmap must not hold up
+                # discovery, infra and the rest. They wait for this process's first
+                # discovery round, which gives them their targets.
                 job(
                     "inventory",
                     cfg.schedule.inventory_interval_s,
                     lambda: run_inventory(cfg, store),
+                    lane="scan",
+                    after="discovery",
                 ),
                 job(
                     "deep",
                     cfg.schedule.deep_interval_s,
                     lambda: run_inventory(cfg, store, deep=True),
+                    lane="scan",
+                    after="discovery",
                 ),
                 job("infra", cfg.schedule.infra_interval_s, lambda: run_infra(cfg, store)),
                 job("maintenance", 86400, lambda: run_maintenance(cfg, store)),
@@ -425,14 +438,22 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                         await notify.digest(cfg, store, text)
                     update_overview(store, cfg)
 
-                d = Job.daily("digest", cfg.schedule.digest_time, persisted("digest", digest_job))
+                # The LLM jobs can take minutes on a large local model: their own lane.
+                d = Job.daily(
+                    "digest", cfg.schedule.digest_time, persisted("digest", digest_job), lane="llm"
+                )
                 last = store.meta_get("job.digest.last_run")
                 d.resume_from(float(last) if last else None)
                 jobs.append(d)
                 # Structural suggestions change slowly with the inventory: weekly is enough,
                 # and "Run now" on the status page covers the impatient case.
                 jobs.append(
-                    job("suggest", 7 * 86400, lambda: llm_hooks.write_suggestions(cfg, store))
+                    job(
+                        "suggest",
+                        7 * 86400,
+                        lambda: llm_hooks.write_suggestions(cfg, store),
+                        lane="llm",
+                    )
                 )
             sched = Scheduler(jobs)
             sched.install_signal_handlers()

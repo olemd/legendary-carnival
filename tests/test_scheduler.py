@@ -113,3 +113,93 @@ async def test_trigger_runs_an_idle_job_now_and_records_the_outcome() -> None:
 
     s.stop()
     await asyncio.wait_for(runner, timeout=2)
+
+
+async def test_lanes_run_side_by_side() -> None:
+    """An hour-long service scan in the scan lane must not hold up discovery and infra:
+    on a fresh install the first infra round otherwise waited for inventory and deep."""
+    scan_started = asyncio.Event()
+    runs: list[str] = []
+
+    async def inventory() -> None:
+        scan_started.set()
+        await asyncio.sleep(3600)
+
+    async def quick(name: str) -> None:
+        await scan_started.wait()  # only finishes because the scan lane is busy in parallel
+        runs.append(name)
+
+    jobs = [
+        Job("inventory", 3600, inventory, lane="scan"),
+        Job("discovery", 300, lambda: quick("discovery")),
+        Job("infra", 900, lambda: quick("infra")),
+    ]
+    s = Scheduler(jobs)
+    runner = asyncio.create_task(s.run_forever())
+    for _ in range(100):
+        if runs == ["discovery", "infra"]:
+            break
+        await asyncio.sleep(0.01)
+    assert runs == ["discovery", "infra"]  # in list order within their lane
+    assert s.running is jobs[0] and s.running_jobs == [jobs[0]]
+    s.stop()
+    await asyncio.wait_for(runner, timeout=2)
+    assert s.running_jobs == []
+
+
+async def test_a_job_waits_for_the_job_it_needs() -> None:
+    """Service scans need a discovery round's device list: `after` holds them back until
+    discovery completed once in this process, then wakes their lane at once."""
+    order: list[str] = []
+    discovery_may_finish = asyncio.Event()
+
+    async def discovery() -> None:
+        await discovery_may_finish.wait()
+        order.append("discovery")
+
+    async def inventory() -> None:
+        order.append("inventory")
+
+    jobs = [
+        Job("inventory", 3600, inventory, lane="scan", after="discovery"),
+        Job("discovery", 300, discovery),
+    ]
+    s = Scheduler(jobs)
+    runner = asyncio.create_task(s.run_forever())
+    await asyncio.sleep(0.05)
+    assert order == []  # inventory is due but must not start before discovery finished
+    discovery_may_finish.set()
+    for _ in range(100):
+        if len(order) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert order == ["discovery", "inventory"]
+    s.stop()
+    await asyncio.wait_for(runner, timeout=2)
+
+
+async def test_trigger_queues_only_behind_the_same_lane() -> None:
+    import time
+
+    started = asyncio.Event()
+    runs: list[str] = []
+
+    async def scan() -> None:
+        started.set()
+        await asyncio.sleep(3600)
+
+    async def infra() -> None:
+        runs.append("infra")
+
+    jobs = [Job("deep", 3600, scan, lane="scan"), Job("infra", 900, infra)]
+    s = Scheduler(jobs)
+    runner = asyncio.create_task(s.run_forever())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    await asyncio.sleep(0.02)
+    assert runs == ["infra"]
+    jobs[1].next_due = time.monotonic() + 1000
+    assert s.trigger("infra")
+    await asyncio.sleep(0.05)
+    assert runs == ["infra", "infra"]  # ran although deep is still busy
+    s.stop()
+    await asyncio.wait_for(runner, timeout=2)

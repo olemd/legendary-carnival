@@ -202,6 +202,7 @@ async def test_infra_round_records_poisoners(
     config.scan.name_poisoning_check = True
     config.scan.upnp = False
     await pipeline.run_infra(config, store, executor=NoTools())
+    assert store.meta_get("dhcp.probed") == "no"  # no raw sockets: the page says why
     assert len(asked) == 1
     assert [r.key for r in store.infra("name-poisoning")] == ["192.168.1.66"]
     assert _titles(store, "ids.name-poisoning")

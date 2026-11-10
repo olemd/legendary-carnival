@@ -3,8 +3,10 @@ down the scan results are unaffected and the LLM catches up on the next round.""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+import weakref
 from datetime import datetime
 
 from lanwatch.config import Config
@@ -22,6 +24,21 @@ from lanwatch.store import Store
 
 log = logging.getLogger(__name__)
 _last_unavailable_log = 0.0
+_background_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _background() -> asyncio.Lock:
+    """Background LLM work (classification, explanations, digest, suggestions) runs one
+    stream at a time. The scheduler's lanes run side by side, and a local model answers one
+    prompt at a time anyway: parallel calls would only queue in Ollama and run into their
+    timeouts. Chat (ask) is interactive and does not wait for this."""
+    loop = asyncio.get_running_loop()
+    lock = _background_locks.get(loop)
+    if lock is None:
+        lock = _background_locks[loop] = asyncio.Lock()
+    return lock
 
 
 def _note_unavailable(svc: LlmService) -> None:
@@ -38,6 +55,13 @@ async def after_round(
     store changed (so the overview should be regenerated)."""
     if not config.llm.enabled or (not device_ids and not finding_ids):
         return False
+    async with _background():
+        return await _after_round(config, store, device_ids, finding_ids)
+
+
+async def _after_round(
+    config: Config, store: Store, device_ids: list[int], finding_ids: list[str]
+) -> bool:
     svc = LlmService(config, store)
     try:
         budget = config.llm.max_calls_per_round
@@ -74,6 +98,11 @@ async def catch_up(config: Config, store: Store) -> bool:
 async def write_digest(config: Config, store: Store, when: datetime | None = None) -> str | None:
     if not config.llm.enabled:
         return None
+    async with _background():
+        return await _write_digest(config, store, when)
+
+
+async def _write_digest(config: Config, store: Store, when: datetime | None) -> str | None:
     svc = LlmService(config, store)
     try:
         text = await make_digest(svc)
@@ -112,6 +141,11 @@ async def ask(
 async def write_suggestions(config: Config, store: Store) -> str | None:
     if not config.llm.enabled:
         return None
+    async with _background():
+        return await _write_suggestions(config, store)
+
+
+async def _write_suggestions(config: Config, store: Store) -> str | None:
     svc = LlmService(config, store)
     try:
         result = await make_suggestions(svc)
