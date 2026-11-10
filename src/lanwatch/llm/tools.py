@@ -7,6 +7,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -17,6 +18,11 @@ from lanwatch.store import Store
 log = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 12000
+
+
+def _first_sentence(text: str) -> str:
+    m = re.match(r"(.+?[.!?])(?:\s|$)", text, re.S)
+    return m.group(1) if m else text
 
 
 def _tool(
@@ -314,6 +320,9 @@ class ToolRunner:
         }
 
     def t_list_rules(self) -> list[dict[str, Any]]:
+        """Every rule with the first sentence of its description: the full texts of all
+        rules together are longer than a tool result may be (MAX_RESULT_CHARS), and the
+        first sentence says what the rule is about."""
         from lanwatch.rules.engine import all_rules
 
         out = []
@@ -327,7 +336,7 @@ class ToolRunner:
                     "kind": r.kind.value,
                     "severity": sev.value,
                     "enabled": enabled,
-                    "description": r.description,
+                    "description": _first_sentence(r.description),
                 }
             )
         return out

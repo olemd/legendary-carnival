@@ -13,6 +13,19 @@ from typing import Any
 import httpx2
 
 from lanwatch import oui
+from lanwatch.collectors.airos import (
+    AirosAuthError,
+    AirosError,
+    AirosPinError,
+    AirosStatus,
+    credentials_tag,
+    fetch_certificate,
+    fingerprint,
+    make_client,
+    read_radio,
+    same_credentials,
+    track_links,
+)
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
 from lanwatch.collectors.discovery import neighbour_table, select_backend
@@ -35,7 +48,7 @@ from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.decoy import listening_ports
 from lanwatch.exposure import Exposure, check_exposure
-from lanwatch.firmware import Firmware, check_firmware
+from lanwatch.firmware import Firmware, check_firmware, is_older
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Device, Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
@@ -191,6 +204,8 @@ class InfraOutcome:
     igd_mappings: int = 0
     ipv6_devices: int = 0
     devices_enriched: int = 0
+    airos_radios: int = 0
+    airos_errors: int = 0
     unifi_clients: int = 0
     unifi_devices: int = 0
     unifi_error: str | None = None
@@ -507,6 +522,10 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
         store.replace_infra("upnp", entries, snapshot_id)
         out.upnp_devices = len(upnp)
         out.igd_mappings = sum(len(u.mappings) for u in upnp)
+    if config.airos.enabled:
+        air = await collect_airos(config, store, snapshot_id)
+        enriched |= air.enriched
+        out.airos_radios, out.airos_errors = len(air.radios), len(air.errors)
     if config.unifi.enabled:
         uni = await collect_unifi(config, store, snapshot_id)
         enriched |= uni.enriched
@@ -671,6 +690,155 @@ async def run_unifi(config: Config, store: Store) -> UnifiOutcome:
     store.finish_snapshot(snapshot_id, out.clients)
     if out.error is not None:
         return out
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
+
+
+@dataclass(slots=True)
+class AirosOutcome:
+    radios: dict[str, AirosStatus] = field(default_factory=dict)
+    errors: dict[str, str] = field(default_factory=dict)
+    pinned: dict[str, str] = field(default_factory=dict)  # host -> fingerprint, first contact
+    pin_failed: set[str] = field(default_factory=set)
+    rejected: set[str] = field(default_factory=set)
+    enriched: set[int] = field(default_factory=set)
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def collect_airos(config: Config, store: Store, snapshot_id: int) -> AirosOutcome:
+    """Read every configured airMAX radio. A radio that cannot be read keeps its previous
+    state with the error added, and never fails the round. Credentials a radio rejected
+    are not tried on it again until they change, or `lanwatch airos --retry-login` forgets
+    the rejection (airOS locks the account after three failures); a radio whose
+    certificate changed is not sent the password at all."""
+    cfg = config.airos
+    out = AirosOutcome()
+    previous = {r.key: r.data for r in store.infra("airos")}
+    rows: dict[str, dict[str, Any]] = {}
+    for host in cfg.hosts:
+        rejected = store.meta_get(f"airos.rejected.{host}")
+        try:
+            if rejected and same_credentials(rejected, cfg.username, cfg.password):
+                raise AirosAuthError(
+                    "the radio rejected these credentials before; lanwatch will not try "
+                    "again until airos.password (or username) changes. If the account "
+                    "was fixed on the radio instead, run "
+                    f"`lanwatch airos --retry-login {host}`"
+                )
+            if rejected:
+                store.meta_delete(f"airos.rejected.{host}")  # new credentials: try them
+            pem = store.meta_get(f"airos.pin.{host}")
+            if pem is None:
+                pem = await fetch_certificate(host, cfg.timeout_s)
+                store.meta_set(f"airos.pin.{host}", pem)
+                out.pinned[host] = fingerprint(pem)
+                log.info("airos: %s: pinned certificate %s", host, out.pinned[host])
+            async with make_client(host, pem, cfg.timeout_s) as client:
+                radio = await asyncio.wait_for(read_radio(cfg, client, host), cfg.timeout_s * 4)
+        except AirosAuthError as e:
+            if not rejected or not same_credentials(rejected, cfg.username, cfg.password):
+                store.meta_set(
+                    f"airos.rejected.{host}", credentials_tag(cfg.username, cfg.password)
+                )
+            out.errors[host] = str(e)
+            out.rejected.add(host)
+        except (AirosError, TimeoutError) as e:
+            out.errors[host] = str(e) or "no answer in time"
+            if isinstance(e, AirosPinError):
+                out.pin_failed.add(host)
+        except Exception as e:
+            log.exception("airos: %s: unexpected failure", host)
+            out.errors[host] = f"{type(e).__name__}: {str(e)[:200]}"
+        else:
+            out.radios[host] = radio
+            rows[host] = {
+                **radio.as_dict(),
+                **track_links(previous.get(host), radio),
+                "read_at": iso(now_utc()),
+                "error": None,
+            }
+            continue
+        log.warning("airos: %s not read, keeping the previous state: %s", host, out.errors[host])
+        rows[host] = {
+            **(previous.get(host) or {"host": host}),
+            "error": out.errors[host],
+            "pin_failed": host in out.pin_failed,
+            "rejected": host in out.rejected,
+        }
+    store.replace_infra("airos", rows, snapshot_id)
+    for radio in out.radios.values():
+        out.enriched |= _airos_device_facts(store, radio)
+    log.info(
+        "airos: %d of %d radios read%s",
+        len(out.radios),
+        len(cfg.hosts),
+        "".join(f"; {r.hostname or r.host}: {len(r.stations)} linked" for r in out.radios.values()),
+    )
+    return out
+
+
+def _airos_device_facts(store: Store, radio: AirosStatus) -> set[int]:
+    """attrs.airos (and attrs.firmware, unless something else read the firmware) on the
+    lanwatch device behind the radio's own MAC."""
+    d = store.device_by_key(radio.mac) if radio.mac else None
+    if d is None and radio.host:
+        d = store.device_by_ip(radio.host)
+    if d is None:
+        return set()
+    eth = radio.ethernet
+    peer = radio.stations[0] if len(radio.stations) == 1 else None
+    attrs: dict[str, Any] = {
+        "airos": {
+            "model": radio.model,
+            "hostname": radio.hostname,
+            "firmware": radio.firmware,
+            "mode": radio.mode,
+            "netrole": radio.netrole,
+            "essid": radio.essid,
+            "frequency_mhz": radio.frequency_mhz,
+            "stations": len(radio.stations),
+            "peer": (peer.remote_hostname or peer.name or peer.mac) if peer else None,
+            "peer_ip": peer.ip if peer else None,
+            "ethernet_mbps": eth.speed if eth else None,
+            "macs": sorted({i.mac for i in radio.interfaces if i.mac}),
+        }
+    }
+    fw = d.attrs.get("firmware")
+    if radio.firmware and (not isinstance(fw, dict) or fw.get("source") == "airos"):
+        # The newest release is looked up once a day by the firmware job; keep what it
+        # found, and compare the version read now against it (an upgrade resolves the
+        # finding at the next read, not the next day).
+        latest = fw.get("latest") if isinstance(fw, dict) else None
+        attrs["firmware"] = {
+            "product": "airOS",
+            "version": radio.firmware,
+            "latest": latest,
+            "update": is_older(radio.firmware, latest) if latest else None,
+            "source": "airos",
+            "model": radio.model,
+            "platform": radio.platform,
+            "checked": iso(now_utc()),
+        }
+    return {d.id} if store.merge_device_attrs(d.id, attrs) else set()
+
+
+async def run_airos(config: Config, store: Store) -> AirosOutcome:
+    """On demand (`lanwatch airos`): read the radios, then the rules."""
+    snapshot_id = store.begin_snapshot("airos", "airos-web")
+    out = await collect_airos(config, store, snapshot_id)
+    store.finish_snapshot(snapshot_id, len(out.radios))
     ctx = RuleContext(
         store=store,
         config=config,

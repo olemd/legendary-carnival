@@ -137,9 +137,9 @@ class FirmwareOutdatedRule(Rule):
     description = (
         "A device runs an older firmware or software version than the latest release. Found "
         "by the daily firmware check ([firmware] in the config) for the products it knows: "
-        "Home Assistant, ESPHome, Shelly, Tasmota, Pi-hole, Jellyfin, and for UniFi gear "
-        "through the controller ([unifi]). Raise the severity under [rules] if you want to "
-        "be notified."
+        "Home Assistant, ESPHome, Shelly, Tasmota, Pi-hole, Jellyfin, for UniFi gear "
+        "through the controller ([unifi]), and for airMAX radios through [airos]. Raise the "
+        "severity under [rules] if you want to be notified."
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:

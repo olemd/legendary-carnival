@@ -12,6 +12,7 @@ answer the question themselves, each read the way its maker documents:
   Pi-hole          GET /admin/api.php?versions (v5),        the device itself
                    /api/info/version (v6)
   Jellyfin         GET :8096/System/Info/Public             GitHub releases (online)
+  airOS (airMAX)   the [airos] link (status.cgi)            Ubiquiti's firmware API (online)
 
 Reading the running version stays on the LAN: an mDNS question, or one unauthenticated GET
 to a device that already has that port open. "(online)" lookups ask the vendor or GitHub
@@ -48,6 +49,12 @@ ESPHOME_SERVICE = "_esphomelib._tcp.local"
 HA_LATEST_URL = "https://version.home-assistant.io/stable.json"
 SHELLY_GEN1_INDEX = "https://api.shelly.cloud/files/firmware"
 GITHUB_LATEST = "https://api.github.com/repos/{repo}/releases/latest"
+# Ubiquiti's own update service. Its "product" is the firmware family (XM, XW, XC, WA) and
+# its "platform" the product line, the other way round from what the names suggest.
+AIROS_LATEST = (
+    "https://fw-update.ui.com/api/firmware-latest?filter=eq~~product~~{platform}"
+    "&filter=eq~~platform~~airmax&filter=eq~~channel~~release"
+)
 # GitHub rejects requests without a User-Agent.
 ONLINE_HEADERS = {
     "User-Agent": f"lanwatch/{__version__}",
@@ -62,8 +69,9 @@ class Firmware:
     version: str
     latest: str | None = None
     update: bool | None = None  # None: could not tell
-    source: str = ""  # mdns | http
+    source: str = ""  # mdns | http | unifi | airos
     model: str = ""
+    platform: str = ""  # firmware family, where the vendor publishes per family (airOS: XM)
 
 
 def version_key(text: str) -> tuple[int, ...]:
@@ -251,6 +259,18 @@ class LatestVersions:
         entry = data.get("data", {}).get(model) if isinstance(data, dict) else None
         return str(entry["version"]) if isinstance(entry, dict) and entry.get("version") else None
 
+    async def airos(self, platform: str) -> str | None:
+        """The newest airOS release for a firmware family. The service also lists an old
+        custom build per family; the highest version is the current release."""
+        if not re.fullmatch(r"[A-Z0-9]{1,8}", platform):
+            return None
+        data = await self._fetch(AIROS_LATEST.format(platform=platform))
+        rows = data.get("_embedded", {}).get("firmware") if isinstance(data, dict) else None
+        versions = [
+            str(r["version"]) for r in rows or [] if isinstance(r, dict) and r.get("version")
+        ]
+        return max(versions, key=version_key) if versions else None
+
     async def fill(self, fw: Firmware) -> None:
         """Add `latest` and `update` where the device did not say itself."""
         if fw.update is not None:
@@ -264,6 +284,8 @@ class LatestVersions:
             latest = await self.github("arendst/Tasmota")
         elif fw.product == "Jellyfin":
             latest = await self.github("jellyfin/jellyfin")
+        elif fw.product == "airOS" and fw.platform:
+            latest = await self.airos(fw.platform)
         elif fw.product == "Shelly" and fw.model.startswith("SH") and "/" in fw.version:
             latest = await self.shelly_gen1(fw.model)
         if latest:
@@ -315,6 +337,24 @@ async def check_firmware(
     finally:
         if own_local:
             await client.aclose()
+
+    # Radios read by the [airos] link: their version is already known; only the newest
+    # release is looked up here, once a day like the others.
+    for device in store.devices():
+        fw_attrs = device.attrs.get("firmware")
+        if (
+            device.id not in found
+            and isinstance(fw_attrs, dict)
+            and fw_attrs.get("source") == "airos"
+            and fw_attrs.get("version")
+        ):
+            found[device.id] = Firmware(
+                "airOS",
+                str(fw_attrs["version"]),
+                source="airos",
+                model=str(fw_attrs.get("model") or ""),
+                platform=str(fw_attrs.get("platform") or ""),
+            )
 
     own_online = online and online_client is None
     lookup_client = (online_client or httpx2.AsyncClient(timeout=10)) if online else None

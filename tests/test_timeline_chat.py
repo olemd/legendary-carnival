@@ -13,6 +13,7 @@ from lanwatch.llm import hooks
 from lanwatch.llm.client import OllamaClient
 from lanwatch.llm.tasks import ChatAnswer, LlmService, answer_question
 from lanwatch.models import Finding, FindingStatus, HostObservation, Kind, Severity
+from lanwatch.rules.engine import all_rules
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
 from tests.fake_ollama import FakeOllama
@@ -226,10 +227,14 @@ def test_chat_summary_and_tools(store: Store, tmp_path: Path) -> None:
         json.loads(asyncio.run(runner.call("infrastructure", {})))["upnp"][0]["friendly_name"]
         == "Router"
     )
-    assert any(
-        r["id"] == "ssh.weak-algorithms"
-        for r in json.loads(asyncio.run(runner.call("list_rules", {})))
-    )
+    rules_text = asyncio.run(runner.call("list_rules", {}))
+    rules = json.loads(rules_text)  # whole, not cut off at MAX_RESULT_CHARS
+    assert any(r["id"] == "ssh.weak-algorithms" for r in rules)
+    assert len(rules) == len(all_rules())
+    # Room to grow: every rule must fit with space to spare for the next ones.
+    from lanwatch.llm.tools import MAX_RESULT_CHARS
+
+    assert len(rules_text) < MAX_RESULT_CHARS * 0.8
     assert json.loads(asyncio.run(runner.call("timeline", {"limit": 5})))
     assert "error" in json.loads(asyncio.run(runner.call("nope", {})))
     assert "bad arguments" in json.loads(asyncio.run(runner.call("get_device", {"x": 1})))["error"]

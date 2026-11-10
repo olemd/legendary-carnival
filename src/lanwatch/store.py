@@ -1117,6 +1117,9 @@ class Store:
             (key, value),
         )
 
+    def meta_delete(self, key: str) -> None:
+        self._db.execute("DELETE FROM meta WHERE key = ?", (key,))
+
     # -- findings -----------------------------------------------------------
 
     def upsert_findings(

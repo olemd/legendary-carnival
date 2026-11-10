@@ -22,6 +22,7 @@ from lanwatch.models import FindingStatus, local_str
 from lanwatch.overview import render
 from lanwatch.overview import update as update_overview
 from lanwatch.pipeline import (
+    run_airos,
     run_discovery,
     run_exposure,
     run_firmware,
@@ -264,6 +265,86 @@ def exposure(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
         typer.echo(f"hostnames: {', '.join(out.hostnames)}")
     if out.vulns:
         typer.echo(f"known vulnerabilities: {', '.join(out.vulns)}")
+
+
+@app.command()
+def airos(
+    ctx: typer.Context,
+    accept_cert: Annotated[
+        str | None,
+        typer.Option(
+            "--accept-cert",
+            metavar="HOST",
+            help="Forget the certificate pinned for this radio and pin the one it presents"
+            " now. Only after checking why it changed (reset, replaced radio).",
+        ),
+    ] = None,
+    retry_login: Annotated[
+        str | None,
+        typer.Option(
+            "--retry-login",
+            metavar="HOST",
+            help="Forget that this radio rejected the login and try the configured"
+            " credentials on it once more. Only after fixing the account on the radio:"
+            " airOS locks it after three failures.",
+        ),
+    ] = None,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Read the airMAX radios now: model, firmware, and the link each one is part of."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not cfg.airos.enabled:
+        typer.echo(
+            "the airOS link is off ([airos] enabled = false): set hosts, username and"
+            " password, see docs/airos.md",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if accept_cert is not None:
+        if accept_cert not in cfg.airos.hosts:
+            typer.echo(f"{accept_cert} is not in airos.hosts", err=True)
+            raise typer.Exit(1)
+        with _open_store(ctx) as store:
+            store.meta_delete(f"airos.pin.{accept_cert}")
+        typer.echo(f"{accept_cert}: pinned certificate forgotten; pinning the current one")
+    if retry_login is not None:
+        if retry_login not in cfg.airos.hosts:
+            typer.echo(f"{retry_login} is not in airos.hosts", err=True)
+            raise typer.Exit(1)
+        with _open_store(ctx) as store:
+            store.meta_delete(f"airos.rejected.{retry_login}")
+        typer.echo(f"{retry_login}: rejected login forgotten; trying the credentials once more")
+    with _open_store(ctx) as store:
+        out = asyncio.run(run_airos(cfg, store))
+    for host in cfg.airos.hosts:
+        if host in out.pinned:
+            typer.echo(f"{host}: pinned certificate SHA-256 {out.pinned[host]}")
+        radio = out.radios.get(host)
+        if radio is None:
+            typer.echo(f"{host}: error: {out.errors.get(host)}", err=True)
+            continue
+        eth = radio.ethernet
+        typer.echo(
+            f"{host}: {radio.hostname or '?'}, {radio.model}, airOS {radio.firmware},"
+            f" {radio.mode} ({radio.netrole}), {radio.frequency_mhz or '?'} MHz"
+            + (f", ethernet {eth.speed} Mbit/s" if eth and eth.speed else "")
+        )
+        for st in radio.stations:
+            typer.echo(
+                f"  linked with {st.remote_hostname or st.name or st.mac} ({st.ip or '?'}):"
+                f" signal {st.signal} dBm / noise {st.noise} dBm here,"
+                f" {st.remote_signal} / {st.remote_noise} there; CCQ {st.ccq}%,"
+                f" airMAX quality {st.airmax_quality}% capacity {st.airmax_capacity}%,"
+                f" {st.tx_mbps:g}/{st.rx_mbps:g} Mbit/s"
+                if st.tx_mbps is not None and st.rx_mbps is not None
+                else f"  linked with {st.remote_hostname or st.name or st.mac}"
+            )
+        if not radio.stations:
+            typer.echo("  no link")
+    if out.errors:
+        raise typer.Exit(1)
 
 
 @app.command()

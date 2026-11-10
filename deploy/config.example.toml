@@ -142,6 +142,19 @@ online = true                           # ask vendors/GitHub for the latest rele
 enabled = false
 # ip_lookup_url = "https://api.ipify.org"   # asked when no UPnP gateway reports the address
 
+[airos]
+# Read-only link to Ubiquiti airMAX radios (airOS 6 and 8, e.g. NanoStation, LiteBeam): model,
+# firmware, and the radio link each one is part of (signal, noise, CCQ, airMAX quality and
+# capacity). Uses the radio's read-only web account (System -> Read-Only Account), never the
+# administrator. One login attempt per round, and none again after a rejected password
+# until it changes: airOS locks the account after three failures. The certificate is pinned
+# on first contact. Stays on the LAN. See docs/airos.md.
+enabled = false
+hosts = []                              # e.g. ["192.168.1.20", "192.168.1.21"]
+username = ""
+password = ""
+timeout_s = 8
+
 [unifi]
 # Read-only link to a UniFi Network controller (a UniFi OS console or UniFi OS Server,
 # Network 9.3+). Per client: wired/wireless, uplink device, guest, controller name,
