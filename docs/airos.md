@@ -5,7 +5,7 @@ Bullet and their kin) are easy to forget once they work, and they degrade quietl
 neighbour's network on the same channel, a tree that grew, a mount that moved. lanwatch
 can read what each radio knows about itself and its link:
 
-- the radio: model, airOS version, uptime, AP or station, bridge or router, frequency and
+- the radio: model, airOS version (and whether a newer one exists), uptime, AP or station, bridge or router, frequency and
   channel width, the speed of its Ethernet port;
 - the link, from both ends: signal and noise, CCQ (the share of frames that got through
   the first time), airMAX quality and capacity, the rates in each direction, and what the
@@ -83,6 +83,12 @@ certificate only. The key size is the radio's weakness, not a lanwatch setting.
 | `airos.channel-overlap` (low) | a 2.4 GHz link partly on top of Wi-Fi channels 1, 6 or 11, or on the channel of your own access points |
 | `airos.certificate-changed` (high) | the radio presents another certificate than the pinned one |
 | `airos.login-rejected` (medium) | the radio rejected the read-only login; it is no longer read |
+| `device.firmware-outdated` (low) | the radio runs an older airOS than Ubiquiti's newest release for its firmware family (XM, XW, XC, WA) |
+
+The newest release is asked of Ubiquiti's firmware update service
+(`fw-update.ui.com`) once a day by the firmware job, like the other vendor lookups, and
+only with `[firmware] online = true`. The request names the firmware family, nothing about
+your radios.
 
 A point-to-point link is reported once, under the pair of radios, with the worse end's
 figures. The link's normal is learned from the link itself: lanwatch watches it for half

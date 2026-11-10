@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import re
 import secrets
 import ssl
 from dataclasses import asdict, dataclass, field
@@ -108,6 +109,8 @@ class AirosStatus:
     airmax_capacity: int | None
     interfaces: list[AirosInterface] = field(default_factory=list)
     stations: list[AirosStation] = field(default_factory=list)
+    # The firmware family Ubiquiti publishes releases under: XM, XW (airOS 6), XC, WA (8).
+    platform: str = ""
 
     @property
     def mac(self) -> str | None:
@@ -195,6 +198,7 @@ def parse_status(host: str, status: Any, stations: Any) -> AirosStatus:
     if not h or not w:
         raise AirosError("status.cgi has no host or wireless section; not an airOS radio?")
     polling = _dict(w.get("polling"))
+    prefix = _text(h.get("fwprefix"))
     quality, capacity = _int(polling.get("quality")), _int(polling.get("capacity"))
     ccq = _int(w.get("ccq"))
     interfaces = []
@@ -236,6 +240,7 @@ def parse_status(host: str, status: Any, stations: Any) -> AirosStatus:
         airmax_quality=quality,
         airmax_capacity=capacity,
         interfaces=interfaces,
+        platform=prefix if re.fullmatch(r"[A-Z0-9]{1,8}", prefix) else "",
         stations=[
             _with_link_airmax(x, quality, capacity)
             for x in map(parse_station, stations if isinstance(stations, list) else [])

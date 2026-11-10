@@ -390,3 +390,111 @@ def test_station_side_takes_airmax_figures_from_its_own_status() -> None:
     # Where the station list has its own figures (the AP side), those are kept.
     (ap_view,) = airos.parse_status(HOST, _status(), _stations()).stations
     assert (ap_view.airmax_quality, ap_view.airmax_capacity) == (76, 44)
+
+
+UBNT_LATEST = {
+    "_embedded": {
+        "firmware": [
+            {"version": "v6.3.26", "product": "XM", "platform": "airmax", "channel": "release"},
+            {"version": "v6.3.2-cs", "product": "XM", "platform": "airmax", "channel": "release"},
+        ]
+    }
+}
+
+
+def _ubnt(seen: list[str]) -> httpx2.AsyncClient:
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        seen.append(str(request.url))
+        return httpx2.Response(200, json=UBNT_LATEST)
+
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+
+
+def test_the_radio_names_its_firmware_family() -> None:
+    assert airos.parse_status(HOST, _status(), _stations()).platform == "XM"
+    odd = _status()
+    odd["host"]["fwprefix"] = "XM&x=1"  # anything but a plain family name is dropped
+    assert airos.parse_status(HOST, odd, []).platform == ""
+
+
+async def test_latest_airos_release_from_ubiquiti() -> None:
+    from lanwatch.firmware import LatestVersions
+
+    seen: list[str] = []
+    async with _ubnt(seen) as client:
+        latest = LatestVersions(client)
+        assert await latest.airos("XM") == "v6.3.26"  # not the old custom build
+        assert await latest.airos("x&y") is None  # never put into the URL
+    (url,) = seen
+    assert "fw-update.ui.com/api/firmware-latest" in url and "product~~XM" in url
+    assert "channel~~release" in url
+
+
+async def test_firmware_check_flags_an_old_airos(store: Store, config: Config) -> None:
+    """The daily check looks up the newest release for a radio read by [airos], and
+    device.firmware-outdated reports it; without online lookups nothing is asked."""
+    from lanwatch.firmware import check_firmware
+    from lanwatch.rules.base import RuleContext
+    from lanwatch.rules.engine import Engine
+
+    sid = store.begin_snapshot("discovery", "t")
+    store.record_hosts(sid, [HostObservation(ip=HOST, mac="02:00:00:00:0a:01", source="t")])
+    store.finish_snapshot(sid, 1)
+    d = store.device_by_key("02:00:00:00:0a:01")
+    assert d is not None
+    store.merge_device_attrs(
+        d.id,
+        {
+            "firmware": {
+                "product": "airOS",
+                "version": "v6.3.11",
+                "source": "airos",
+                "model": "NanoStation loco M2",
+                "platform": "XM",
+                "latest": None,
+                "update": None,
+                "checked": "2026-11-10T12:00:00+00:00",
+            }
+        },
+    )
+
+    async def no_mdns(service: str, bind_ips: list[str]) -> dict[str, dict[str, str]]:
+        return {}
+
+    seen: list[str] = []
+    offline = await check_firmware(store, [], online=False, mdns=no_mdns)
+    assert [fw.update for _, fw in offline] == [None] and seen == []
+
+    results = await check_firmware(store, [], online=True, online_client=_ubnt(seen), mdns=no_mdns)
+    ((_, fw),) = results
+    assert (fw.version, fw.latest, fw.update) == ("v6.3.11", "v6.3.26", True)
+    ctx = RuleContext(store, config, store.begin_snapshot("firmware", "t"), None, False)
+    (f,) = [x for x in Engine(config).run(ctx).emitted if x.rule_id == "device.firmware-outdated"]
+    assert "airOS v6.3.11 is behind v6.3.26" in f.title
+
+
+async def test_airos_read_keeps_the_newest_known_release(
+    monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    """Every read writes the version it sees; the newest release the daily check found is
+    kept, so an upgrade resolves the finding at the next read."""
+    config.airos = airos_config()
+    sid = store.begin_snapshot("discovery", "t")
+    store.record_hosts(sid, [HostObservation(ip=HOST, mac="02:00:00:00:0a:01", source="t")])
+    store.finish_snapshot(sid, 1)
+    d = store.device_by_key("02:00:00:00:0a:01")
+    assert d is not None
+    store.merge_device_attrs(
+        d.id, {"firmware": {"product": "airOS", "source": "airos", "latest": "v6.3.26"}}
+    )
+    _patch(monkeypatch, FakeRadio())  # the fixture radio runs v6.3.11
+    await pipeline.collect_airos(config, store, store.begin_snapshot("infra", "t"))
+    d = store.device(d.id)
+    assert d is not None
+    fw = d.attrs["firmware"]
+    assert (fw["version"], fw["latest"], fw["update"], fw["platform"]) == (
+        "v6.3.11",
+        "v6.3.26",
+        True,
+        "XM",
+    )

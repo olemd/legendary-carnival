@@ -47,7 +47,7 @@ from lanwatch.collectors.upnp import discover_upnp
 from lanwatch.config import Config
 from lanwatch.decoy import listening_ports
 from lanwatch.exposure import Exposure, check_exposure
-from lanwatch.firmware import Firmware, check_firmware
+from lanwatch.firmware import Firmware, check_firmware, is_older
 from lanwatch.llm import hooks as llm_hooks
 from lanwatch.models import Device, Finding, HostObservation, ServiceDiff, iso, now_utc
 from lanwatch.netinfo import (
@@ -657,13 +657,18 @@ def _airos_device_facts(store: Store, radio: AirosStatus) -> set[int]:
     }
     fw = d.attrs.get("firmware")
     if radio.firmware and (not isinstance(fw, dict) or fw.get("source") == "airos"):
+        # The newest release is looked up once a day by the firmware job; keep what it
+        # found, and compare the version read now against it (an upgrade resolves the
+        # finding at the next read, not the next day).
+        latest = fw.get("latest") if isinstance(fw, dict) else None
         attrs["firmware"] = {
             "product": "airOS",
             "version": radio.firmware,
-            "latest": None,
-            "update": None,  # the newest release is looked up by the firmware job
+            "latest": latest,
+            "update": is_older(radio.firmware, latest) if latest else None,
             "source": "airos",
             "model": radio.model,
+            "platform": radio.platform,
             "checked": iso(now_utc()),
         }
     return {d.id} if store.merge_device_attrs(d.id, attrs) else set()
