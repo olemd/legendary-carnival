@@ -3,8 +3,10 @@
 Bound to loopback by default. Binding wider requires web.password (HTTP basic auth).
 """
 
+import ipaddress
 import json
 import secrets
+import shutil
 import time
 from collections.abc import Iterator
 from dataclasses import asdict
@@ -323,6 +325,7 @@ def create_app(
             dns_filter=s.infra("dns-filter"),
             exposure=s.infra("exposure"),
             unifi=_unifi_section(s, config),
+            router=_router_section(s, config),
             snapshot=s.latest_snapshot("infra"),
         )
 
@@ -385,6 +388,7 @@ def create_app(
             decoys=decoys,
             arp_frames=s.meta_get("arp.frames"),
             devices_total=len(s.devices()),
+            router=_router_status(s, config),
         )
 
     @app.post("/scan/{name}", dependencies=write_deps)
@@ -532,6 +536,70 @@ def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
         "clients_total": len(clients),
         "clients_unknown": sum(1 for r in clients if not r.data.get("known")),
         "clients_guest": sum(1 for r in clients if r.data.get("guest")),
+    }
+
+
+def _router_status(s: Store, config: Config) -> dict[str, Any]:
+    """The status page's router tile: what was read over SNMP, when, and what failed."""
+    raw = s.meta_get("snmp.system")
+    try:
+        system = json.loads(raw) if raw else None
+    except ValueError:
+        system = None
+    return {
+        "enabled": config.snmp.enabled,
+        "tool": shutil.which("snmpbulkwalk") is not None,
+        "host": s.meta_get("snmp.host") or config.snmp.host,
+        "system": system if isinstance(system, dict) else None,
+        "last_ok": s.meta_get("snmp.last_ok") or None,
+        "error": s.meta_get("snmp.last_error") or None,
+    }
+
+
+def _private(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
+
+
+def _router_section(s: Store, config: Config) -> dict[str, Any]:
+    """The infra page's router section: every address in the router's ARP table or DHCP
+    leases, with the lanwatch device behind its MAC, whether it holds a lease, and where
+    lanwatch disagrees with the router."""
+    arp = {r.key: r.data for r in s.infra("router-arp")}
+    leases = {r.key: r.data for r in s.infra("router-dhcp")}
+    mismatch = {r.key: r.data for r in s.infra("router-arp-mismatch")}
+    by_mac = {d.mac: d for d in s.devices() if d.mac}
+    rows: list[dict[str, Any]] = []
+    # The LAN first; the router's neighbours on the internet side (the ISP) after it.
+    for ip in sorted(set(arp) | set(leases), key=lambda ip: (not _private(ip), _ip_key(ip))):
+        entry, lease = arp.get(ip) or {}, leases.get(ip)
+        mac = entry.get("mac") or (lease or {}).get("mac")
+        m = mismatch.get(ip)
+        rows.append(
+            {
+                "ip": ip,
+                "mac": mac,
+                "device": by_mac.get(mac) if mac else None,
+                "interface": entry.get("interface"),
+                "in_arp": bool(entry),
+                # Only a LAN address can be expected to hold a lease from the router.
+                "private": _private(ip),
+                "static": bool(entry.get("static")),
+                "lease": lease,
+                "mismatch": m,
+                "mismatch_confirmed": m is not None and int(m.get("rounds") or 0) >= 2,
+            }
+        )
+    status = _router_status(s, config)
+    return {
+        **status,
+        # Only a router whose DHCP leases lanwatch reads can say a device has none.
+        "has_leases": bool(leases) or (status["system"] or {}).get("vendor") == "Juniper",
+        "rows": rows,
+        "unknown": sum(1 for r in rows if r["device"] is None),
+        "mismatches": sum(1 for r in rows if r["mismatch_confirmed"]),
     }
 
 

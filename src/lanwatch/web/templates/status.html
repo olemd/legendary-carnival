@@ -63,6 +63,22 @@
     </dl>
   </div>
   <div class="tile">
+    <div class="tile-label">Router (SNMPv3)</div>
+    <dl class="kv">
+      {% if not router.enabled %}<dt>State</dt><dd class="muted">disabled in config; see docs/snmp.md</dd>
+      {% else %}
+      {% if not router.tool %}<dt>Problem</dt><dd><span class="result-failed">snmpbulkwalk missing</span> <span class="muted">install the snmp package</span></dd>{% endif %}
+      <dt>Address</dt><dd class="mono">{{ router.host or 'default gateway' }}</dd>
+      {% if router.system %}
+      <dt>Router</dt><dd>{{ router.system.name or '-' }} <span class="muted">{{ router.system.vendor or router.system.object_id }}</span></dd>
+      <dt>Software</dt><dd class="muted">{{ router.system.descr | truncate(90) }}</dd>
+      <dt>Up</dt><dd>{{ router.system.uptime_s | duration }}</dd>
+      {% endif %}
+      <dt>Last read</dt><dd>{% if router.error %}<span class="result-failed">failed</span> <span class="muted mono">{{ router.error }}</span>{% if router.last_ok %}<br><span class="muted">last good read {{ router.last_ok | local }}</span>{% endif %}{% elif router.last_ok %}<span class="result-ok">ok</span> <span class="muted">{{ router.last_ok | local }} · <a href="/infra#router">ARP and DHCP</a></span>{% else %}<span class="muted">not yet; the infra job reads it every {{ config.schedule.infra_interval_s // 60 }} minutes</span>{% endif %}</dd>
+      {% endif %}
+    </dl>
+  </div>
+  <div class="tile">
     <div class="tile-label">This instance</div>
     <dl class="kv">
       <dt>Version</dt><dd>{{ version }}</dd>
