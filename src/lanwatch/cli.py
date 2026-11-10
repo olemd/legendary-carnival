@@ -333,7 +333,7 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
 @app.command()
 def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
-    """Read the router over SNMPv3 now: what it is and how long it has been up."""
+    """Read the router over SNMPv3 now: what it is, its ARP table and DHCP leases."""
     if verbose:
         set_verbose()
     cfg = _state(ctx).loaded.config
@@ -355,6 +355,11 @@ def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
     typer.echo(f"{out.host}: {sys_.name or '(no name)'}, {sys_.vendor or sys_.object_id}")
     typer.echo(f"  {sys_.descr}")
     typer.echo(f"  up {days} days {rest // 3600} hours")
+    typer.echo(
+        f"  {len(out.neighbours)} ARP entries"
+        + (f", {len(out.leases)} DHCP leases" if out.leases is not None else "")
+        + (f", {out.mismatches} held by another MAC than lanwatch saw" if out.mismatches else "")
+    )
     if sys_.location:
         typer.echo(f"  location: {sys_.location}")
 

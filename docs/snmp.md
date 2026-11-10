@@ -11,11 +11,27 @@ allowed for authentication: SNMPv3 uses it as an HMAC, which the known SHA-1 col
 attacks do not break, and some agents (UniFi) offer nothing else. Prefer SHA-256 where
 the agent has it.
 
-What lanwatch reads so far:
+What lanwatch reads:
 
-- the system group: name, model and software (`sysDescr`), vendor (`sysObjectID`), uptime.
+- the system group: name, model and software (`sysDescr`), vendor (`sysObjectID`), uptime;
+- the router's ARP and IPv6 neighbour table (IP-MIB), from any router;
+- on Juniper, the leases its own DHCP server has handed out (JUNIPER-JDHCP-MIB).
 
-The router's ARP table, DHCP leases, interface state and vendor health data follow.
+What it does with them:
+
+- **Never presence.** A router keeps an ARP entry, and a lease, for many minutes after a
+  device has gone, so neither can say a device is online. Addresses the router knows and
+  the discovery scan missed are added to the slower ping of the recheck
+  (`scan.recheck_silent`): only a reply makes them online.
+- **A second view of who holds each address.** When the router ties an address to
+  another MAC than the one that answered lanwatch, in two reads in a row, that is the
+  `net.router-arp-mismatch` finding: an address conflict, or a device that has told the
+  router it is someone else (ARP spoofing). Critical for the gateway, DHCP and DNS.
+- **Facts on each device:** that the router has it in its ARP table and on which
+  interface, and (Juniper) whether it holds a DHCP lease and since when. A device in the
+  ARP table without a lease has its address set by hand, or from another DHCP server.
+
+Interface state and vendor health data follow.
 
 ## 1. Create a read-only SNMPv3 user on the router
 
@@ -128,8 +144,9 @@ installed) only makes `snmpwalk` output readable when you query the router by ha
 sudo lanwatch snmp
 ```
 
-prints what the router says it is and how long it has been up. After that the infra job
-reads it every round (`schedule.infra_interval_s`, 15 minutes by default).
+prints what the router says it is, how long it has been up and how many ARP entries and
+leases it has. After that the infra job reads it every round (`schedule.infra_interval_s`,
+15 minutes by default).
 
 To test the user without lanwatch, from the same host:
 

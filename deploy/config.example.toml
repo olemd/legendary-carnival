@@ -157,8 +157,9 @@ verify_tls = true                       # consoles are self-signed: pin with ca_
 adopt_names = true                      # name unnamed devices as the controller names them
 
 [snmp]
-# Read-only SNMPv3 link to the router: what it is, its uptime, and (as more is added) its
-# ARP table and DHCP leases. SNMPv3 with authentication and encryption only; lanwatch does
+# Read-only SNMPv3 link to the router: what it is, its uptime, its ARP table and (Juniper)
+# its DHCP leases. They are never taken as presence: they add addresses to the recheck's
+# slower ping, and a router that ties an address to another MAC is a finding. SNMPv3 with authentication and encryption only; lanwatch does
 # not speak v1/v2c communities. Create a read-only v3 user on the router first: docs/snmp.md
 # has an example for Junos. Stays on the LAN. Needs the snmp package (snmpbulkwalk).
 enabled = false

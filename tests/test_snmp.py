@@ -34,23 +34,27 @@ def snmp_config(**kw: object) -> SnmpConfig:
 def fake_walker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str, rc: int = 0, stderr: str = ""
 ) -> Path:
-    """Put a fake snmpbulkwalk first on PATH. It records its arguments, environment and the
-    config file it was given, then prints `output`."""
+    """Put a fake snmpbulkwalk first on PATH. It records its arguments (one line per call),
+    environment and the config file it was given, then prints tmp_path/walks/<oid> when
+    there is one, else `output`."""
     bin_dir = tmp_path / "bin"
     rec = tmp_path / "rec"
     bin_dir.mkdir()
     rec.mkdir()
+    (tmp_path / "walks").mkdir()
     (tmp_path / "out.txt").write_text(output)
     (tmp_path / "err.txt").write_text(stderr)
     script = bin_dir / "snmpbulkwalk"
     script.write_text(
         "#!/bin/sh\n"
-        f'echo "$@" > {rec}/args\n'
+        f'echo "$@" >> {rec}/args\n'
+        "for oid; do :; done\n"
         f'echo "$SNMPCONFPATH" > {rec}/dir\n'
         f"env > {rec}/env\n"
         f'cp "$SNMPCONFPATH/snmp.conf" {rec}/conf\n'
         f'stat -c %a "$SNMPCONFPATH/snmp.conf" > {rec}/mode\n'
-        f"cat {tmp_path}/out.txt\n"
+        f'if [ -f "{tmp_path}/walks/$oid" ]; then cat "{tmp_path}/walks/$oid";'
+        f" else cat {tmp_path}/out.txt; fi\n"
         f"cat {tmp_path}/err.txt >&2\n"
         f"exit {rc}\n"
     )
@@ -166,17 +170,25 @@ def test_walk_args_bracket_ipv6() -> None:
 
 
 async def test_collect_snmp_stores_state_and_keeps_it_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store: Store,
+    config: Config,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level("INFO", logger="lanwatch.pipeline")
     config.snmp = snmp_config(host=None)
 
     async def gateways(ex: object = None) -> list[str]:
         return ["192.0.2.1"]
 
     monkeypatch.setattr(pipeline, "default_gateways", gateways)
+    sid = store.begin_snapshot("infra", "t")
     rec = fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
-    out = await pipeline.collect_snmp(config, store)
+    out = await pipeline.collect_snmp(config, store, sid)
     assert out.error is None and out.host == "192.0.2.1"
+    # 13798824 s is 159.7 days: the log says 159, like `lanwatch snmp`, not a rounded 160.
+    assert "up 159 days" in caplog.text
     assert "192.0.2.1" in (rec / "args").read_text()  # the gateway, as no host was set
     system = json.loads(store.meta_get("snmp.system") or "{}")
     assert system["name"] == "gw-test" and system["vendor"] == "Juniper"
@@ -186,7 +198,7 @@ async def test_collect_snmp_stores_state_and_keeps_it_on_failure(
     (tmp_path / "err.txt").write_text("snmpbulkwalk: Authentication failure (incorrect password)")
     script = tmp_path / "bin" / "snmpbulkwalk"
     script.write_text(script.read_text().replace("exit 0", "exit 1"))
-    out = await pipeline.collect_snmp(config, store)
+    out = await pipeline.collect_snmp(config, store, sid)
     assert out.error is not None and "auth_password" in out.error
     assert store.meta_get("snmp.last_error") == out.error
     assert json.loads(store.meta_get("snmp.system") or "{}")["name"] == "gw-test"
@@ -195,3 +207,129 @@ async def test_collect_snmp_stores_state_and_keeps_it_on_failure(
 def test_cli_snmp_off(tmp_path: Path) -> None:
     r = CliRunner().invoke(app, ["--data-dir", str(tmp_path), "snmp"])
     assert r.exit_code == 1 and "docs/snmp.md" in r.output
+
+
+def _walks() -> dict[str, dict[str, snmp.Value]]:
+    return {
+        name: snmp.parse_walk((FIXTURES / f"snmp-{name}.txt").read_text())
+        for name in ("arp", "arp-types", "ifname", "ifphys", "jnx-dhcp")
+    }
+
+
+def test_parse_neighbours_skips_own_and_invalid_entries() -> None:
+    w = _walks()
+    got = {
+        (n.ip, n.mac, n.interface, n.static)
+        for n in snmp.parse_neighbours(w["arp"], w["arp-types"], w["ifname"], w["ifphys"])
+    }
+    assert got == {
+        ("192.168.1.10", "aa:bb:cc:00:00:10", "irb.0", False),
+        ("192.168.1.20", "aa:bb:cc:00:00:20", "irb.0", False),
+        ("192.168.1.30", "aa:bb:cc:00:00:30", "irb.0", True),  # static entry
+        ("fe80::10", "aa:bb:cc:00:00:10", "irb.0", False),  # IPv6 neighbour
+        ("203.0.113.1", "ee:ee:ee:00:00:01", "ge-0/0/0.0", False),  # the WAN side
+    }  # .1 is the router's own address (type 5), .40 is invalid (type 2), and 192.168.9.1
+    # is listed as static but carries one of the router's interface MACs (as Junos does)
+
+
+def test_parse_neighbours_from_the_older_table() -> None:
+    macs = snmp.parse_walk(
+        ".1.3.6.1.2.1.4.22.1.2.3.192.168.1.10 = Hex-STRING: AA BB CC 00 00 10 \n"
+        ".1.3.6.1.2.1.4.22.1.2.3.192.168.1.40 = Hex-STRING: AA BB CC 00 00 40 \n"
+    )
+    types = snmp.parse_walk(
+        ".1.3.6.1.2.1.4.22.1.4.3.192.168.1.10 = INTEGER: 3\n"
+        ".1.3.6.1.2.1.4.22.1.4.3.192.168.1.40 = INTEGER: 2\n"
+    )
+    got = snmp.parse_neighbours(macs, types, {})
+    assert [(n.ip, n.mac, n.interface) for n in got] == [
+        ("192.168.1.10", "aa:bb:cc:00:00:10", None)
+    ]
+
+
+def test_parse_juniper_leases() -> None:
+    leases = snmp.parse_juniper_leases(_walks()["jnx-dhcp"])
+    assert [(x.ip, x.mac, x.since, x.expires) for x in leases] == [
+        ("192.168.1.10", "aa:bb:cc:00:00:10", "2026-11-01 08:00:00 CET", "2026-11-10 10:44:01 CET"),
+        ("192.168.1.20", "aa:bb:cc:00:00:20", "2026-11-09 18:29:45 CET", "2026-11-10 10:30:00 CET"),
+    ]
+
+
+def _router_fixtures(tmp_path: Path) -> None:
+    for oid, name in (
+        (snmp.NET_TO_PHYSICAL_MAC, "arp"),
+        (snmp.NET_TO_PHYSICAL_TYPE, "arp-types"),
+        (snmp.IF_NAME, "ifname"),
+        (snmp.IF_PHYS_ADDRESS, "ifphys"),
+        (snmp.JNX_DHCP_BINDINGS, "jnx-dhcp"),
+    ):
+        (tmp_path / "walks" / oid).write_text((FIXTURES / f"snmp-{name}.txt").read_text())
+
+
+async def test_router_tables_facts_and_mismatch_rule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    """The router's tables land in infra and on known devices; an address the router ties
+    to another MAC than the one that answered lanwatch becomes a finding after two reads."""
+    from lanwatch.models import HostObservation
+    from lanwatch.rules.base import RuleContext
+    from lanwatch.rules.engine import Engine
+
+    config.snmp = snmp_config()
+    sid = store.begin_snapshot("discovery", "t")
+    store.record_hosts(
+        sid,
+        [
+            HostObservation(ip="192.168.1.10", mac="aa:bb:cc:00:00:10", source="t"),
+            # The router has .20 as aa..20; here something else answered for it.
+            HostObservation(ip="192.168.1.20", mac="aa:bb:cc:00:00:99", source="t"),
+            HostObservation(ip="192.168.1.30", mac="aa:bb:cc:00:00:30", source="t"),
+        ],
+    )
+    store.finish_snapshot(sid, 3)
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    _router_fixtures(tmp_path)
+
+    def mismatch_findings(snapshot_id: int) -> list[str]:
+        ctx = RuleContext(store, config, snapshot_id, None, is_baseline=False)
+        return [
+            f.title
+            for f in Engine(config).run(ctx).emitted
+            if f.rule_id == "net.router-arp-mismatch"
+        ]
+
+    first = store.begin_snapshot("infra", "t")
+    out = await pipeline.collect_snmp(config, store, first)
+    assert out.error is None and out.leases is not None and len(out.leases) == 2
+    assert {r.key for r in store.infra("router-arp")} >= {"192.168.1.10", "192.168.1.30"}
+    assert {r.key for r in store.infra("router-dhcp")} == {"192.168.1.10", "192.168.1.20"}
+    with_lease = store.device_by_key("aa:bb:cc:00:00:10")
+    static = store.device_by_key("aa:bb:cc:00:00:30")
+    assert with_lease is not None and static is not None
+    assert with_lease.attrs["router"] == {
+        "arp_interface": "irb.0",
+        "dhcp_lease": True,
+        "dhcp_lease_since": "2026-11-01 08:00:00 CET",
+    }
+    assert static.attrs["router"]["dhcp_lease"] is False
+    assert out.mismatches == 1
+    assert mismatch_findings(first) == []  # one read can be an address changing hands
+
+    second = store.begin_snapshot("infra", "t")
+    await pipeline.collect_snmp(config, store, second)
+    (title,) = mismatch_findings(second)
+    assert "192.168.1.20" in title and "aa:bb:cc:00:00:20" in title
+
+
+async def test_router_without_lease_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    """Not a Juniper: no lease table is asked for, and devices get no lease facts."""
+    config.snmp = snmp_config()
+    system = (FIXTURES / "snmp-system.txt").read_text().replace(".2636.1.1", ".8072.3.2")
+    rec = fake_walker(tmp_path, monkeypatch, system)
+    _router_fixtures(tmp_path)
+    out = await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert out.system is not None and out.system.vendor == "net-snmp"
+    assert out.leases is None and store.infra("router-dhcp") == []
+    assert snmp.JNX_DHCP_BINDINGS not in (rec / "args").read_text()

@@ -40,6 +40,22 @@ SYS_CONTACT = "1.3.6.1.2.1.1.4.0"
 SYS_NAME = "1.3.6.1.2.1.1.5.0"
 SYS_LOCATION = "1.3.6.1.2.1.1.6.0"
 
+# IP-MIB neighbour table (ARP and IPv6 neighbours), and the older IPv4-only one for agents
+# that only have that. Type 2 is invalid in both; ipNetToPhysical adds 5, the router's own
+# addresses. 4 is static in both.
+NET_TO_PHYSICAL_MAC = "1.3.6.1.2.1.4.35.1.4"
+NET_TO_PHYSICAL_TYPE = "1.3.6.1.2.1.4.35.1.6"
+NET_TO_MEDIA_MAC = "1.3.6.1.2.1.4.22.1.2"
+NET_TO_MEDIA_TYPE = "1.3.6.1.2.1.4.22.1.4"
+NEIGH_INVALID, NEIGH_STATIC, NEIGH_LOCAL = 2, 4, 5
+IF_NAME = "1.3.6.1.2.1.31.1.1.1.1"
+# The router's own interface MACs. Some agents (Junos) list the router's own addresses
+# as static entries instead of type 5, so these are what tells them apart.
+IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
+# JUNIPER-JDHCP-MIB jnxJdhcpLocalServerBindingsTable, indexed by the client's IPv4 address.
+# Columns: 2 MAC, 3 state, 4 lease expiry, 6 lease start (both "YYYY-MM-DD hh:mm:ss TZ").
+JNX_DHCP_BINDINGS = "1.3.6.1.4.1.2636.3.61.61.1.2.1.1"
+
 # IANA enterprise numbers, the first arc after 1.3.6.1.4.1 in sysObjectID.
 VENDORS = {
     "9": "Cisco",
@@ -84,6 +100,33 @@ class SystemInfo:
             "location": self.location,
             "contact": self.contact,
         }
+
+
+@dataclass(slots=True)
+class Neighbour:
+    """One entry of the router's ARP (or IPv6 neighbour) table."""
+
+    ip: str
+    mac: str
+    interface: str | None
+    static: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return {"ip": self.ip, "mac": self.mac, "interface": self.interface, "static": self.static}
+
+
+@dataclass(slots=True)
+class DhcpLease:
+    """A lease the router's own DHCP server has handed out. Times are as the router
+    prints them, in its local time zone."""
+
+    ip: str
+    mac: str
+    since: str | None
+    expires: str | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {"ip": self.ip, "mac": self.mac, "since": self.since, "expires": self.expires}
 
 
 def conf_text(cfg: SnmpConfig) -> str:
@@ -200,6 +243,81 @@ def parse_system(values: dict[str, Value]) -> SystemInfo:
     )
 
 
+def _suffix(oid: str, prefix: str) -> list[str] | None:
+    if not oid.startswith(prefix + "."):
+        return None
+    return oid[len(prefix) + 1 :].split(".")
+
+
+def _address(parts: list[str]) -> str | None:
+    """An InetAddressType.length.bytes index as an address; None for anything else."""
+    try:
+        kind, length, raw = int(parts[0]), int(parts[1]), bytes(int(p) for p in parts[2:])
+        if kind == 1 and length == 4 == len(raw):
+            return str(ipaddress.IPv4Address(raw))
+        if kind == 2 and length == 16 == len(raw):
+            return str(ipaddress.IPv6Address(raw))
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
+def parse_neighbours(
+    macs: dict[str, Value],
+    types: dict[str, Value],
+    if_names: dict[str, Value],
+    own: dict[str, Value] | None = None,
+) -> list[Neighbour]:
+    """ipNetToPhysical (index ifIndex.type.length.address) or, when the agent only has
+    that, ipNetToMedia (index ifIndex.a.b.c.d). The router's own addresses (type 5, or
+    any entry with one of its interface MACs in `own`) and invalid entries are left out."""
+    own_macs = {m for v in (own or {}).values() if (m := mac(v))}
+    out: list[Neighbour] = []
+    for oid, value in macs.items():
+        hw = mac(value)
+        if hw is None or hw in own_macs:
+            continue
+        if (parts := _suffix(oid, NET_TO_PHYSICAL_MAC)) is not None:
+            ip = _address(parts[1:])
+            kind = types.get(f"{NET_TO_PHYSICAL_TYPE}.{'.'.join(parts)}")
+        elif (parts := _suffix(oid, NET_TO_MEDIA_MAC)) is not None and len(parts) == 5:
+            ip = ".".join(parts[1:])
+            kind = types.get(f"{NET_TO_MEDIA_TYPE}.{'.'.join(parts)}")
+        else:
+            continue
+        if ip is None or kind in (NEIGH_INVALID, NEIGH_LOCAL):
+            continue
+        name = text(if_names.get(f"{IF_NAME}.{parts[0]}")) or None
+        out.append(Neighbour(ip=ip, mac=hw, interface=name, static=kind == NEIGH_STATIC))
+    return sorted(out, key=lambda n: (n.interface or "", _sort_key(n.ip)))
+
+
+def parse_juniper_leases(values: dict[str, Value]) -> list[DhcpLease]:
+    out: list[DhcpLease] = []
+    for oid, value in values.items():
+        parts = _suffix(oid, JNX_DHCP_BINDINGS)
+        if parts is None or parts[0] != "2" or len(parts) != 5:
+            continue
+        hw = mac(value)
+        if hw is None:
+            continue
+        ip = ".".join(parts[1:])
+
+        def col(n: int, ip: str = ip) -> str | None:
+            return text(values.get(f"{JNX_DHCP_BINDINGS}.{n}.{ip}")) or None
+
+        out.append(DhcpLease(ip=ip, mac=hw, since=col(6), expires=col(4)))
+    return sorted(out, key=lambda lease: _sort_key(lease.ip))
+
+
+def _sort_key(ip: str) -> tuple[int, int]:
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return (9, 0)
+    return (a.version, int(a))
+
+
 def explain(rc: int, stderr: str) -> str:
     """net-snmp's message, shortened and with the usual causes named."""
     # net-snmp announces each state directory it creates in the fresh temporary directory.
@@ -279,3 +397,17 @@ class SnmpClient:
 
     async def system(self) -> SystemInfo:
         return parse_system(await self.walk(SYSTEM))
+
+    async def neighbours(self) -> list[Neighbour]:
+        macs = await self.walk(NET_TO_PHYSICAL_MAC)
+        if macs:
+            types = await self.walk(NET_TO_PHYSICAL_TYPE)
+        else:
+            macs = await self.walk(NET_TO_MEDIA_MAC)
+            types = await self.walk(NET_TO_MEDIA_TYPE) if macs else {}
+        if_names = await self.walk(IF_NAME) if macs else {}
+        own = await self.walk(IF_PHYS_ADDRESS) if macs else {}
+        return parse_neighbours(macs, types, if_names, own)
+
+    async def juniper_leases(self) -> list[DhcpLease]:
+        return parse_juniper_leases(await self.walk(JNX_DHCP_BINDINGS))
