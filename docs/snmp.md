@@ -33,6 +33,10 @@ What it does with them:
 
 Interface state and vendor health data follow.
 
+Polling is SNMPv3 only. The one exception is the
+[default-credential probe](#the-default-credential-probe) below, which speaks v1/v2c only
+to test the well-known defaults, never with real credentials.
+
 ## 1. Create a read-only SNMPv3 user on the router
 
 Pick two random passwords (8 characters or more, no spaces), for example with
@@ -168,3 +172,46 @@ snmpget -v3 -l authPriv -u lanwatch -a SHA-256 -A AUTH-PASSWORD -x AES -X PRIV-P
   them again and commit.
 - **Decryption error**: `priv_protocol` or `priv_password` differs from the router.
 - **No system group**: the user's view does not include `1.3.6.1.2.1.1`.
+
+## The default-credential probe
+
+lanwatch reads devices with SNMPv3 authPriv only. It speaks SNMPv1 and v2c in exactly one
+place: a probe that checks whether a device answers the defaults everybody knows. A device
+that answers `public` can be read by anyone on the LAN, and `private` is usually a write
+community. The only reliable way to know is to ask: an agent's own community table is no
+proof (an APC management card lists `public` as active with SNMPv1 switched off).
+
+What is sent to each device, once per deep scan (weekly) and once when it is new:
+
+- SNMPv1 and v2c: one GET of `sysDescr.0` with `public`, then with `private`. One try,
+  two seconds each. These are public defaults, so nothing secret goes over the wire.
+- When a community answered: one more GET with it, of `sysName.0` and `sysObjectID.0`.
+  With the description, that is enough to tell which device it is (the finding title
+  and `lanwatch snmp-audit` show it). Nothing else is read over v1/v2c: that would be
+  the polling lanwatch refuses, so read such a device over SNMPv3 instead.
+- SNMPv3: one unauthenticated GET with a user name no agent has. An agent that answers
+  "unknown user name" is there; that is recorded as a fact on the device, not a finding.
+- SNMPv3 defaults: one GET per vendor default login lanwatch knows. The list holds only
+  logins a vendor documents (with the source in the code), and is empty for now.
+
+Never a SET, never a walk. Devices in `scan.skip_hosts` are left out. Switch it off with:
+
+```toml
+[snmp_audit]
+enabled = false
+```
+
+Findings:
+
+- `snmp.default-community`: the device answers SNMPv1/v2c on `public` (high) or
+  `private` (critical), with the versions that answered. Whether the community can write
+  is not tested, since that would mean writing. Resolves once the probe gets no answer.
+- `snmp.default-v3-user`: a listed vendor default SNMPv3 login works (high).
+
+What it cannot see: an agent drops a request with a community it does not know, without
+a word. So a device with SNMPv1/v2c on and a non-default community looks the same as one
+with v1/v2c off. No finding means "does not answer the defaults", not "v1/v2c is off".
+
+Run it now with `sudo lanwatch snmp-audit` (every online device) or
+`sudo lanwatch snmp-audit 192.168.1.20` (one device). It needs `snmpget` from the `snmp`
+package.

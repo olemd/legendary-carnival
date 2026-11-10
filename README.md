@@ -138,6 +138,12 @@ Signs of someone looking around or impersonating others (no mirror port needed):
 
 Hygiene checks:
 
+- **SNMP default credentials** (`[snmp_audit]`, on by default, with the weekly deep scan
+  and for new devices, `lanwatch snmp-audit [HOST]`): asks every device for sysDescr over
+  SNMPv1 and v2c with `public` and `private`, and whether an SNMPv3 agent answers. A
+  default community that answers is a finding (critical for `private`). A GET only, never
+  a SET or a walk; the only place lanwatch speaks v1/v2c. See
+  [docs/snmp.md](docs/snmp.md#the-default-credential-probe).
 - **Firmware** (`[firmware]`, daily, `lanwatch firmware`): the version Home Assistant,
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
