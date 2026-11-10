@@ -656,3 +656,28 @@ def test_reader_and_rule_discovery() -> None:
 
     first = [r.id for n in _FIRST for r in importlib.import_module(f"lanwatch.rules.{n}").RULES]
     assert ids[: len(first)] == first
+
+
+async def test_reader_metrics_go_to_the_series_and_attrs_to_the_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    from lanwatch.collectors.snmp_kinds import ReaderResult, SnmpReader
+    from lanwatch.models import HostObservation
+
+    async def read(client: snmp.SnmpClient, system: snmp.SystemInfo) -> ReaderResult:
+        return ReaderResult(
+            facts={"ok": True},
+            metrics={"x.load_w": 121.0},
+            attrs={"firmware": {"product": "X", "version": "1.0"}},
+        )
+
+    monkeypatch.setattr(pipeline, "find_readers", lambda: [SnmpReader("x", lambda s: True, read)])
+    config.snmp = snmp_devices(dev={"host": "192.0.2.9"})
+    disc = store.begin_snapshot("discovery", "t")
+    store.record_hosts(disc, [HostObservation(ip="192.0.2.9", mac="aa:bb:cc:00:00:09", source="t")])
+    store.finish_snapshot(disc, 1)
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert [v for _, v in store.snmp_series("192.0.2.9", "x.load_w", "")] == [121.0]
+    d = store.device_by_ip("192.0.2.9")
+    assert d is not None and d.attrs["firmware"]["version"] == "1.0" and "snmp" in d.attrs

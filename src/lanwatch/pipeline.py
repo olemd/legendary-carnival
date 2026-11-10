@@ -34,7 +34,7 @@ from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.snmp import DhcpLease, Neighbour, SnmpClient, SnmpError, SystemInfo
-from lanwatch.collectors.snmp_kinds import find_readers, run_readers
+from lanwatch.collectors.snmp_kinds import ReaderResult, find_readers, run_readers
 from lanwatch.collectors.unifi import (
     TOTAL_TIMEOUT_S,
     UnifiError,
@@ -417,14 +417,16 @@ async def collect_snmp(
             )
         else:
             t = await _read_device(target)
+        extra = ReaderResult()
         if t.system is not None and t.host and readers:
             async with SnmpClient(target.login, t.host) as client:
-                t.facts, t.reader_errors = await run_readers(client, t.system, readers)
+                t.facts, t.reader_errors = await run_readers(client, t.system, readers, extra)
         out.targets.append(t)
         key = t.host or SNMP_UNKNOWN_HOST
         entries[key] = _target_state(before.get(key), t, at)
         if t.system is not None and t.host:
-            out.enriched |= _snmp_device_facts(store, t)
+            out.enriched |= _snmp_device_facts(store, t, extra.attrs)
+            store.add_snmp_series(t.host, extra.metrics, at)
     store.replace_infra("snmp-target", entries, snapshot_id)
     return out
 
@@ -451,8 +453,11 @@ async def _read_device(target: SnmpTarget) -> SnmpTargetOutcome:
     return t
 
 
-def _snmp_device_facts(store: Store, t: SnmpTargetOutcome) -> set[int]:
-    """attrs.snmp on the device that holds the target's address: what it says it is."""
+def _snmp_device_facts(
+    store: Store, t: SnmpTargetOutcome, extra: dict[str, Any] | None = None
+) -> set[int]:
+    """attrs.snmp on the device that holds the target's address: what it says it is,
+    plus any attrs the readers add (`extra`)."""
     assert t.system is not None and t.host is not None
     d = store.device_by_ip(t.host)
     if d is None:
@@ -466,7 +471,7 @@ def _snmp_device_facts(store: Store, t: SnmpTargetOutcome) -> set[int]:
         "object_id": s.object_id,
         "location": s.location,
     }
-    return {d.id} if store.merge_device_attrs(d.id, {"snmp": facts}) else set()
+    return {d.id} if store.merge_device_attrs(d.id, {**(extra or {}), "snmp": facts}) else set()
 
 
 async def _read_router(

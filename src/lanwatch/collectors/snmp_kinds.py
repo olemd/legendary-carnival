@@ -29,6 +29,12 @@ log = logging.getLogger(__name__)
 @dataclass(slots=True)
 class ReaderResult:
     facts: dict[str, Any] = field(default_factory=dict)
+    # Numbers worth graphing, by metric name ("<reader>.<what>_<unit>"); the collector
+    # writes them to snmp_series after a good read.
+    metrics: dict[str, float] = field(default_factory=dict)
+    # Merged into the attrs of the device that holds the target's address (for example
+    # attrs.firmware, which the firmware rule and the device page already read).
+    attrs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,16 +65,22 @@ async def run_readers(
     client: SnmpClient,
     system: SystemInfo,
     readers: list[SnmpReader],
+    extra: ReaderResult | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     """Run the readers that match this device. Returns (facts per reader, error per
-    reader that failed)."""
+    reader that failed); their metrics and device attrs are added to `extra` when
+    given."""
     facts: dict[str, dict[str, Any]] = {}
     errors: dict[str, str] = {}
     for reader in readers:
         try:
             if not reader.matches(system):
                 continue
-            facts[reader.name] = (await reader.read(client, system)).facts
+            result = await reader.read(client, system)
+            facts[reader.name] = result.facts
+            if extra is not None:
+                extra.metrics.update(result.metrics)
+                extra.attrs.update(result.attrs)
         except Exception as e:
             log.warning("snmp: reader %s failed on %s: %s", reader.name, client.host, e)
             errors[reader.name] = f"{type(e).__name__}: {str(e)[:200]}"
