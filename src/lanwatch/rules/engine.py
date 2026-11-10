@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from lanwatch.config import Config
 from lanwatch.models import Finding
-from lanwatch.rules import ids, infra, inventory, services, unifi, versions
+from lanwatch.rules import airos, ids, infra, inventory, services, unifi, versions
 from lanwatch.rules.base import Rule, RuleContext
 
 log = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ def all_rules() -> list[Rule]:
         *versions.RULES,
         *infra.RULES,
         *unifi.RULES,
+        *airos.RULES,
         *ids.RULES,
     ]
 

@@ -73,6 +73,24 @@ pins what the radio presents now. airOS certificates have 1024-bit RSA keys, whi
 OpenSSL 3 refuses by default; lanwatch lowers the security level for that one pinned
 certificate only. The key size is the radio's weakness, not a lanwatch setting.
 
+## Findings
+
+| Rule | When |
+|---|---|
+| `airos.link-down` (medium) | the radio answers but is linked with no other radio, two reads in a row |
+| `airos.link-poor` (low) | CCQ below 60% for an hour: many frames are sent again |
+| `airos.link-degraded` (medium) | signal 6 dB or CCQ 20 points below the link's own normal, two reads in a row |
+| `airos.channel-overlap` (low) | a 2.4 GHz link partly on top of Wi-Fi channels 1, 6 or 11, or on the channel of your own access points |
+| `airos.certificate-changed` (high) | the radio presents another certificate than the pinned one |
+| `airos.login-rejected` (medium) | the radio rejected the read-only login; it is no longer read |
+
+A point-to-point link is reported once, under the pair of radios, with the worse end's
+figures. The link's normal is learned from the link itself: lanwatch watches it for half
+a day before judging it, so a link that was always weak is not reported as degraded (but
+may be as poor), and one that got worse is. With `[unifi]` enabled, the channel advice
+names your own access points in the way and suggests the one of channels 1, 6 and 11
+they use least.
+
 ## Troubleshooting
 
 - **login not accepted**: wrong username or password, or the read-only account is not

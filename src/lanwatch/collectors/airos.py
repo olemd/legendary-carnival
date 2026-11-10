@@ -385,3 +385,60 @@ async def read_radio(cfg: AirosConfig, client: httpx2.AsyncClient, host: str) ->
     except httpx2.HTTPError as e:
         raise AirosError(f"{host}: {type(e).__name__}: {e}") from e
     return parse_status(host, status, stations)
+
+
+# -- link history -----------------------------------------------------------------------------
+
+# A link's normal is an exponential moving average over about a day of reads (one per
+# infra round, 15 minutes by default), learned for half a day before anything is judged
+# against it. While the link is worse than normal the average is not updated, so a
+# lasting fault stays a fault instead of becoming the new normal.
+BASELINE_ALPHA = 1 / 96
+BASELINE_WARMUP = 48
+DEGRADED_SIGNAL_DB = 6
+DEGRADED_CCQ_POINTS = 20
+POOR_CCQ = 60
+
+
+def track_links(previous: dict[str, Any] | None, radio: AirosStatus) -> dict[str, Any]:
+    """Counters the link rules read, carried from one read of the radio to the next:
+    reads in a row without a link, and per station its learned normal and how many reads
+    in a row it was below that normal, or below POOR_CCQ."""
+    prev = _dict(previous)
+    prev_links = _dict(prev.get("links"))
+    links: dict[str, Any] = {}
+    for st in radio.stations:
+        if not st.mac or st.signal is None or st.ccq is None:
+            continue
+        p = _dict(prev_links.get(st.mac))
+        reads = int(p.get("reads") or 0)
+        signal_n, ccq_n = p.get("normal_signal"), p.get("normal_ccq")
+        degraded = (
+            reads >= BASELINE_WARMUP
+            and isinstance(signal_n, int | float)
+            and isinstance(ccq_n, int | float)
+            and (st.signal < signal_n - DEGRADED_SIGNAL_DB or st.ccq < ccq_n - DEGRADED_CCQ_POINTS)
+        )
+        if not degraded:
+            signal_n = (
+                float(st.signal)
+                if not isinstance(signal_n, int | float)
+                else signal_n + BASELINE_ALPHA * (st.signal - signal_n)
+            )
+            ccq_n = (
+                float(st.ccq)
+                if not isinstance(ccq_n, int | float)
+                else ccq_n + BASELINE_ALPHA * (st.ccq - ccq_n)
+            )
+            reads += 1
+        links[st.mac] = {
+            "reads": reads,
+            "normal_signal": signal_n,
+            "normal_ccq": ccq_n,
+            "degraded_reads": int(p.get("degraded_reads") or 0) + 1 if degraded else 0,
+            "poor_reads": int(p.get("poor_reads") or 0) + 1 if st.ccq < POOR_CCQ else 0,
+        }
+    return {
+        "no_link_reads": int(prev.get("no_link_reads") or 0) + 1 if not radio.stations else 0,
+        "links": links,
+    }

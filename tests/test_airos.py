@@ -290,6 +290,8 @@ async def test_rejected_credentials_are_not_tried_again_until_they_change(
         out = await pipeline.collect_airos(config, store, store.begin_snapshot("infra", "t"))
         assert "not" in out.errors[HOST]
     assert len(radio.logins) == 1
+    (row,) = store.infra("airos")
+    assert row.data["rejected"] is True  # what airos.login-rejected reports
     tag = store.meta_get(f"airos.rejected.{HOST}")
     assert tag and PASSWORD not in tag
 

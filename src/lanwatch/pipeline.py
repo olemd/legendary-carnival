@@ -24,6 +24,7 @@ from lanwatch.collectors.airos import (
     make_client,
     read_radio,
     same_credentials,
+    track_links,
 )
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
@@ -553,6 +554,7 @@ class AirosOutcome:
     errors: dict[str, str] = field(default_factory=dict)
     pinned: dict[str, str] = field(default_factory=dict)  # host -> fingerprint, first contact
     pin_failed: set[str] = field(default_factory=set)
+    rejected: set[str] = field(default_factory=set)
     enriched: set[int] = field(default_factory=set)
     new_findings: list[str] = field(default_factory=list)
     resolved_findings: list[str] = field(default_factory=list)
@@ -591,6 +593,7 @@ async def collect_airos(config: Config, store: Store, snapshot_id: int) -> Airos
                     f"airos.rejected.{host}", credentials_tag(cfg.username, cfg.password)
                 )
             out.errors[host] = str(e)
+            out.rejected.add(host)
         except (AirosError, TimeoutError) as e:
             out.errors[host] = str(e) or "no answer in time"
             if isinstance(e, AirosPinError):
@@ -600,13 +603,19 @@ async def collect_airos(config: Config, store: Store, snapshot_id: int) -> Airos
             out.errors[host] = f"{type(e).__name__}: {str(e)[:200]}"
         else:
             out.radios[host] = radio
-            rows[host] = {**radio.as_dict(), "read_at": iso(now_utc()), "error": None}
+            rows[host] = {
+                **radio.as_dict(),
+                **track_links(previous.get(host), radio),
+                "read_at": iso(now_utc()),
+                "error": None,
+            }
             continue
         log.warning("airos: %s not read, keeping the previous state: %s", host, out.errors[host])
         rows[host] = {
             **(previous.get(host) or {"host": host}),
             "error": out.errors[host],
             "pin_failed": host in out.pin_failed,
+            "rejected": host in out.rejected,
         }
     store.replace_infra("airos", rows, snapshot_id)
     for radio in out.radios.values():
