@@ -174,6 +174,9 @@ Hygiene checks:
 - **Latency** (`[latency]`): a few pings to the gateway each discovery round. The dashboard
   shows a day's trend, and sustained packet loss becomes a finding. Add an internet address
   to the targets to measure the path out as well.
+- **SNMP device checks** (every device read over SNMP, the router included): a clock
+  more than 2 minutes off, and a device that could not be read 3 rounds in a row. See
+  [docs/snmp.md](docs/snmp.md#checks-on-every-device).
 - **MAC vendors** (`[oui]`): devices the scanner cannot name get their vendor from a
   fresher IEEE registry, downloaded weekly, or from nmap's installed copy with `online = false`.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
