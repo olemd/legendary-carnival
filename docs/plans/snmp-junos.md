@@ -1,6 +1,7 @@
 # Plan: Junos over SNMP in depth (branch `snmp-junos`, after `snmp-multi`)
 
-Status: draft, 2026-11-10.
+Status: built on branch `snmp-junos` for the SRX300, 2026-11-11. The SRX1500 and EX4600
+recordings from work are still to do (see Steps).
 
 ## Ground rule: bonus, never required
 
@@ -81,7 +82,18 @@ Tried and not usable:
 
 ## Steps
 
-1. Record the fixtures, with serials removed: SRX300 now, SRX1500 and EX4600 from work.
-2. Split the reads into fast (every round) and slow (hourly) subtrees.
-3. Rules one by one, each with tests against the fixtures.
-4. Device page: a Junos block with health, alarms, sessions and config changes.
+1. Record the fixtures, with serials removed: ~~SRX300 now~~ (`tests/fixtures/snmp-junos.txt`),
+   SRX1500 and EX4600 from work (still to do).
+2. Split the reads into fast (every round) and slow (hourly) subtrees. Not needed for
+   now: the reader walks 13 named subtrees (about 470 values on the SRX300), which is
+   fast enough every round. Revisit with the EX4600's recording.
+3. ~~Rules one by one, each with tests against the fixtures.~~ Done:
+   - `junos.chassis-alarm`, `junos.storage-full`, `junos.fru-not-online`,
+     `junos.session-table-full`, `junos.config-changed`, `junos.no-rescue-config`,
+     `dhcp.declines-rising`.
+   - Left out: `junos.licence-expiring`. The licence feature table has no dates, and
+     the install table with `jnxLicenseEndDate` is empty on the SRX300, so there is
+     nothing to test against. Add it once a device with term licences is recorded.
+   - Screens are facts only. There is no "sudden rise" rule yet: a threshold needs
+     real data from a flood.
+4. ~~Device page: a Junos block with health, alarms, sessions and config changes.~~
