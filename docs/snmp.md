@@ -193,6 +193,21 @@ snmpget -v3 -l authPriv -u lanwatch -a SHA-256 -A AUTH-PASSWORD -x AES -X PRIV-P
 
 (this puts the passwords in your shell history and the process list, so only for a test).
 
+## Checks on every device
+
+Two findings apply to every device under `[snmp.devices]`, the router included:
+
+- **Clock skew** (`snmp.clock-skew`): each read also asks for the device's clock
+  (`hrSystemDate` from HOST-RESOURCES-MIB, or the APC card's own clock) and compares it
+  with lanwatch's, at the middle of the read. More than 2 minutes off is low, more than
+  an hour medium. A device that gives local time without a zone (the APC card) and is off
+  by whole hours is reported as a time zone or summer time setting. A device that answers
+  neither clock is simply not checked.
+- **Not readable** (`snmp.unreachable`): 3 failed reads in a row; medium for the router,
+  low otherwise. "Never read" usually means a login or access-list problem: see below.
+
+Both resolve by themselves once the device is fine again.
+
 ## Troubleshooting
 
 - **Timeout**: wrong address, SNMP not allowed in on that interface, or credentials the

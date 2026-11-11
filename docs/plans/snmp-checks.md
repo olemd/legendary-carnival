@@ -1,6 +1,8 @@
 # Plan: checks on every SNMP target (branch `snmp-checks`, after `snmp-multi`)
 
-Status: draft, 2026-11-10. These are vendor-neutral checks that work on any device read
+Status: done, 2026-11-10 (branch `snmp-checks`).
+
+These are vendor-neutral checks that work on any device read
 over SNMP. They use only the target rows from `snmp-multi`: no migration, no reader of
 their own beyond one OID.
 
@@ -33,7 +35,7 @@ their own beyond one OID.
 
 ## Tests
 
-- DateAndTime parsing (8 and 11 octets, with and without offset), the APC format,
-  the skew thresholds, the whole-hour case.
-- Unreachable counting: below 3 no finding, 3 and above a finding, resolving after a
-  good read.
+- ~~DateAndTime parsing (8 and 11 octets, with and without offset), the APC format,
+  the skew thresholds, the whole-hour case.~~
+- ~~Unreachable counting: below 3 no finding, 3 and above a finding, resolving after a
+  good read.~~
