@@ -59,6 +59,8 @@ JNX_DHCP_BINDINGS = "1.3.6.1.4.1.2636.3.61.61.1.2.1.1"
 # IANA enterprise numbers, the first arc after 1.3.6.1.4.1 in sysObjectID.
 VENDORS = {
     "9": "Cisco",
+    "11": "HP",  # Hewlett-Packard: printers, older ProCurve switches
+    "232": "HPE",  # Compaq's number, kept by HPE for iLO and Insight agents
     "318": "APC",
     "2011": "Huawei",
     "2636": "Juniper",

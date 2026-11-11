@@ -105,6 +105,15 @@ def test_parse_system_names_the_vendor() -> None:
         }
     )
     assert apc.vendor == "APC"
+    # An HPE iLO 4 answers under Compaq's old enterprise number.
+    ilo = snmp.parse_system(
+        {
+            snmp.SYS_DESCR: b"Integrated Lights-Out 4 2.82 Feb 06 2023",
+            snmp.SYS_OBJECT_ID: "1.3.6.1.4.1.232.9.4.10",
+            snmp.SYS_UPTIME: 9600,
+        }
+    )
+    assert ilo.vendor == "HPE"
 
 
 def test_config_is_v3_authpriv_only() -> None:
