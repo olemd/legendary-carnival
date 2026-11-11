@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from lanwatch.config import Config
+from lanwatch.links import other_end, phrase
 from lanwatch.models import FindingStatus, Severity, local_str
 from lanwatch.store import Store
 
@@ -52,7 +53,8 @@ TOOLS: list[dict[str, Any]] = [
     _tool(
         "get_device",
         "Full details of one device: facts, attributes (upnp, mdns, ipv6), open services with "
-        "versions and script output, open findings, and recent history.",
+        "versions and script output, open findings, recent history, and links to related "
+        "devices (a BMC that manages it, the switch it hangs off, the UPS that powers it).",
         {"device_id": {"type": "integer"}},
         ["device_id"],
     ),
@@ -230,6 +232,10 @@ class ToolRunner:
             "history": [
                 {"ts": local_str(e.ts), "kind": e.kind, "summary": e.summary}
                 for e in self.store.events(device_id=d.id, limit=20)
+            ],
+            "links": [
+                {"relation": phrase(link, d.id), "device_id": other_end(link, d.id)}
+                for link in self.store.links(d.id)
             ],
         }
 

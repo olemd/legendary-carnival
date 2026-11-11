@@ -120,6 +120,12 @@ Day to day, in the web UI:
 - **Devices** can be renamed, re-classified, merged (one device seen under two MAC
   addresses, typically a phone with a private MAC) and forgotten. Mark a device as watched
   to get a finding when it stays offline.
+- **Links** tie separate devices that belong together: a server's management card (iLO,
+  iDRAC, IPMI) to the server, a device to the switch it hangs off or the UPS it runs on.
+  Made by hand on the device page, or suggested when a BMC's name points at a known host
+  (`hydra-ilo`, or an iLO that calls itself `hydra`) and confirmed with one click; nothing
+  is linked silently. A watched server that stops answering while its BMC still answers
+  is reported as powered off rather than offline. The chat's `get_device` lists links.
 - **Findings** can be acknowledged, accepted for good with a reason (a per-device exception
   to a rule) and reopened.
 - Network identity rules flag two devices answering for one IP, a gateway, DHCP or DNS
