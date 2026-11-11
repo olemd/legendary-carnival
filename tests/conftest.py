@@ -53,10 +53,11 @@ def config(tmp_path: Path) -> Config:
     # No LLM, and no probes that put real packets on the developer's network. The fixtures'
     # aa:bb:cc addresses are locally administered, so the per-device MAC rules would add a
     # finding for every test host; they have their own tests (test_mac_rules.py).
+    # Hostname lookups would ask this machine's resolver about the test addresses.
     return Config(
         data_dir=tmp_path,
         llm=LlmConfig(enabled=False),
-        scan=ScanConfig(name_poisoning_check=False, recheck_silent=False),
+        scan=ScanConfig(name_poisoning_check=False, recheck_silent=False, resolve_hostnames=False),
         latency=LatencyConfig(enabled=False),
         rules={
             "inventory.private-mac": RuleOverride(enabled=False),

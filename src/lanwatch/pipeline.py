@@ -31,7 +31,7 @@ from lanwatch.collectors.audit_snmp import audit as audit_snmp
 from lanwatch.collectors.audit_snmp import available as audit_available
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
-from lanwatch.collectors.discovery import neighbour_table, select_backend
+from lanwatch.collectors.discovery import neighbour_table, resolve_hostnames, select_backend
 from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
@@ -1208,6 +1208,9 @@ async def run_discovery(
         await recheck_silent(config, store, ex, subnets, hosts, previous.id if previous else None)
     )
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
+    # Whatever the backend: arp-scan never names hosts, and nmap runs with -n.
+    if config.scan.resolve_hostnames:
+        hosts = await resolve_hostnames(hosts)
     # The backend's own OUI list may predate the device's prefix; try a fresher registry.
     hosts = oui.fill_vendors(hosts, oui.load(config.data_dir))
 

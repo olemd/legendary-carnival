@@ -222,27 +222,29 @@ class PingSweepBackend:
         ips = replies | {
             ip for ip in neigh if any(ipaddress.ip_address(ip) in s.network for s in subnets)
         }
-        hosts = [
+        return [
             HostObservation(ip=ip, mac=neigh.get(ip), source="ping")
             for ip in sorted(ips, key=ipaddress.ip_address)
         ]
-        if cfg.resolve_hostnames:
-            hosts = await resolve_hostnames(hosts)
-        return hosts
 
 
 async def resolve_hostnames(
-    hosts: list[HostObservation], timeout: float = 1.0
+    hosts: list[HostObservation], timeout: float = 1.0, parallel: int = 16
 ) -> list[HostObservation]:
+    """Fill in a name for hosts the backend did not name, through the system resolver:
+    reverse DNS, or /etc/hosts. arp-scan never names hosts and nmap runs with -n, so
+    after discovery (scan.resolve_hostnames) this is where names come from."""
     loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(parallel)
 
     async def one(h: HostObservation) -> HostObservation:
         if h.hostname:
             return h
         try:
-            name, _ = await asyncio.wait_for(
-                loop.getnameinfo((h.ip, 0), socket.NI_NAMEREQD), timeout=timeout
-            )
+            async with sem:
+                name, _ = await asyncio.wait_for(
+                    loop.getnameinfo((h.ip, 0), socket.NI_NAMEREQD), timeout=timeout
+                )
             return h.model_copy(update={"hostname": name})
         except (OSError, TimeoutError):
             return h
