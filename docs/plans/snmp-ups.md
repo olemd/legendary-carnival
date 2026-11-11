@@ -1,7 +1,8 @@
 # Plan: UPS over SNMP (branch `snmp-ups`, after `snmp-multi`)
 
-Status: draft, 2026-11-10. Depends on `snmp-multi` (the device list and the reader
-registry). First device: APC Smart-UPS 3000 (SMT3000RMI2U, UPS firmware
+Status: ~~draft~~ done on branch `snmp-ups`, 2026-11-10 (see "Built" at the end).
+Depends on `snmp-multi` (the device list and the reader registry). First device: APC
+Smart-UPS 3000 (SMT3000RMI2U, UPS firmware
 `08.8 (ID18)`), with an AP9630 card (NMC2, hardware 05, AOS 7.2.2), at 172.16.123.143.
 It answers SNMPv3 with SHA + AES-128, user `lanwatch`.
 
@@ -101,3 +102,28 @@ value)` indexed on (host, metric, ts).
 
 Home Assistant: the same facts as sensors through the existing integration (state,
 charge, runtime, load).
+
+## Built
+
+- ~~Migration v12 `snmp_series`, store helpers, pruning.~~
+- ~~Readers can return `metrics` (to `snmp_series`) and `attrs` (merged into the device
+  holding the address); a small extension of the `snmp-multi` hook.~~
+- ~~Reader `ups` (`collectors/snmp_ups.py`), fixtures from the real unit with the serials
+  replaced.~~
+- ~~Rules `ups.*` (`rules/ups.py`).~~
+- ~~Card firmware in `attrs.firmware` (product "APC NMC", NMC2 latest pinned at 7.2.2).~~
+- ~~Device page UPS block, graphs, power events; dashboard tile.~~
+- ~~Docs: `docs/ups.md`.~~
+
+Changed from the plan:
+- The reader asks every target: APC by enterprise 318, any other only if it answers
+  `upsIdent`. PowerNet is read in parts 1, 2, 3, 4, 7 and 8 only; `upsAdvConfig` (part 5)
+  is not walked, so the low-battery margin comes from UPS-MIB `upsConfigLowBattTime`.
+- Dates: PowerNet documents mm/dd/yy(yy) for the UPS's dates too, but firmware 08.8 sends
+  dd.mm.yyyy; the separator decides (dotted day first, slashed month first).
+- Energy used is not read: the documented unit (hundredths of kWh) gives an implausible
+  value on this unit.
+- Home Assistant sensors: not added. The integration publishes three fixed counters after
+  rule rounds; per-UPS sensors need a change to how that summary is built. Left for later.
+- Rule descriptions start with a short sentence: the chat tool lists the first sentence of
+  every rule within a size budget.

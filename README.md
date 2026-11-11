@@ -171,6 +171,11 @@ Hygiene checks:
   answer from outside become a finding, critical when Shodan also matched the service to
   published vulnerabilities. The one check that tells a third party the network's public
   address, hence opt-in.
+- **UPS** (a management card under `[snmp.devices]`, every infra round): on mains or on
+  battery, charge, runtime, load, input voltage, battery replacement and self-test, read
+  over the standard UPS-MIB and, on APC cards, PowerNet. Findings for running on battery,
+  a low or worn battery, alarms, a stale self-test and power events; graphs over a day
+  and a week on its device page, and a dashboard tile. See [docs/ups.md](docs/ups.md).
 - **Latency** (`[latency]`): a few pings to the gateway each discovery round. The dashboard
   shows a day's trend, and sustained packet loss becomes a finding. Add an internet address
   to the targets to measure the path out as well.

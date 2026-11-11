@@ -1,0 +1,98 @@
+{# The device page's UPS block; `ups` comes from web/ups.py ups_block(). #}
+<style>
+.ups-state { font-size:1.5rem; font-weight:700; margin:.2rem 0 .1rem }
+.ups-gauges { display:grid; grid-template-columns:repeat(auto-fit, minmax(13rem, 1fr)); gap:.9rem; margin:.6rem 0 1rem }
+.ups-gauge .bar { height:10px; border-radius:999px; background:var(--sunken); overflow:hidden; margin:.35rem 0 .2rem }
+.ups-gauge .bar > span { display:block; height:100%; background:var(--accent); width:var(--w) }
+.ups-gauge .bar.warn > span { background:var(--critical) }
+.ups-graphs { display:grid; grid-template-columns:repeat(auto-fit, minmax(18rem, 1fr)); gap:.9rem; margin:.6rem 0 1rem }
+svg.ups-chart { display:block; width:100%; height:auto; overflow:visible }
+svg.ups-chart polyline { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; stroke-linecap:round }
+svg.ups-chart line.ref { stroke:var(--critical); stroke-width:1; stroke-dasharray:4 3; opacity:.7 }
+svg.ups-chart text { fill:var(--muted); font-size:11px }
+svg.ups-chart rect.frame { fill:none; stroke:var(--line) }
+.ups-range a[aria-current] { font-weight:700; text-decoration:none; color:var(--fg) }
+</style>
+{% set u = ups.ups %}
+<h2 id="ups">UPS{% if u.model %}: {{ u.model }}{% endif %}</h2>
+{% if ups.stale %}<p class="note"><span class="result-failed">last read failed</span> <span class="mono">{{ ups.data.last_error }}</span> <span class="muted">· showing the state from {{ ups.data.last_ok | local }}</span></p>{% endif %}
+<section class="tiles" aria-label="UPS state">
+  <div class="tile">
+    <div class="tile-label">Power</div>
+    {% if u.communication_ok is sameas false %}
+    <div class="ups-state result-failed">card has lost the UPS</div>
+    <div class="tile-note">the values below are from before</div>
+    {% elif u.on_battery %}
+    <div class="ups-state result-failed">on battery</div>
+    <div class="tile-note">{% if u.seconds_on_battery %}for {{ u.seconds_on_battery | duration }}{% endif %}{% if u.last_transfer_cause and u.last_transfer_cause != 'no transfer' %} · cause: {{ u.last_transfer_cause }}{% endif %}</div>
+    {% else %}
+    <div class="ups-state result-ok">on mains</div>
+    <div class="tile-note">{{ u.output_status or u.output_source or '' }}{% if u.last_transfer_cause and u.last_transfer_cause != 'no transfer' %} · last transfer: {{ u.last_transfer_cause }}{% elif u.last_transfer_cause == 'no transfer' %} · no transfer to battery recorded{% endif %}</div>
+    {% endif %}
+    <dl class="kv">
+      {% if u.input_v is not none %}<dt>Input</dt><dd>{{ u.input_v }} V{% if u.input_hz %} · {{ u.input_hz }} Hz{% endif %}{% if u.input_v_min is not none and u.input_v_max is not none %} <span class="muted">(range {{ u.input_v_min }}–{{ u.input_v_max }} V)</span>{% endif %}</dd>{% endif %}
+      {% if u.transfer_low_v and u.transfer_high_v %}<dt>Transfers at</dt><dd>below {{ u.transfer_low_v }} V, above {{ u.transfer_high_v }} V</dd>{% endif %}
+    </dl>
+  </div>
+</section>
+
+<div class="ups-gauges" aria-label="UPS gauges">
+  {% if u.charge_pct is not none %}<div class="tile ups-gauge">
+    <div class="tile-label">Charge</div>
+    <div class="tile-value">{{ u.charge_pct }} <span class="of">%</span></div>
+    <div class="bar{% if u.charge_pct < 50 %} warn{% endif %}" role="img" aria-label="Charge {{ u.charge_pct }} percent"><span style="--w:{{ [u.charge_pct, 100] | min }}%"></span></div>
+    <div class="tile-note">battery {{ u.battery_status or 'unknown' }}{% if u.battery_c is not none %} · {{ u.battery_c }} °C{% endif %}</div>
+  </div>{% endif %}
+  {% if u.runtime_min is not none %}<div class="tile ups-gauge">
+    <div class="tile-label">Runtime</div>
+    <div class="tile-value">{{ u.runtime_min }} <span class="of">min</span></div>
+    {% set rt = [u.runtime_min, 240] | min %}
+    <div class="bar{% if u.runtime_min < 10 %} warn{% endif %}" role="img" aria-label="Runtime {{ u.runtime_min }} minutes"><span style="--w:{{ (rt / 240 * 100) | round(1) }}%"></span></div>
+    <div class="tile-note">at the current load{% if u.low_battery_warning_min %} · low-battery warning {{ u.low_battery_warning_min }} min before the end{% endif %}</div>
+  </div>{% endif %}
+  {% if u.load_pct is not none %}<div class="tile ups-gauge">
+    <div class="tile-label">Load</div>
+    <div class="tile-value">{{ u.load_pct }} <span class="of">%</span></div>
+    <div class="bar{% if u.load_pct > 80 %} warn{% endif %}" role="img" aria-label="Load {{ u.load_pct }} percent"><span style="--w:{{ [u.load_pct, 100] | min }}%"></span></div>
+    <div class="tile-note">{% if u.load_w is not none %}{{ u.load_w }} W{% endif %}{% if u.load_va is not none %} · {{ u.load_va }} VA{% endif %}</div>
+  </div>{% endif %}
+</div>
+
+<h3>Graphs <span class="ups-range muted">· {% for key, title in (('24h', 'last 24 hours'), ('7d', 'last 7 days')) %}<a href="?range={{ key }}#ups"{% if ups.range == key %} aria-current="true"{% endif %}>{{ title }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></h3>
+<div class="ups-graphs">
+  {% for g in ups.graphs %}<div class="tile">
+    <div class="tile-label">{{ g.title }}{% if g.chart %} <span class="muted">{{ g.chart.last | round(1) }} {{ g.unit }} now · {{ g.chart.min | round(1) }}–{{ g.chart.max | round(1) }}</span>{% endif %}</div>
+    {% if g.chart %}
+    <svg class="ups-chart" viewBox="0 0 {{ g.chart.width }} {{ g.chart.height }}" role="img"
+         aria-label="{{ g.title }} over the {{ 'last 7 days' if ups.range == '7d' else 'last 24 hours' }}: between {{ g.chart.min | round(1) }} and {{ g.chart.max | round(1) }} {{ g.unit }}">
+      <rect class="frame" x="0.5" y="0.5" width="{{ g.chart.width - 1 }}" height="{{ g.chart.height - 1 }}" rx="4"/>
+      {% for r in g.chart.refs %}<line class="ref" x1="1" x2="{{ g.chart.width - 1 }}" y1="{{ r.y }}" y2="{{ r.y }}"/><text x="{{ g.chart.width - 4 }}" y="{{ r.y | float - 3 }}" text-anchor="end">{{ r.value | int }} {{ g.unit }}</text>{% endfor %}
+      {% if g.chart.n > 1 %}<polyline points="{{ g.chart.points }}"/>{% else %}{% set px, py = g.chart.points.split(',') %}<circle cx="{{ px }}" cy="{{ py }}" r="3" fill="currentColor"/>{% endif %}
+    </svg>
+    {% else %}<p class="empty">No readings yet.</p>{% endif %}
+  </div>{% endfor %}
+</div>
+
+<h3>Battery</h3>
+<dl class="facts">
+  {% if u.battery_cartridge %}<dt>Cartridge</dt><dd class="mono">{{ u.battery_cartridge }}</dd>{% endif %}
+  <dt>Replace</dt><dd>{% if u.battery_replace %}<span class="result-failed">the UPS says now</span>{% elif u.battery_replace is sameas false %}not needed{% else %}<span class="muted">unknown</span>{% endif %}{% if u.battery_replace_by %} · recommended by {{ u.battery_replace_by }}{% endif %}</dd>
+  {% if u.battery_last_replaced %}<dt>Last replaced</dt><dd>{{ u.battery_last_replaced }}</dd>{% endif %}
+  <dt>Self-test</dt><dd>{% if u.self_test_result == 'failed' %}<span class="result-failed">failed</span>{% else %}{{ u.self_test_result or 'unknown' }}{% endif %}{% if u.self_test_date %} · {{ u.self_test_date }}{% endif %}{% if u.self_test_every_days %} <span class="muted">· scheduled every {{ u.self_test_every_days }} days</span>{% endif %}</dd>
+  <dt>Calibration</dt><dd>{% if u.calibration_date %}{{ u.calibration_date }}{% if u.calibration_result %} · {{ u.calibration_result }}{% endif %}{% else %}<span class="muted">never recorded: the runtime estimate is not calibrated</span>{% endif %}</dd>
+  {% if u.alarms %}<dt>Alarms</dt><dd class="result-failed">{{ u.alarms | join(', ') }}</dd>{% endif %}
+</dl>
+
+<h3>Firmware</h3>
+<dl class="facts">
+  {% if u.firmware %}<dt>UPS</dt><dd class="mono">{{ u.firmware }} <span class="muted">· shown only: there is no official list to compare with</span></dd>{% endif %}
+  {% set fw = device.attrs.firmware %}{% if fw and fw.product == 'APC NMC' %}<dt>Card</dt><dd>{{ fw.model }}{% if fw.platform %} ({{ fw.platform }}){% endif %} <span class="mono">{{ fw.version }}</span>{% if fw['update'] %} · <span class="result-failed">{{ fw.latest }} available</span>{% elif fw.latest %} · <span class="result-ok">newest</span> <span class="muted">({{ fw.latest }}, pinned)</span>{% endif %}</dd>{% endif %}
+  {% if u.sku or u.manufactured %}<dt>Unit</dt><dd>{{ u.sku or '' }}{% if u.manufactured %} <span class="muted">· made {{ u.manufactured }}</span>{% endif %}</dd>{% endif %}
+</dl>
+
+<h3>Power events</h3>
+{% if ups.events %}
+<div class="tbl"><table><thead><tr><th>Went on battery</th><th>For</th><th>Cause</th><th>Status</th></tr></thead><tbody>
+{% for f in ups.events %}<tr><td>{{ f.evidence.started | local }}</td><td>{% if f.evidence.seconds_on_battery %}{{ f.evidence.seconds_on_battery | duration }}+{% else %}-{% endif %}</td><td>{{ f.evidence.cause or '-' }}</td><td>{{ f.status.value }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}<p class="empty">None recorded. lanwatch sees an outage when a read falls inside it.</p>{% endif %}

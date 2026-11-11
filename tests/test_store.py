@@ -333,3 +333,15 @@ def test_v11_moves_the_router_state_out_of_meta(tmp_path: Path) -> None:
 def test_v11_without_router_state_adds_nothing(tmp_path: Path) -> None:
     with Store(tmp_path / "new.db") as store:
         assert store.infra("snmp-target") == []
+
+
+def test_snmp_series_and_pruning(store: Store) -> None:
+    t1, t2 = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    store.add_snmp_series("192.0.2.9", {"ups.load_w": 121, "ups.input_v": 231.5}, ts=t1)
+    store.add_snmp_series("192.0.2.9", {"ups.load_w": 130}, ts=t2)
+    store.add_snmp_series("192.0.2.9", {})
+    assert store.snmp_series("192.0.2.9", "ups.load_w", t1) == [(t1, 121.0), (t2, 130.0)]
+    assert store.snmp_series("192.0.2.9", "ups.input_v", "2026-01-01T12:00:00+00:00") == []
+    deleted = store.prune(rounds_before="2026-01-01T12:00:00+00:00")
+    assert deleted["snmp_series"] == 2
+    assert store.snmp_series("192.0.2.9", "ups.load_w", "") == [(t2, 130.0)]
