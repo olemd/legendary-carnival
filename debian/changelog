@@ -1,3 +1,23 @@
+lanwatch (0.8.1) unstable; urgency=medium
+
+  * KoboldCpp as an LLM backend next to Ollama: set llm.backend =
+    "koboldcpp" and point llm.base_url at the instance (port 5001 by
+    default). KoboldCpp serves the one model it was started with and its
+    context size is set at launch, so llm.model is only a label there
+    and num_ctx, chat_num_ctx and keep_alive are ignored.
+    Password-protected instances are not supported. The default is still
+    Ollama.
+  * A second LLM server as fallback ([llm.fallback] with backend,
+    base_url and model), used when the first cannot be reached or has no
+    model. A slow or failing answer does not switch servers. Answers are
+    cached under the model that wrote them.
+  * "lanwatch llm check" and the status page name the backend and show
+    both servers; the check fails only when neither is usable.
+  * An LLM host that is switched off is reported as unreachable instead
+    of as a timeout.
+
+ -- olemd <olemd@glemt.net>  Wed, 11 Nov 2026 13:32:27 +0100
+
 lanwatch (0.8.0) unstable; urgency=medium
 
   * Router over SNMPv3 ([snmp], read-only, off by default): what the
