@@ -902,28 +902,36 @@ def notify_cmd(
 
 @llm_app.command("check")
 def llm_check(ctx: typer.Context) -> None:
-    """Verify the LLM endpoint (Ollama or KoboldCpp) and that the model is there."""
+    """Verify the LLM endpoint (Ollama or KoboldCpp) and that the model is there.
+
+    With [llm.fallback] both servers are checked; it fails only when neither is usable."""
     cfg = _state(ctx).loaded.config
     from lanwatch.llm.client import make_client
 
     async def _check() -> int:
         client = make_client(cfg.llm)
+        servers = client.servers()
         try:
-            st = await client.status()
+            statuses = [await s.status() for s in servers]
         finally:
             await client.aclose()
-        version = f"  version: {st.version}" if st.version else ""
-        typer.echo(f"backend: {client.backend_name}")
-        typer.echo(f"endpoint: {cfg.llm.base_url}  reachable: {st.reachable}{version}")
-        if not st.reachable:
-            typer.echo(f"error: {st.error}", err=True)
-            return 1
-        typer.echo(f"model: {cfg.llm.model}  present: {st.model_present}")
-        typer.echo("models: " + (", ".join(st.models) or "(none)"))
-        if not st.model_present:
-            typer.echo(client.missing_model_hint(), err=True)
-            return 1
-        return 0
+        usable = 0
+        for i, (server, st) in enumerate(zip(servers, statuses, strict=True)):
+            role = "  (fallback)" if i else ""
+            version = f"  version: {st.version}" if st.version else ""
+            typer.echo(f"backend: {server.backend_name}{role}")
+            typer.echo(f"endpoint: {server.base_url}  reachable: {st.reachable}{version}")
+            if not st.reachable:
+                typer.echo(f"error: {st.error}", err=True)
+                continue
+            typer.echo(f"model: {server.cfg.model}  present: {st.model_present}")
+            typer.echo("models: " + (", ".join(st.models) or "(none)"))
+            if not st.model_present:
+                typer.echo(server.missing_model_hint(), err=True)
+                continue
+            usable += 1
+        # With a fallback, one working server is enough for the LLM features to run.
+        return 0 if usable else 1
 
     raise typer.Exit(asyncio.run(_check()))
 

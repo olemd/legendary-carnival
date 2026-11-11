@@ -127,6 +127,30 @@ differs:
   without it they think first, which is slower but still works.
 - An instance protected with `--password` is not supported yet.
 
+## Two servers: a fallback
+
+To use both, make one the primary and the other the fallback:
+
+```toml
+[llm]
+backend = "koboldcpp"
+base_url = "http://gpu-box:5001"
+model = "gemma4-12b"
+
+[llm.fallback]
+backend = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen3.8:27b"
+```
+
+The fallback is used when the primary cannot be reached (host off, server stopped) or has
+no model, and the log says so. The primary is tried again on the next scan round or
+question. A slow or failing answer from a reachable primary does not switch servers.
+Everything else in `[llm]` (timeout, temperature, language) applies to both.
+`lanwatch llm check` and the status page show both servers; the check fails only when
+neither is usable. Answers are cached under the primary's `llm.model` whichever server
+wrote them, so an answer from the fallback is kept when the primary comes back.
+
 ## Config
 
 `/etc/lanwatch/config.toml` (or `~/.config/lanwatch/config.toml` rootless). Every key

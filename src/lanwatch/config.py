@@ -157,6 +157,15 @@ class ScheduleConfig(StrictModel):
         return v
 
 
+class LlmFallbackConfig(StrictModel):
+    """A second LLM server, used when the primary one cannot be reached or has no model.
+    Everything not listed here (timeout, temperature, language, ...) is shared with [llm]."""
+
+    backend: Literal["ollama", "koboldcpp"]
+    base_url: str
+    model: str
+
+
 class LlmConfig(StrictModel):
     enabled: bool = True
     # Which server base_url points at. KoboldCpp listens on port 5001 by default.
@@ -173,6 +182,7 @@ class LlmConfig(StrictModel):
     keep_alive: str = "30m"
     # Context window for the inventory chat (the whole inventory is pasted in).
     chat_num_ctx: int = Field(default=16384, ge=2048)
+    fallback: LlmFallbackConfig | None = None
 
 
 class StoreConfig(StrictModel):

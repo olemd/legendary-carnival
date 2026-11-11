@@ -60,6 +60,12 @@ keep_alive = "30m"
 # With backend = "koboldcpp": model is only a label (KoboldCpp serves the one model it was
 # started with), and num_ctx, chat_num_ctx and keep_alive are ignored (set --contextsize).
 
+# Optional second server, used when the one above cannot be reached or has no model.
+# [llm.fallback]
+# backend = "ollama"
+# base_url = "http://localhost:11434"
+# model = "qwen3.8:27b"
+
 [store]
 # path = "/var/lib/lanwatch/lanwatch.db"
 # Days of history kept by the daily maintenance job; 0 keeps everything. Devices, services

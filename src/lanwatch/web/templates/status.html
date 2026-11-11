@@ -45,9 +45,11 @@
     <dl class="kv">
       {% if not config.llm.enabled %}<dt>State</dt><dd class="muted">disabled in config</dd>
       {% else %}
-      <dt>Server</dt><dd class="mono">{{ config.llm.base_url }}</dd>
-      <dt>Reachable</dt><dd>{% if llm.reachable %}<span class="result-ok">yes</span>{% if llm.version %} <span class="muted">{{ "KoboldCpp" if config.llm.backend == "koboldcpp" else "Ollama" }} {{ llm.version }}</span>{% endif %}{% else %}<span class="result-failed">no</span> <span class="muted">{{ llm.error }}</span>{% endif %}</dd>
-      <dt>Model</dt><dd><span class="mono">{{ config.llm.model }}</span> {% if llm.reachable %}{% if llm.model_present %}<span class="result-ok">present</span>{% else %}<span class="result-failed">{{ "no model loaded" if config.llm.backend == "koboldcpp" else "not pulled" }}</span>{% endif %}{% endif %}</dd>
+      {% for srv, st in llm %}
+      <dt>{{ "Fallback" if not loop.first else "Server" }}</dt><dd class="mono">{{ srv.base_url }}</dd>
+      <dt>Reachable</dt><dd>{% if st.reachable %}<span class="result-ok">yes</span>{% if st.version %} <span class="muted">{{ srv.backend_name }} {{ st.version }}</span>{% endif %}{% else %}<span class="result-failed">no</span> <span class="muted">{{ st.error }}</span>{% endif %}</dd>
+      <dt>Model</dt><dd><span class="mono">{{ srv.cfg.model }}</span> {% if st.reachable %}{% if st.model_present %}<span class="result-ok">present</span>{% else %}<span class="result-failed">{{ "no model loaded" if srv.cfg.backend == "koboldcpp" else "not pulled" }}</span>{% endif %}{% endif %}</dd>
+      {% endfor %}
       {% endif %}
     </dl>
   </div>

@@ -2,7 +2,8 @@
 
 Two backends, chosen with llm.backend: Ollama (its native /api/chat) and KoboldCpp (its
 OpenAI-compatible /v1/chat/completions). Both may be local or on another LAN host, and both
-expose the same interface, so the rest of lanwatch does not care which one answers."""
+expose the same interface, so the rest of lanwatch does not care which one answers. With
+[llm.fallback] configured, a second server takes over when the first is unavailable."""
 
 from __future__ import annotations
 
@@ -74,6 +75,10 @@ class LlmClient:
 
     async def status(self) -> LlmStatus:
         raise NotImplementedError
+
+    def servers(self) -> list[LlmClient]:
+        """The actual servers behind this client, in the order they are tried."""
+        return [self]
 
     def missing_model_hint(self) -> str:
         """What to do when status() says the model is not there."""
@@ -191,7 +196,7 @@ class OllamaClient(LlmClient):
                 )
             r.raise_for_status()
             data = r.json()
-        except httpx2.ConnectError as e:
+        except (httpx2.ConnectError, httpx2.ConnectTimeout) as e:
             raise LlmUnavailable(f"cannot reach {self.base_url}: {e}") from e
         except httpx2.TimeoutException as e:
             raise LlmError(f"LLM timeout after {self.cfg.timeout_s}s") from e
@@ -311,7 +316,7 @@ class KoboldCppClient(LlmClient):
             r.raise_for_status()
             data = r.json()
             choice = data["choices"][0]
-        except httpx2.ConnectError as e:
+        except (httpx2.ConnectError, httpx2.ConnectTimeout) as e:
             raise LlmUnavailable(f"cannot reach {self.base_url}: {e}") from e
         except httpx2.TimeoutException as e:
             raise LlmError(f"LLM timeout after {self.cfg.timeout_s}s") from e
@@ -334,8 +339,87 @@ class KoboldCppClient(LlmClient):
         )
 
 
-def make_client(cfg: LlmConfig) -> LlmClient:
-    """The client for the configured llm.backend."""
+class FallbackClient(LlmClient):
+    """Primary server first, the fallback when the primary is unavailable.
+
+    Unavailable means LlmUnavailable: cannot connect (host off, server stopped) or the model
+    is missing. A slow or failing answer (timeout, HTTP 500) is not retried elsewhere; the
+    task layer already retries those. Once the primary has failed, this client stays on the
+    fallback, so a round does not pay the connect timeout on every call. Clients live for
+    one round or one question, so the primary is tried again next time.
+    """
+
+    def __init__(self, primary: LlmClient, fallback: LlmClient) -> None:
+        self.cfg = primary.cfg
+        self.base_url = primary.base_url
+        self.primary = primary
+        self.fallback = fallback
+        self._primary_down = False
+        self.tools_supported = None
+
+    @property
+    def backend_name(self) -> str:  # type: ignore[override]
+        return (self.fallback if self._primary_down else self.primary).backend_name
+
+    def servers(self) -> list[LlmClient]:
+        return [self.primary, self.fallback]
+
+    async def aclose(self) -> None:
+        await self.primary.aclose()
+        await self.fallback.aclose()
+
+    async def status(self) -> LlmStatus:
+        """The first usable server's status, or the primary's when neither is usable."""
+        first = await self.primary.status()
+        if first.reachable and first.model_present:
+            return first
+        second = await self.fallback.status()
+        return second if second.reachable and second.model_present else first
+
+    def missing_model_hint(self) -> str:
+        return self.primary.missing_model_hint()
+
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any] | None,
+        model: str | None,
+        num_ctx: int,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatResult:
+        if not self._primary_down:
+            try:
+                result = await self.primary._chat(messages, schema, model, num_ctx, tools)
+                self.tools_supported = self.primary.tools_supported
+                return result
+            except LlmUnavailable as e:
+                self._primary_down = True
+                log.warning(
+                    "primary LLM unavailable (%s), using fallback %s at %s",
+                    e,
+                    self.fallback.backend_name,
+                    self.fallback.base_url,
+                )
+        # A model override (llm eval --model) names a model on the primary; the fallback
+        # always runs its own configured model.
+        result = await self.fallback._chat(messages, schema, None, num_ctx, tools)
+        self.tools_supported = self.fallback.tools_supported
+        return result
+
+
+def _single(cfg: LlmConfig) -> LlmClient:
     if cfg.backend == "koboldcpp":
         return KoboldCppClient(cfg)
     return OllamaClient(cfg)
+
+
+def make_client(cfg: LlmConfig) -> LlmClient:
+    """The client for the configured llm.backend, wrapped with [llm.fallback] when set."""
+    primary = _single(cfg)
+    if cfg.fallback is None:
+        return primary
+    fb = cfg.fallback
+    fallback_cfg = cfg.model_copy(
+        update={"backend": fb.backend, "base_url": fb.base_url, "model": fb.model, "fallback": None}
+    )
+    return FallbackClient(primary, _single(fallback_cfg))

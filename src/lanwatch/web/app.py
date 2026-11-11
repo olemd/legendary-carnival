@@ -368,13 +368,14 @@ def create_app(
 
     @app.get("/status", response_class=HTMLResponse, dependencies=deps)
     async def status_page(request: Request, s: StoreDep) -> HTMLResponse:
-        llm = None
+        # One entry per configured LLM server (primary, then fallback), with its status.
+        llm = []
         if config.llm.enabled:
             from lanwatch.llm.client import make_client
 
             client = make_client(config.llm)
             try:
-                llm = await client.status()
+                llm = [(srv, await srv.status()) for srv in client.servers()]
             finally:
                 await client.aclose()
         db = config.store_path

@@ -1,4 +1,5 @@
-"""The KoboldCpp backend: same client interface as Ollama, OpenAI wire format."""
+"""The KoboldCpp backend (same client interface as Ollama, OpenAI wire format) and the
+fallback between two servers."""
 
 from __future__ import annotations
 
@@ -8,8 +9,9 @@ from typing import Any
 import httpx2
 import pytest
 
-from lanwatch.config import LlmConfig
+from lanwatch.config import LlmConfig, LlmFallbackConfig
 from lanwatch.llm.client import (
+    FallbackClient,
     KoboldCppClient,
     LlmError,
     LlmUnavailable,
@@ -17,6 +19,7 @@ from lanwatch.llm.client import (
     make_client,
 )
 from tests.fake_koboldcpp import FakeKoboldCpp
+from tests.fake_ollama import FakeOllama
 
 CFG = LlmConfig(backend="koboldcpp", base_url="http://kobold:5001")
 SCHEMA = {"type": "object", "properties": {"kind": {"type": "string"}}}
@@ -140,3 +143,86 @@ async def test_errors() -> None:
         await KoboldCppClient(CFG, transport(httpx2.Response(200, json={}))).chat_json(
             "s", "u", SCHEMA
         )
+
+
+# --- fallback between two servers ---
+
+
+def _refuse(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectError("refused", request=request)
+
+
+def _timeout(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectTimeout("host is off", request=request)
+
+
+def _dead(handler: Any = _refuse) -> KoboldCppClient:
+    return KoboldCppClient(CFG, httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+
+
+def _ollama(fake: FakeOllama) -> OllamaClient:
+    return OllamaClient(LlmConfig(), fake.client())
+
+
+async def test_make_client_with_fallback() -> None:
+    cfg = LlmConfig(
+        backend="koboldcpp",
+        base_url="http://kobold:5001",
+        timeout_s=33,
+        fallback=LlmFallbackConfig(backend="ollama", base_url="http://o:11434", model="m:1b"),
+    )
+    client = make_client(cfg)
+    try:
+        primary, fallback = client.servers()
+        assert isinstance(client, FallbackClient)
+        assert isinstance(primary, KoboldCppClient) and isinstance(fallback, OllamaClient)
+        assert (fallback.base_url, fallback.cfg.model) == ("http://o:11434", "m:1b")
+        assert fallback.cfg.timeout_s == 33  # shared settings carry over
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("handler", [_refuse, _timeout])
+async def test_fallback_when_primary_unreachable(handler: Any) -> None:
+    fake = FakeOllama(lambda s, u, sc: {"kind": "nas"})
+    client = FallbackClient(_dead(handler), _ollama(fake))
+    res = await client.chat_json("s", "u", SCHEMA)
+    assert json.loads(res.content) == {"kind": "nas"}
+    assert client.backend_name == "Ollama"
+    # Stays on the fallback: the dead primary is not tried again by this client.
+    await client.chat_json("s", "u", SCHEMA)
+    assert len(fake.requests) == 2
+
+
+async def test_primary_used_when_up() -> None:
+    kobold = FakeKoboldCpp(lambda b: {"content": '{"kind": "printer"}'})
+    ollama = FakeOllama(lambda s, u, sc: {"kind": "nas"})
+    client = FallbackClient(KoboldCppClient(CFG, kobold.client()), _ollama(ollama))
+    res = await client.chat_json("s", "u", SCHEMA)
+    assert json.loads(res.content) == {"kind": "printer"}
+    assert client.backend_name == "KoboldCpp" and not ollama.requests
+
+
+async def test_no_fallback_on_plain_error() -> None:
+    """A reachable primary that answers badly is not an outage."""
+    bad = KoboldCppClient(
+        CFG,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(lambda r: httpx2.Response(500))),
+    )
+    ollama = FakeOllama(lambda s, u, sc: {"kind": "nas"})
+    with pytest.raises(LlmError, match="HTTP 500"):
+        await FallbackClient(bad, _ollama(ollama)).chat_json("s", "u", SCHEMA)
+    assert not ollama.requests
+
+
+async def test_both_down_is_unavailable() -> None:
+    with pytest.raises(LlmUnavailable):
+        await FallbackClient(_dead(), _dead()).chat_json("s", "u", SCHEMA)
+
+
+async def test_fallback_status() -> None:
+    ollama = FakeOllama(lambda s, u, sc: {})
+    st = await FallbackClient(_dead(), _ollama(ollama)).status()
+    assert st.reachable and st.model_present and st.version == "0.0-fake"
+    st = await FallbackClient(_dead(), _dead()).status()
+    assert not st.reachable
