@@ -387,8 +387,67 @@ class UnifiConfig(StrictModel):
         return self
 
 
+SnmpAuth = Literal["SHA-256", "SHA-384", "SHA-512", "SHA"]
+SnmpPriv = Literal["AES", "AES-256"]
+_SNMP_HOST = re.compile(r"[A-Za-z0-9.:_-]{1,253}")
+_SNMP_USER = re.compile(r"[A-Za-z0-9._-]{1,32}")
+_SNMP_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
+# The 0.8.0 form: the router's login straight under [snmp]. Still read, as a device
+# named "router".
+_SNMP_LEGACY_KEYS = frozenset(
+    {
+        "enabled",
+        "host",
+        "user",
+        "auth_protocol",
+        "auth_password",
+        "priv_protocol",
+        "priv_password",
+        "timeout_s",
+    }
+)
+
+
+def _check_snmp_credentials(where: str, user: str, auth: str, priv: str) -> None:
+    """The rules every SNMPv3 login has to pass before net-snmp sees it."""
+    for key, value in (("auth_password", auth), ("priv_password", priv)):
+        if len(value) < 8:
+            # RFC 3414: agents refuse shorter passphrases.
+            raise ValueError(f"{where}.{key} must be at least 8 characters")
+        if any(c.isspace() or c == "#" for c in value):
+            # net-snmp reads them from a config file where these end the value.
+            raise ValueError(f"{where}.{key} must not contain spaces or '#'")
+        if value.startswith('"'):
+            # net-snmp takes it as the start of a quoted value and drops the quotes,
+            # so it would log in with another password than the one written here.
+            raise ValueError(f"{where}.{key} must not start with a double quote")
+    if not _SNMP_USER.fullmatch(user):
+        raise ValueError(f"{where}.user must be 1-32 letters, digits, '.', '_' or '-'")
+
+
+class SnmpDeviceConfig(StrictModel):
+    """One device read over SNMPv3: a [snmp.devices.<name>] table. Each device has its
+    own login; nothing is shared between them."""
+
+    # None: this host's default gateway (the router only).
+    host: str | None = None
+    # The SNMPv3 user on this device.
+    user: str = ""
+    # "SHA" is SHA-1 (HMAC-SHA-96): the weakest allowed, for agents that have nothing newer.
+    auth_protocol: SnmpAuth = "SHA-256"
+    auth_password: str = ""
+    # "AES" is AES-128, the one AES variant every SNMPv3 agent has (Junos has no other).
+    priv_protocol: SnmpPriv = "AES"
+    priv_password: str = ""
+    timeout_s: int = Field(default=5, ge=1, le=60)
+    # Also read this device's ARP table and DHCP leases. One device at most.
+    router: bool = False
+    enabled: bool = True
+
+
 class SnmpConfig(StrictModel):
-    """Read-only SNMPv3 link to the router; see docs/snmp.md.
+    """Read-only SNMPv3 links to the devices under [snmp.devices.<name>]; see
+    docs/snmp.md.
 
     SNMPv3 with authentication and encryption (authPriv) only: v1/v2c send the community
     in clear text and give anyone who learns it the same view, so lanwatch does not speak
@@ -396,39 +455,78 @@ class SnmpConfig(StrictModel):
     which the known SHA-1 collision attacks do not break, and UniFi gateways and switches
     offer nothing else. SHA-256 is the default."""
 
-    enabled: bool = False
-    # The router's address. None: this host's default gateway.
-    host: str | None = None
-    user: str = "lanwatch"
-    # "SHA" is SHA-1 (HMAC-SHA-96): the weakest allowed, for agents that have nothing newer.
-    auth_protocol: Literal["SHA-256", "SHA-384", "SHA-512", "SHA"] = "SHA-256"
-    auth_password: str = ""
-    # "AES" is AES-128, the one AES variant every SNMPv3 agent has (Junos has no other).
-    priv_protocol: Literal["AES", "AES-256"] = "AES"
-    priv_password: str = ""
-    timeout_s: int = Field(default=5, ge=1, le=60)
+    # By name: the table key, shown in the UI and logs.
+    devices: dict[str, SnmpDeviceConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_080(cls, data: Any) -> Any:
+        """0.8.0 had the router's login straight under [snmp]. Read it as the device
+        "router", so an upgrade keeps working without an edit."""
+        if not isinstance(data, dict) or not _SNMP_LEGACY_KEYS & data.keys():
+            return data
+        data = dict(data)
+        old = {k: data.pop(k) for k in _SNMP_LEGACY_KEYS & data.keys()}
+        if not old.pop("enabled", False):
+            return data
+        devices = dict(data.get("devices") or {})
+        if "router" in devices:
+            raise ValueError(
+                "[snmp] has the router's login (the 0.8.0 form) and there is also a "
+                "[snmp.devices.router]; move the login into that table"
+            )
+        devices["router"] = {"user": "lanwatch", **old, "router": True}
+        data["devices"] = devices
+        return data
 
     @model_validator(mode="after")
     def _check(self) -> SnmpConfig:
-        if not self.enabled:
-            return self
-        for key in ("auth_password", "priv_password"):
-            value: str = getattr(self, key)
-            if len(value) < 8:
-                # RFC 3414: agents refuse shorter passphrases.
-                raise ValueError(f"snmp.{key} must be at least 8 characters")
-            if any(c.isspace() or c == "#" for c in value):
-                # net-snmp reads them from a config file where these end the value.
-                raise ValueError(f"snmp.{key} must not contain spaces or '#'")
-            if value.startswith('"'):
-                # net-snmp takes it as the start of a quoted value and drops the quotes,
-                # so it would log in with another password than the one written here.
-                raise ValueError(f"snmp.{key} must not start with a double quote")
-        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", self.user):
-            raise ValueError("snmp.user must be 1-32 letters, digits, '.', '_' or '-'")
-        if self.host is not None and not re.fullmatch(r"[A-Za-z0-9.:_-]{1,253}", self.host):
-            raise ValueError("snmp.host must be an IP address or a host name")
+        hosts: set[str] = set()
+        routers: list[str] = []
+        for name, d in self.devices.items():
+            where = f"snmp.devices.{name}"
+            if not _SNMP_NAME.fullmatch(name):
+                raise ValueError(f"{where}: a name is 1-32 letters, digits, '_' or '-'")
+            if d.router:
+                routers.append(name)
+            if d.host is None:
+                if not d.router:
+                    raise ValueError(f"{where}.host is required (only the router can omit it)")
+            elif not _SNMP_HOST.fullmatch(d.host):
+                raise ValueError(f"{where}.host must be an IP address or a host name")
+            elif d.host.lower() in hosts:
+                raise ValueError(f"{where}: {d.host} is listed twice")
+            else:
+                hosts.add(d.host.lower())
+            if d.enabled:
+                _check_snmp_credentials(where, d.user, d.auth_password, d.priv_password)
+        if len(routers) > 1:
+            raise ValueError(f"snmp.devices: only one can be the router ({', '.join(routers)})")
         return self
+
+    def router(self) -> SnmpTarget | None:
+        """The enabled device marked as the router, if any."""
+        return next((t for t in self.targets() if t.role == "router"), None)
+
+    def targets(self) -> list[SnmpTarget]:
+        """Every enabled device to read this round: the router first (its host may be
+        unknown, meaning the default gateway), then the others in config order."""
+        out = [
+            SnmpTarget(host=d.host, name=name, role="router" if d.router else "device", login=d)
+            for name, d in self.devices.items()
+            if d.enabled
+        ]
+        return sorted(out, key=lambda t: t.role != "router")
+
+
+@dataclass(frozen=True, slots=True)
+class SnmpTarget:
+    """One device to read. `host` None: the router at this host's default gateway."""
+
+    host: str | None
+    name: str
+    role: Literal["router", "device"]
+    login: SnmpDeviceConfig
 
 
 class LatencyConfig(StrictModel):
@@ -637,8 +735,11 @@ def _to_toml(data: dict[str, Any], prefix: str = "") -> str:
         if isinstance(v, dict):
             name = f"{prefix}.{k}" if prefix else k
             inner = _to_toml(v, name)
-            if inner.strip() or not v:
+            if not v or any(not isinstance(x, dict) for x in v.values()):
                 tables.append(f"[{name}]\n{inner}")
+            elif inner.strip():
+                # Only tables inside ([snmp.devices.<name>]): no empty header above them.
+                tables.append(inner)
         else:
             scalars.append(f"{k} = {json.dumps(v)}")
     body = "\n".join(scalars)

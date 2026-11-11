@@ -188,6 +188,29 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX latency_target_ts ON latency(target, ts);
     """,
+    # v11: several SNMP devices. Each target's state is one infra row (kind snmp-target,
+    # keyed by host); the router's state moves there from the meta keys 0.8.0 used.
+    """
+    INSERT INTO infra(kind, key, data, first_seen, last_seen, snapshot_id)
+    SELECT 'snmp-target', h.value,
+           json_object(
+               'host', h.value, 'role', 'router', 'name', '',
+               'system', json(CASE WHEN s.value IS NULL OR s.value = '' THEN 'null'
+                                   ELSE s.value END),
+               'last_ok', NULLIF(ok.value, ''),
+               'last_error', COALESCE(e.value, ''),
+               'fails', CASE WHEN COALESCE(e.value, '') = '' THEN 0 ELSE 1 END),
+           COALESCE(NULLIF(ok.value, ''), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+           COALESCE(NULLIF(ok.value, ''), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+           NULL
+    FROM meta h
+    LEFT JOIN meta s ON s.key = 'snmp.system'
+    LEFT JOIN meta ok ON ok.key = 'snmp.last_ok'
+    LEFT JOIN meta e ON e.key = 'snmp.last_error'
+    WHERE h.key = 'snmp.host' AND h.value != '';
+    DELETE FROM meta WHERE key IN ('snmp.host', 'snmp.system', 'snmp.last_ok',
+                                   'snmp.last_error');
+    """,
 ]
 
 

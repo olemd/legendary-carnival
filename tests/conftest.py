@@ -1,15 +1,33 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from lanwatch.config import Config, LatencyConfig, LlmConfig, RuleOverride, ScanConfig
+from lanwatch.config import (
+    Config,
+    LatencyConfig,
+    LlmConfig,
+    RuleOverride,
+    ScanConfig,
+    SnmpConfig,
+)
 from lanwatch.helper import DEFAULT_SCRIPTS, Policy, validate_argv
 from lanwatch.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+SNMP_AUTH = "auth-secret-123"
+SNMP_PRIV = "priv-secret-456"
+
+
+def snmp_devices(**devices: Mapping[str, object]) -> SnmpConfig:
+    """[snmp.devices] for tests, by name: each device gets a working login unless it
+    names its own fields."""
+    login = {"user": "lanwatch", "auth_password": SNMP_AUTH, "priv_password": SNMP_PRIV}
+    return SnmpConfig.model_validate({"devices": {n: login | dict(d) for n, d in devices.items()}})
 
 
 @pytest.fixture(autouse=True)
