@@ -1,5 +1,5 @@
-"""LLM tasks. Each has a pydantic output model (also used as the JSON schema Ollama enforces),
-a prompt file, and a cache key derived from model + prompt version + input. The LLM never
+"""LLM tasks. Each has a pydantic output model (also used as the JSON schema the LLM server
+enforces), a prompt file, and a cache key derived from model + prompt version + input. The LLM never
 produces findings or severities; it classifies, explains, summarises and suggests."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, Field, ValidationError
 
 from lanwatch.config import Config
-from lanwatch.llm.client import LlmError, LlmUnavailable, OllamaClient
+from lanwatch.llm.client import LlmClient, LlmError, LlmUnavailable, make_client
 from lanwatch.llm.prompts import load_prompt, render
 from lanwatch.logging_setup import with_heartbeat
 from lanwatch.models import Device, FindingRow, FindingStatus, ServiceRow, iso, local_str, now_utc
@@ -90,10 +90,10 @@ class Suggestions(BaseModel):
 class LlmService:
     """Cache + validation + graceful degradation around the client."""
 
-    def __init__(self, config: Config, store: Store, client: OllamaClient | None = None) -> None:
+    def __init__(self, config: Config, store: Store, client: LlmClient | None = None) -> None:
         self.config = config
         self.store = store
-        self.client = client or OllamaClient(config.llm)
+        self.client = client or make_client(config.llm)
         self.calls = 0
         self.cache_hits = 0
         self.unavailable: str | None = None
@@ -102,9 +102,12 @@ class LlmService:
         await self.client.aclose()
 
     def cache_key(self, prompt_name: str, version: str, payload: dict[str, Any]) -> str:
+        """Keyed on the model that answers (client.active_model), not on llm.model: with a
+        fallback server, its answers must not be reused as the primary model's once the
+        primary is back, and the other way round."""
         raw = json.dumps(
             {
-                "m": self.config.llm.model,
+                "m": self.client.active_model,
                 "p": prompt_name,
                 "v": version,
                 "l": self.config.llm.language,
@@ -143,7 +146,7 @@ class LlmService:
             try:
                 result = await with_heartbeat(
                     self.client.chat_json(system, user, schema),
-                    f"LLM {prompt_name} ({self.config.llm.model})",
+                    f"LLM {prompt_name} ({self.client.active_model})",
                     log,
                 )
             except LlmUnavailable as e:
@@ -175,7 +178,10 @@ class LlmService:
                 )
                 user = user + f"\n\nYour previous answer was invalid ({last_error}). Answer again."
                 continue
-            self.store.llm_cache_put(key, self.config.llm.model, parsed.model_dump_json())
+            # The call may have switched to the fallback server; file the answer under the
+            # model that actually wrote it.
+            key = self.cache_key(prompt_name, prompt.version, payload)
+            self.store.llm_cache_put(key, self.client.active_model, parsed.model_dump_json())
             log.debug(
                 "LLM %s: %d+%d tokens, %.1fs",
                 prompt_name,

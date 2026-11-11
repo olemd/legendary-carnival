@@ -109,6 +109,49 @@ log. Pick with the eval, not by feel.
 If lanwatch runs on a different host than the GPU, set `llm.base_url` to that host and
 bind Ollama to a LAN address (`OLLAMA_HOST=0.0.0.0`). Still local, nothing leaves the LAN.
 
+## KoboldCpp instead of Ollama
+
+Set `llm.backend = "koboldcpp"` and point `llm.base_url` at the instance (port 5001 by
+default). lanwatch then uses KoboldCpp's OpenAI-compatible API, with the JSON schema
+enforced as a grammar. `lanwatch llm check` and `lanwatch llm eval` work the same. What
+differs:
+
+- KoboldCpp serves the one model it was started with and ignores the model name in a
+  request. `llm.model` is only a label (web UI, cache key); change it when you load another
+  model so cached answers are not reused. `llm eval --model` cannot switch models.
+- The context window is set at launch (`--contextsize`), not per request: `num_ctx`,
+  `chat_num_ctx` and `keep_alive` are ignored. Start it with at least 16384 for the chat.
+- Replies are capped by `--defaultgenamt` (2048 tokens unless changed). A long digest that
+  gets cut off shows up in the log as `done_reason=length`.
+- Start KoboldCpp with `--jinja` to have thinking switched off for models like Qwen3;
+  without it they think first, which is slower but still works.
+- An instance protected with `--password` is not supported yet.
+
+## Two servers: a fallback
+
+To use both, make one the primary and the other the fallback:
+
+```toml
+[llm]
+backend = "koboldcpp"
+base_url = "http://gpu-box:5001"
+model = "gemma4-12b"
+
+[llm.fallback]
+backend = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen3.8:27b"
+```
+
+The fallback is used when the primary cannot be reached (host off, server stopped) or has
+no model, and the log says so. The primary is tried again on the next scan round or
+question. A slow or failing answer from a reachable primary does not switch servers.
+Everything else in `[llm]` (timeout, temperature, language) applies to both.
+`lanwatch llm check` and the status page show both servers; the check fails only when
+neither is usable. Answers are cached per model that wrote them: what the fallback answered
+is reused while the primary stays down, and asked again of the primary once it is back.
+While the primary is down, each round spends one call finding that out.
+
 ## Config
 
 `/etc/lanwatch/config.toml` (or `~/.config/lanwatch/config.toml` rootless). Every key

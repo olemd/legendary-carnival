@@ -305,7 +305,7 @@ def create_app(
         allow_actions = bool(body.get("allow_actions", True))
         answer = await ask(config, s, question[:4000], history, allow_actions)
         if answer is None:
-            return {"answer": None, "error": "LLM unavailable (is Ollama running?)"}
+            return {"answer": None, "error": "LLM unavailable (is the LLM server running?)"}
         return {"answer": answer.text, "tools": answer.tools}
 
     @app.get("/infra", response_class=HTMLResponse, dependencies=deps)
@@ -368,13 +368,14 @@ def create_app(
 
     @app.get("/status", response_class=HTMLResponse, dependencies=deps)
     async def status_page(request: Request, s: StoreDep) -> HTMLResponse:
-        llm = None
+        # One entry per configured LLM server (primary, then fallback), with its status.
+        llm = []
         if config.llm.enabled:
-            from lanwatch.llm.client import OllamaClient
+            from lanwatch.llm.client import make_client
 
-            client = OllamaClient(config.llm)
+            client = make_client(config.llm)
             try:
-                llm = await client.status()
+                llm = [(srv, await srv.status()) for srv in client.servers()]
             finally:
                 await client.aclose()
         db = config.store_path
