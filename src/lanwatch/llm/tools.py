@@ -98,7 +98,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool(
         "list_rules",
-        "The rules lanwatch evaluates, with description and effective severity.",
+        "The rules lanwatch evaluates, one line each: "
+        "'<id> [<effective severity> <kind>]: <what it is about>', with ' (disabled)' "
+        "at the end of a rule switched off in config.",
         {},
     ),
     _tool(
@@ -319,25 +321,21 @@ class ToolRunner:
             "last_scans": {k: (local_str(s.finished_at) if s else None) for k, s in snaps.items()},
         }
 
-    def t_list_rules(self) -> list[dict[str, Any]]:
-        """Every rule with the first sentence of its description: the full texts of all
-        rules together are longer than a tool result may be (MAX_RESULT_CHARS), and the
-        first sentence says what the rule is about."""
+    def t_list_rules(self) -> list[str]:
+        """Every rule as one line with the first sentence of its description: the full
+        texts of all rules together are longer than a tool result may be
+        (MAX_RESULT_CHARS), and the first sentence says what the rule is about. One string
+        per rule rather than an object repeats no key names, which keeps every rule
+        within the budget as rules are added."""
         from lanwatch.rules.engine import all_rules
 
         out = []
         for r in all_rules():
             o = self.config.rules.get(r.id)
             sev = o.severity if o is not None and o.severity is not None else r.default_severity
-            enabled = not (o is not None and o.enabled is False)
+            off = " (disabled)" if o is not None and o.enabled is False else ""
             out.append(
-                {
-                    "id": r.id,
-                    "kind": r.kind.value,
-                    "severity": sev.value,
-                    "enabled": enabled,
-                    "description": _first_sentence(r.description),
-                }
+                f"{r.id} [{sev.value} {r.kind.value}]: {_first_sentence(r.description)}{off}"
             )
         return out
 
