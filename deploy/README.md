@@ -109,6 +109,24 @@ log. Pick with the eval, not by feel.
 If lanwatch runs on a different host than the GPU, set `llm.base_url` to that host and
 bind Ollama to a LAN address (`OLLAMA_HOST=0.0.0.0`). Still local, nothing leaves the LAN.
 
+## KoboldCpp instead of Ollama
+
+Set `llm.backend = "koboldcpp"` and point `llm.base_url` at the instance (port 5001 by
+default). lanwatch then uses KoboldCpp's OpenAI-compatible API, with the JSON schema
+enforced as a grammar. `lanwatch llm check` and `lanwatch llm eval` work the same. What
+differs:
+
+- KoboldCpp serves the one model it was started with and ignores the model name in a
+  request. `llm.model` is only a label (web UI, cache key); change it when you load another
+  model so cached answers are not reused. `llm eval --model` cannot switch models.
+- The context window is set at launch (`--contextsize`), not per request: `num_ctx`,
+  `chat_num_ctx` and `keep_alive` are ignored. Start it with at least 16384 for the chat.
+- Replies are capped by `--defaultgenamt` (2048 tokens unless changed). A long digest that
+  gets cut off shows up in the log as `done_reason=length`.
+- Start KoboldCpp with `--jinja` to have thinking switched off for models like Qwen3;
+  without it they think first, which is slower but still works.
+- An instance protected with `--password` is not supported yet.
+
 ## Config
 
 `/etc/lanwatch/config.toml` (or `~/.config/lanwatch/config.toml` rootless). Every key

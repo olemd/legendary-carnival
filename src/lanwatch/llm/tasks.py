@@ -1,5 +1,5 @@
-"""LLM tasks. Each has a pydantic output model (also used as the JSON schema Ollama enforces),
-a prompt file, and a cache key derived from model + prompt version + input. The LLM never
+"""LLM tasks. Each has a pydantic output model (also used as the JSON schema the LLM server
+enforces), a prompt file, and a cache key derived from model + prompt version + input. The LLM never
 produces findings or severities; it classifies, explains, summarises and suggests."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, Field, ValidationError
 
 from lanwatch.config import Config
-from lanwatch.llm.client import LlmError, LlmUnavailable, OllamaClient
+from lanwatch.llm.client import LlmClient, LlmError, LlmUnavailable, make_client
 from lanwatch.llm.prompts import load_prompt, render
 from lanwatch.logging_setup import with_heartbeat
 from lanwatch.models import Device, FindingRow, FindingStatus, ServiceRow, iso, local_str, now_utc
@@ -90,10 +90,10 @@ class Suggestions(BaseModel):
 class LlmService:
     """Cache + validation + graceful degradation around the client."""
 
-    def __init__(self, config: Config, store: Store, client: OllamaClient | None = None) -> None:
+    def __init__(self, config: Config, store: Store, client: LlmClient | None = None) -> None:
         self.config = config
         self.store = store
-        self.client = client or OllamaClient(config.llm)
+        self.client = client or make_client(config.llm)
         self.calls = 0
         self.cache_hits = 0
         self.unavailable: str | None = None

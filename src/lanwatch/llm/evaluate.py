@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from lanwatch.config import Config
-from lanwatch.llm.client import LlmError, OllamaClient
+from lanwatch.llm.client import LlmError, make_client
 from lanwatch.llm.prompts import load_prompt, render
 from lanwatch.llm.tasks import Classification, DeviceKind
 from lanwatch.store import Store
@@ -235,7 +235,7 @@ async def run_chat_eval(config: Config, path: Path) -> ChatReport:
 
 async def run_eval(config: Config, path: Path) -> EvalReport:
     cases = load_cases(path)
-    client = OllamaClient(config.llm)
+    client = make_client(config.llm)
     prompt = load_prompt("classify")
     schema = Classification.model_json_schema()
     report = EvalReport(model=config.llm.model)

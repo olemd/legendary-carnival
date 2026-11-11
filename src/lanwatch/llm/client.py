@@ -1,11 +1,14 @@
-"""Ollama client. Chat with a JSON schema forced on the output, low temperature, no streaming.
+"""LLM clients. Chat with a JSON schema forced on the output, low temperature, no streaming.
 
-Works against anything serving Ollama's /api/chat, local or on another LAN host."""
+Two backends, chosen with llm.backend: Ollama (its native /api/chat) and KoboldCpp (its
+OpenAI-compatible /v1/chat/completions). Both may be local or on another LAN host, and both
+expose the same interface, so the rest of lanwatch does not care which one answers."""
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,8 +40,8 @@ class ChatResult:
     output_tokens: int
     duration_s: float
     tool_calls: list[ToolCall] = field(default_factory=list)
-    # Why Ollama stopped generating: "stop" (finished), "length" (hit num_predict or the
-    # context window), "unload", ... Empty when the server did not say.
+    # Why the server stopped generating: "stop" (finished), "length" (hit the output cap or
+    # the context window), "unload", ... Empty when the server did not say.
     done_reason: str = ""
 
 
@@ -51,7 +54,12 @@ class LlmStatus:
     error: str | None = None
 
 
-class OllamaClient:
+class LlmClient:
+    """What the rest of lanwatch talks to. A backend implements status() and _chat()."""
+
+    # Shown in the status page and `lanwatch llm check`.
+    backend_name = ""
+
     def __init__(self, cfg: LlmConfig, client: httpx2.AsyncClient | None = None) -> None:
         self.cfg = cfg
         self.base_url = cfg.base_url.rstrip("/")
@@ -63,6 +71,64 @@ class OllamaClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    async def status(self) -> LlmStatus:
+        raise NotImplementedError
+
+    def missing_model_hint(self) -> str:
+        """What to do when status() says the model is not there."""
+        raise NotImplementedError
+
+    async def chat_json(
+        self, system: str, user: str, schema: dict[str, Any], model: str | None = None
+    ) -> ChatResult:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        return await self._chat(messages, schema, model, self.cfg.num_ctx)
+
+    async def chat_text(
+        self,
+        messages: list[dict[str, Any]],
+        num_ctx: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatResult:
+        """Free-text multi-turn chat, optionally with tools. messages = [{role, content}, ...]
+        in Ollama's shape (tool-call arguments as a dict); backends translate as needed.
+        When the model wants tools, the result has tool_calls and usually empty content."""
+        return await self._chat(messages, None, None, num_ctx or self.cfg.num_ctx, tools)
+
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any] | None,
+        model: str | None,
+        num_ctx: int,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatResult:
+        raise NotImplementedError
+
+
+def _parse_tool_calls(raw: Any) -> list[ToolCall]:
+    """Tool calls from a response message. Ollama sends arguments as an object, the OpenAI
+    format as a JSON string; both are accepted, anything unparseable becomes {}."""
+    calls: list[ToolCall] = []
+    for tc in raw or []:
+        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+        args = fn.get("arguments", {})
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                args = {}
+        if fn.get("name"):
+            calls.append(ToolCall(str(fn["name"]), args if isinstance(args, dict) else {}))
+    return calls
+
+
+class OllamaClient(LlmClient):
+    backend_name = "Ollama"
+
+    def missing_model_hint(self) -> str:
+        return f"run: ollama pull {self.cfg.model}"
 
     async def status(self) -> LlmStatus:
         try:
@@ -80,22 +146,6 @@ class OllamaClient:
             return LlmStatus(True, version, models, present)
         except (httpx2.HTTPError, ValueError) as e:
             return LlmStatus(False, None, [], False, error=str(e))
-
-    async def chat_json(
-        self, system: str, user: str, schema: dict[str, Any], model: str | None = None
-    ) -> ChatResult:
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        return await self._chat(messages, schema, model, self.cfg.num_ctx)
-
-    async def chat_text(
-        self,
-        messages: list[dict[str, Any]],
-        num_ctx: int | None = None,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> ChatResult:
-        """Free-text multi-turn chat, optionally with tools. messages = [{role, content}, ...].
-        When the model wants tools, the result has tool_calls and usually empty content."""
-        return await self._chat(messages, None, None, num_ctx or self.cfg.num_ctx, tools)
 
     async def _chat(
         self,
@@ -154,22 +204,138 @@ class OllamaClient:
         if "tools" in body and self.tools_supported is None:
             self.tools_supported = True
         msg = data.get("message", {})
-        calls: list[ToolCall] = []
-        for tc in msg.get("tool_calls") or []:
-            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-            args = fn.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except ValueError:
-                    args = {}
-            if fn.get("name"):
-                calls.append(ToolCall(str(fn["name"]), args if isinstance(args, dict) else {}))
         return ChatResult(
             content=str(msg.get("content", "")),
             prompt_tokens=int(data.get("prompt_eval_count", 0)),
             output_tokens=int(data.get("eval_count", 0)),
             duration_s=float(data.get("total_duration", 0)) / 1e9,
-            tool_calls=calls,
+            tool_calls=_parse_tool_calls(msg.get("tool_calls")),
             done_reason=str(data.get("done_reason") or ""),
         )
+
+
+def _openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ollama-shaped chat history -> OpenAI shape: tool-call arguments become a JSON string
+    and each call gets an id that the following tool result refers back to."""
+    out: list[dict[str, Any]] = []
+    pending: list[str] = []  # ids of calls still waiting for their tool message
+    n = 0
+    for m in messages:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            calls = []
+            for tc in m["tool_calls"]:
+                fn = tc.get("function", {})
+                n += 1
+                pending.append(f"call_{n}")
+                calls.append(
+                    {
+                        "id": pending[-1],
+                        "type": "function",
+                        "function": {
+                            "name": fn.get("name", ""),
+                            "arguments": json.dumps(fn.get("arguments", {}), ensure_ascii=False),
+                        },
+                    }
+                )
+            out.append({"role": "assistant", "content": m.get("content", ""), "tool_calls": calls})
+        elif m.get("role") == "tool":
+            msg = {"role": "tool", "content": m.get("content", "")}
+            if pending:
+                msg["tool_call_id"] = pending.pop(0)
+            out.append(msg)
+        else:
+            out.append(m)
+    return out
+
+
+class KoboldCppClient(LlmClient):
+    """KoboldCpp through its OpenAI-compatible API.
+
+    Differences from Ollama that matter here:
+    - One model is loaded at launch and the request's model name is ignored, so llm.model is
+      only a label (shown in the UI, part of the cache key). "Present" means a model is loaded.
+    - The context window is fixed at launch (--contextsize); num_ctx, chat_num_ctx and
+      keep_alive have no effect.
+    - Models without native tool support still get tools (KoboldCpp emulates them with a
+      grammar), so there is no fallback to pasting the inventory.
+    """
+
+    backend_name = "KoboldCpp"
+
+    def missing_model_hint(self) -> str:
+        return "no model is loaded: start KoboldCpp with --model <file.gguf>"
+
+    async def status(self) -> LlmStatus:
+        try:
+            r = await self._client.get(f"{self.base_url}/v1/models", timeout=5)
+            r.raise_for_status()
+            models = [str(m.get("id", "")) for m in r.json().get("data", [])]
+            version = None
+            try:
+                v = await self._client.get(f"{self.base_url}/api/extra/version", timeout=5)
+                version = str(v.json().get("version")) if v.is_success else None
+            except (httpx2.HTTPError, ValueError):
+                pass
+            return LlmStatus(True, version, models, bool(models))
+        except (httpx2.HTTPError, ValueError) as e:
+            return LlmStatus(False, None, [], False, error=str(e))
+
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any] | None,
+        model: str | None,
+        num_ctx: int,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatResult:
+        body: dict[str, Any] = {
+            "model": model or self.cfg.model,
+            "messages": _openai_messages(messages),
+            "stream": False,
+            "temperature": self.cfg.temperature,
+            # Same intent as Ollama's think=false. Only honoured when KoboldCpp runs with
+            # --jinja; otherwise ignored, and any reasoning is kept out of `content` anyway.
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        if schema is not None:
+            # Must be wrapped exactly like this: a bare schema is silently discarded.
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "output", "schema": schema},
+            }
+        if tools:
+            body["tools"] = tools
+        t0 = time.monotonic()
+        try:
+            r = await self._client.post(f"{self.base_url}/v1/chat/completions", json=body)
+            r.raise_for_status()
+            data = r.json()
+            choice = data["choices"][0]
+        except httpx2.ConnectError as e:
+            raise LlmUnavailable(f"cannot reach {self.base_url}: {e}") from e
+        except httpx2.TimeoutException as e:
+            raise LlmError(f"LLM timeout after {self.cfg.timeout_s}s") from e
+        except httpx2.HTTPStatusError as e:
+            raise LlmError(f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}") from e
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise LlmError(f"LLM returned an unexpected body: {e}") from e
+        if tools:
+            self.tools_supported = True
+        msg = choice.get("message") or {}
+        usage = data.get("usage") or {}
+        return ChatResult(
+            content=str(msg.get("content") or ""),
+            prompt_tokens=int(usage.get("prompt_tokens", 0)),
+            output_tokens=int(usage.get("completion_tokens", 0)),
+            # The OpenAI format carries no timing, so measure the round trip.
+            duration_s=time.monotonic() - t0,
+            tool_calls=_parse_tool_calls(msg.get("tool_calls")),
+            done_reason=str(choice.get("finish_reason") or ""),
+        )
+
+
+def make_client(cfg: LlmConfig) -> LlmClient:
+    """The client for the configured llm.backend."""
+    if cfg.backend == "koboldcpp":
+        return KoboldCppClient(cfg)
+    return OllamaClient(cfg)

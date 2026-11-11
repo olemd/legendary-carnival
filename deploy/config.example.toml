@@ -48,7 +48,8 @@ digest_time = "07:00"
 
 [llm]
 enabled = true
-base_url = "http://localhost:11434"     # Ollama; may be another machine on the LAN
+backend = "ollama"                      # or "koboldcpp"
+base_url = "http://localhost:11434"     # KoboldCpp: port 5001. May be another machine on the LAN
 model = "qwen3.8:27b"                   # or gemma4:26b; compare with `lanwatch llm eval --model ...`
 timeout_s = 120
 temperature = 0.1
@@ -56,6 +57,8 @@ num_ctx = 8192
 language = "nb"                         # explanations, digest, suggestions
 max_calls_per_round = 25                # the rest is picked up next round
 keep_alive = "30m"
+# With backend = "koboldcpp": model is only a label (KoboldCpp serves the one model it was
+# started with), and num_ctx, chat_num_ctx and keep_alive are ignored (set --contextsize).
 
 [store]
 # path = "/var/lib/lanwatch/lanwatch.db"

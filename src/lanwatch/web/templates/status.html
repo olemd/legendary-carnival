@@ -46,8 +46,8 @@
       {% if not config.llm.enabled %}<dt>State</dt><dd class="muted">disabled in config</dd>
       {% else %}
       <dt>Server</dt><dd class="mono">{{ config.llm.base_url }}</dd>
-      <dt>Reachable</dt><dd>{% if llm.reachable %}<span class="result-ok">yes</span>{% if llm.version %} <span class="muted">Ollama {{ llm.version }}</span>{% endif %}{% else %}<span class="result-failed">no</span> <span class="muted">{{ llm.error }}</span>{% endif %}</dd>
-      <dt>Model</dt><dd><span class="mono">{{ config.llm.model }}</span> {% if llm.reachable %}{% if llm.model_present %}<span class="result-ok">present</span>{% else %}<span class="result-failed">not pulled</span>{% endif %}{% endif %}</dd>
+      <dt>Reachable</dt><dd>{% if llm.reachable %}<span class="result-ok">yes</span>{% if llm.version %} <span class="muted">{{ "KoboldCpp" if config.llm.backend == "koboldcpp" else "Ollama" }} {{ llm.version }}</span>{% endif %}{% else %}<span class="result-failed">no</span> <span class="muted">{{ llm.error }}</span>{% endif %}</dd>
+      <dt>Model</dt><dd><span class="mono">{{ config.llm.model }}</span> {% if llm.reachable %}{% if llm.model_present %}<span class="result-ok">present</span>{% else %}<span class="result-failed">{{ "no model loaded" if config.llm.backend == "koboldcpp" else "not pulled" }}</span>{% endif %}{% endif %}</dd>
       {% endif %}
     </dl>
   </div>

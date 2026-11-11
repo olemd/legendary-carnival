@@ -159,6 +159,8 @@ class ScheduleConfig(StrictModel):
 
 class LlmConfig(StrictModel):
     enabled: bool = True
+    # Which server base_url points at. KoboldCpp listens on port 5001 by default.
+    backend: Literal["ollama", "koboldcpp"] = "ollama"
     base_url: str = "http://localhost:11434"
     model: str = "qwen3.8:27b"
     timeout_s: int = Field(default=120, ge=1)

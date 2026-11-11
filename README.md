@@ -57,7 +57,8 @@ uv run lanwatch run                 # daemon: discovery 5 min, inventory 1 h, de
 
 Web UI from a checkout: http://127.0.0.1:8321 while `run` (or `lanwatch web`) is active.
 
-LLM: install Ollama, `ollama pull qwen3.8:27b` (or `gemma4:26b`), then `lanwatch llm check`. The LLM never
+LLM: install Ollama, `ollama pull qwen3.8:27b` (or `gemma4:26b`), then `lanwatch llm check`
+(or use a KoboldCpp instance: `llm.backend = "koboldcpp"`, see `deploy/README.md`). The LLM never
 produces findings or severities. It classifies devices (kind + one line), explains each
 finding (what, why it matters, what to do), writes a digest at 07:00 and, weekly or on request,
 structural suggestions (`lanwatch suggest`, or "Run now" on the status page). Output is JSON-schema constrained, validated,

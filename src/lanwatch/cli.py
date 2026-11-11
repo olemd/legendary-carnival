@@ -902,17 +902,18 @@ def notify_cmd(
 
 @llm_app.command("check")
 def llm_check(ctx: typer.Context) -> None:
-    """Verify the Ollama endpoint and that the configured model is pulled."""
+    """Verify the LLM endpoint (Ollama or KoboldCpp) and that the model is there."""
     cfg = _state(ctx).loaded.config
-    from lanwatch.llm.client import OllamaClient
+    from lanwatch.llm.client import make_client
 
     async def _check() -> int:
-        client = OllamaClient(cfg.llm)
+        client = make_client(cfg.llm)
         try:
             st = await client.status()
         finally:
             await client.aclose()
         version = f"  version: {st.version}" if st.version else ""
+        typer.echo(f"backend: {client.backend_name}")
         typer.echo(f"endpoint: {cfg.llm.base_url}  reachable: {st.reachable}{version}")
         if not st.reachable:
             typer.echo(f"error: {st.error}", err=True)
@@ -920,7 +921,7 @@ def llm_check(ctx: typer.Context) -> None:
         typer.echo(f"model: {cfg.llm.model}  present: {st.model_present}")
         typer.echo("models: " + (", ".join(st.models) or "(none)"))
         if not st.model_present:
-            typer.echo(f"run: ollama pull {cfg.llm.model}", err=True)
+            typer.echo(client.missing_model_hint(), err=True)
             return 1
         return 0
 
