@@ -416,7 +416,7 @@ class RouterArpMismatchRule(Rule):
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
-        if not ctx.config.snmp.enabled:
+        if ctx.config.snmp.router() is None:
             return []
         infra = infrastructure_ips(ctx.store)
         out: list[Finding] = []

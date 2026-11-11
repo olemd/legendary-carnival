@@ -144,6 +144,12 @@ Signs of someone looking around or impersonating others (no mirror port needed):
 
 Hygiene checks:
 
+- **SNMP default credentials** (`[snmp_audit]`, on by default, with the weekly deep scan
+  and for new devices, `lanwatch snmp-audit [HOST]`): asks every device for sysDescr over
+  SNMPv1 and v2c with `public` and `private`, and whether an SNMPv3 agent answers. A
+  default community that answers is a finding (critical for `private`). A GET only, never
+  a SET or a walk; the only place lanwatch speaks v1/v2c. See
+  [docs/snmp.md](docs/snmp.md#the-default-credential-probe).
 - **Firmware** (`[firmware]`, daily, `lanwatch firmware`): the version Home Assistant,
   ESPHome, Shelly, Tasmota, Pi-hole and Jellyfin devices report, and whether a newer release
   exists. Reading versions stays on the LAN; the latest release is looked up at the vendor
@@ -162,26 +168,43 @@ Hygiene checks:
   firmware; a **Topology** page; and rules for IoT devices on the main network, clients only
   the controller sees, and UniFi devices offline. API key, nothing leaves the LAN. See
   [docs/unifi.md](docs/unifi.md).
+- **Junos extras** (a Juniper router or switch read over SNMP; nothing to set up): chassis
+  alarms, storage, hardware state, the session table, each committed config change (user
+  and time), a missing rescue config and rising DHCP declines. A bonus: without Juniper
+  gear nothing changes. See [docs/snmp.md](docs/snmp.md#junos-extras).
 - **Router over SNMP** (`[snmp]`, off by default, read-only, every infra round,
   `lanwatch snmp`): the router's ARP and IPv6 neighbour table and, on Juniper, its DHCP
   leases. Each device shows the interface the router reaches it on and whether it holds a
   lease, an address the router ties to another MAC than the one that answered lanwatch
   becomes a finding, and addresses the router knows but the scan missed get the second,
   slower ping. SNMPv3 with authentication and encryption only, through net-snmp's
-  `snmpbulkwalk` (the `snmp` package); nothing leaves the LAN. See
-  [docs/snmp.md](docs/snmp.md).
+  `snmpbulkwalk` (the `snmp` package); nothing leaves the LAN. Other devices that answer
+  SNMPv3 (a UPS card, a switch) are read the same way. Every device, the router too, is
+  its own `[snmp.devices.<name>]` table with its own login, and `router = true` marks
+  the router. See [docs/snmp.md](docs/snmp.md).
 - **Internet exposure** (`[exposure]`, off by default, daily, `lanwatch exposure`): the
   public address looked up in Shodan's InternetDB, which scans the whole internet. Ports that
   answer from outside become a finding, critical when Shodan also matched the service to
   published vulnerabilities. The one check that tells a third party the network's public
   address, hence opt-in.
+- **UPS** (a management card under `[snmp.devices]`, every infra round): on mains or on
+  battery, charge, runtime, load, input voltage, battery replacement and self-test, read
+  over the standard UPS-MIB and, on APC cards, PowerNet. Findings for running on battery,
+  a low or worn battery, alarms, a stale self-test and power events; graphs over a day
+  and a week on its device page, and a dashboard tile. See [docs/ups.md](docs/ups.md).
 - **Latency** (`[latency]`): a few pings to the gateway each discovery round. The dashboard
   shows a day's trend, and sustained packet loss becomes a finding. Add an internet address
   to the targets to measure the path out as well.
+- **SNMP device checks** (every device read over SNMP, the router included): a clock
+  more than 2 minutes off, and a device that could not be read 3 rounds in a row. See
+  [docs/snmp.md](docs/snmp.md#checks-on-every-device).
 - **MAC vendors** (`[oui]`): devices the scanner cannot name get their vendor from a
   fresher IEEE registry, downloaded weekly, or from nmap's installed copy with `online = false`.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
   hands out blocks ads or known-malicious test names.
+- **Virtual machines** are recognised by the hypervisor's MAC prefix (Proxmox, QEMU/KVM,
+  VMware, Hyper-V, Xen, VirtualBox, Parallels) and marked VM next to the vendor. Such an
+  address is not reported as randomised or unregistered.
 
 History is pruned daily (`[store] keep_*_days`), so the database stops growing.
 

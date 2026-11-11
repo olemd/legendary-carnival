@@ -67,7 +67,7 @@
   <div class="tile">
     <div class="tile-label">Router (SNMPv3)</div>
     <dl class="kv">
-      {% if not router.enabled %}<dt>State</dt><dd class="muted">disabled in config; see docs/snmp.md</dd>
+      {% if not router.enabled %}<dt>State</dt><dd class="muted">no device under [snmp.devices] has router = true; see docs/snmp.md</dd>
       {% else %}
       {% if not router.tool %}<dt>Problem</dt><dd><span class="result-failed">snmpbulkwalk missing</span> <span class="muted">install the snmp package</span></dd>{% endif %}
       <dt>Address</dt><dd class="mono">{{ router.host or 'default gateway' }}</dd>
@@ -78,6 +78,9 @@
       {% endif %}
       <dt>Last read</dt><dd>{% if router.error %}<span class="result-failed">failed</span> <span class="muted mono">{{ router.error }}</span>{% if router.last_ok %}<br><span class="muted">last good read {{ router.last_ok | local }}</span>{% endif %}{% elif router.last_ok %}<span class="result-ok">ok</span> <span class="muted">{{ router.last_ok | local }} · <a href="/infra#router">ARP and DHCP</a></span>{% else %}<span class="muted">not yet; the infra job reads it every {{ config.schedule.infra_interval_s // 60 }} minutes</span>{% endif %}</dd>
       {% endif %}
+      {% set others = snmp_targets | selectattr('role', 'equalto', 'device') | list %}{% if others %}
+      {% set failing = others | selectattr('error') | list %}
+      <dt>Devices</dt><dd>{{ others | length }} more over SNMPv3{% if failing %} · <span class="result-failed">{{ failing | length }} not read</span>{% endif %} <span class="muted">· <a href="/infra#snmp">list</a></span></dd>{% endif %}
     </dl>
   </div>
   <div class="tile">

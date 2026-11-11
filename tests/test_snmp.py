@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -13,22 +13,22 @@ from typer.testing import CliRunner
 from lanwatch import pipeline
 from lanwatch.cli import app
 from lanwatch.collectors import snmp
-from lanwatch.config import Config, SnmpConfig, dump_effective
+from lanwatch.config import Config, SnmpConfig, SnmpDeviceConfig, dump_effective
 from lanwatch.store import Store
-from tests.conftest import FIXTURES
+from tests.conftest import FIXTURES, snmp_devices
+from tests.conftest import SNMP_AUTH as AUTH
+from tests.conftest import SNMP_PRIV as PRIV
 
-AUTH = "auth-secret-123"
-PRIV = "priv-secret-456"
+
+def snmp_config(
+    devices: Mapping[str, Mapping[str, object]] | None = None, /, **kw: object
+) -> SnmpConfig:
+    """The router "gw" at 192.0.2.1 (its fields overridden by kw), plus `devices`."""
+    return snmp_devices(gw={"host": "192.0.2.1", "router": True} | kw, **(devices or {}))
 
 
-def snmp_config(**kw: object) -> SnmpConfig:
-    base: dict[str, object] = {
-        "enabled": True,
-        "host": "192.0.2.1",
-        "auth_password": AUTH,
-        "priv_password": PRIV,
-    }
-    return SnmpConfig.model_validate(base | kw)
+def gw(**kw: object) -> SnmpDeviceConfig:
+    return snmp_config(**kw).devices["gw"]
 
 
 def fake_walker(
@@ -96,43 +96,182 @@ def test_parse_system_names_the_vendor() -> None:
     assert info.uptime_s == pytest.approx(13798824.09)
     with pytest.raises(snmp.SnmpError, match="system group"):
         snmp.parse_system({})
+    # An APC management card (AP9630), as it answers.
+    apc = snmp.parse_system(
+        {
+            snmp.SYS_DESCR: b"APC Web/SNMP Management Card",
+            snmp.SYS_OBJECT_ID: "1.3.6.1.4.1.318.1.3.27",
+            snmp.SYS_UPTIME: 9600,
+        }
+    )
+    assert apc.vendor == "APC"
+    # An HPE iLO 4 answers under Compaq's old enterprise number.
+    ilo = snmp.parse_system(
+        {
+            snmp.SYS_DESCR: b"Integrated Lights-Out 4 2.82 Feb 06 2023",
+            snmp.SYS_OBJECT_ID: "1.3.6.1.4.1.232.9.4.10",
+            snmp.SYS_UPTIME: 9600,
+        }
+    )
+    assert ilo.vendor == "HPE"
 
 
 def test_config_is_v3_authpriv_only() -> None:
-    assert snmp_config().auth_protocol == "SHA-256"
+    assert gw().auth_protocol == "SHA-256"
     with pytest.raises(ValidationError):
-        snmp_config(auth_protocol="MD5")
+        gw(auth_protocol="MD5")
     # SHA-1 as an HMAC is allowed (UniFi offers nothing else); MD5 is not.
-    assert snmp_config(auth_protocol="SHA").auth_protocol == "SHA"
+    assert gw(auth_protocol="SHA").auth_protocol == "SHA"
     with pytest.raises(ValidationError):
-        snmp_config(priv_protocol="DES")
+        gw(priv_protocol="DES")
     with pytest.raises(ValidationError):
-        snmp_config(community="public")  # no v1/v2c at all
-    with pytest.raises(ValidationError, match="at least 8"):
-        snmp_config(priv_password="short")
+        gw(community="public")  # no v1/v2c at all
+    with pytest.raises(ValidationError, match=r"snmp\.devices\.gw\.priv_password.*at least 8"):
+        gw(priv_password="short")
     with pytest.raises(ValidationError, match="spaces"):
-        snmp_config(auth_password="has a space")
+        gw(auth_password="has a space")
     # net-snmp would read a leading double quote as the start of a quoted value.
     with pytest.raises(ValidationError, match="double quote"):
-        snmp_config(priv_password='"quoted-secret"')
-    assert snmp_config(auth_password='quote"inside').auth_password == 'quote"inside'
+        gw(priv_password='"quoted-secret"')
+    assert gw(auth_password='quote"inside').auth_password == 'quote"inside'
     with pytest.raises(ValidationError, match="user"):
-        snmp_config(user="bad user")
-    # Off, nothing is required.
-    assert not SnmpConfig().enabled
+        gw(user="bad user")
+    # Nothing listed: nothing to read, nothing required.
+    assert SnmpConfig().targets() == [] and SnmpConfig().router() is None
 
 
 def test_config_show_redacts_snmp_passwords(tmp_path: Path) -> None:
-    text = dump_effective(Config(data_dir=tmp_path, snmp=snmp_config()))
-    assert AUTH not in text and PRIV not in text
+    own = "ups-auth-secret-1"
+    cfg = Config(
+        data_dir=tmp_path, snmp=snmp_config({"ups": {"host": "192.0.2.9", "auth_password": own}})
+    )
+    text = dump_effective(cfg)
+    assert AUTH not in text and PRIV not in text and own not in text
     assert 'auth_password = "***"' in text and 'priv_password = "***"' in text
+    assert "[snmp.devices.ups]" in text and 'host = "192.0.2.9"' in text
+    # Each device's table, with no empty [snmp] or [snmp.devices] above them.
+    assert "[snmp]" not in text and "[snmp.devices]" not in text
+
+
+def test_devices_are_tables_by_name_each_with_its_own_login() -> None:
+    cfg = SnmpConfig.model_validate(
+        {
+            "devices": {
+                "ups": {
+                    "host": "192.0.2.9",
+                    "user": "ups-user",
+                    "auth_protocol": "SHA",
+                    "auth_password": "ups-auth-123",
+                    "priv_password": "ups-priv-123",
+                    "timeout_s": 9,
+                },
+                "fw": {
+                    "host": "192.0.2.1",
+                    "router": True,
+                    "user": "fw-user",
+                    "auth_password": AUTH,
+                    "priv_password": PRIV,
+                },
+                "parked": {"host": "192.0.2.11", "enabled": False},
+            }
+        }
+    )
+    targets = cfg.targets()
+    # The router first, whatever its place in the file; disabled devices are left out.
+    assert [(t.name, t.host, t.role) for t in targets] == [
+        ("fw", "192.0.2.1", "router"),
+        ("ups", "192.0.2.9", "device"),
+    ]
+    assert cfg.router() == targets[0]
+    ups = targets[1].login
+    assert (ups.user, ups.auth_protocol, ups.auth_password, ups.priv_password, ups.timeout_s) == (
+        "ups-user",
+        "SHA",
+        "ups-auth-123",
+        "ups-priv-123",
+        9,
+    )
+    # Defaults are per device, never another device's values.
+    fw = targets[0].login
+    assert (fw.user, fw.auth_protocol, fw.timeout_s) == ("fw-user", "SHA-256", 5)
+
+
+def test_devices_without_a_router() -> None:
+    cfg = snmp_devices(ups={"host": "192.0.2.9"})
+    assert [(t.host, t.role) for t in cfg.targets()] == [("192.0.2.9", "device")]
+    assert cfg.router() is None
+    # The router without a host: the default gateway, resolved at read time.
+    assert snmp_config(host=None).targets()[0].host is None
+
+
+def test_the_080_form_is_read_as_the_router() -> None:
+    """0.8.0 had the router's login straight under [snmp]: still read, as "router"."""
+    old = {"enabled": True, "host": "192.0.2.1", "auth_password": AUTH, "priv_password": PRIV}
+    cfg = SnmpConfig.model_validate(old)
+    router = cfg.router()
+    assert router is not None and (router.name, router.host) == ("router", "192.0.2.1")
+    assert router.login.user == "lanwatch"  # 0.8.0's default
+    # Next to new-style devices too.
+    both = SnmpConfig.model_validate(
+        old
+        | {
+            "devices": {
+                "ups": {
+                    "host": "192.0.2.9",
+                    "user": "u",
+                    "auth_password": AUTH,
+                    "priv_password": PRIV,
+                }
+            }
+        }
+    )
+    assert [t.name for t in both.targets()] == ["router", "ups"]
+    # Switched off, the old keys are dropped and nothing is required.
+    assert SnmpConfig.model_validate({"enabled": False, "host": "192.0.2.1"}).targets() == []
+    with pytest.raises(ValidationError, match="router"):
+        SnmpConfig.model_validate(old | {"devices": {"router": {"host": "192.0.2.9"}}})
+
+
+def test_device_entries_are_validated() -> None:
+    # The user is the device's own: there is nowhere to take it from.
+    with pytest.raises(ValidationError, match=r"snmp\.devices\.ups\.user"):
+        SnmpConfig.model_validate(
+            {
+                "devices": {
+                    "ups": {"host": "192.0.2.9", "auth_password": AUTH, "priv_password": PRIV}
+                }
+            }
+        )
+    with pytest.raises(ValidationError, match="listed twice"):
+        snmp_devices(a={"host": "192.0.2.9"}, b={"host": "192.0.2.9"})
+    with pytest.raises(ValidationError, match="listed twice"):
+        snmp_config({"ups": {"host": "192.0.2.1"}})
+    with pytest.raises(ValidationError, match="only one can be the router"):
+        snmp_config({"fw2": {"host": "192.0.2.2", "router": True}})
+    with pytest.raises(ValidationError, match="only the router"):
+        snmp_devices(ups={})
+    with pytest.raises(ValidationError, match="name"):
+        snmp_devices(**{"bad name": {"host": "192.0.2.9"}})
+    with pytest.raises(ValidationError, match=r"snmp\.devices\.ups\.priv_password"):
+        snmp_devices(ups={"host": "192.0.2.9", "priv_password": "short"})
+    # A disabled entry is not checked, so it can be parked half filled in.
+    parked = SnmpConfig.model_validate(
+        {"devices": {"ups": {"host": "192.0.2.9", "enabled": False}}}
+    )
+    assert parked.targets() == []
+    with pytest.raises(ValidationError, match="host"):
+        snmp_devices(ups={"host": "bad host"})
+    with pytest.raises(ValidationError):
+        snmp_devices(ups={"host": "192.0.2.9", "auth_protocol": "MD5"})
+    with pytest.raises(ValidationError):
+        snmp_devices(ups={"host": "192.0.2.9", "community": "public"})
 
 
 async def test_client_keeps_credentials_off_the_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rec = fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
-    async with snmp.SnmpClient(snmp_config(), "192.0.2.1") as client:
+    async with snmp.SnmpClient(gw(), "192.0.2.1") as client:
         info = await client.system()
         conf_dir = Path((rec / "dir").read_text().strip())
         assert conf_dir.exists()
@@ -156,7 +295,7 @@ async def test_client_explains_a_timeout(tmp_path: Path, monkeypatch: pytest.Mon
         rc=1,
         stderr="Created directory: /tmp/x/cert_indexes\nTimeout: No Response from 192.0.2.1",
     )
-    async with snmp.SnmpClient(snmp_config(), "192.0.2.1") as client:
+    async with snmp.SnmpClient(gw(), "192.0.2.1") as client:
         with pytest.raises(snmp.SnmpError, match="no answer") as err:
             await client.system()
     assert str(err.value).startswith("Timeout: No Response")
@@ -164,7 +303,7 @@ async def test_client_explains_a_timeout(tmp_path: Path, monkeypatch: pytest.Mon
 
 async def test_client_without_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
-    async with snmp.SnmpClient(snmp_config(), "192.0.2.1") as client:
+    async with snmp.SnmpClient(gw(), "192.0.2.1") as client:
         with pytest.raises(snmp.SnmpError, match="snmp package"):
             await client.system()
 
@@ -194,9 +333,11 @@ async def test_collect_snmp_stores_state_and_keeps_it_on_failure(
     # 13798824 s is 159.7 days: the log says 159, like `lanwatch snmp`, not a rounded 160.
     assert "up 159 days" in caplog.text
     assert "192.0.2.1" in (rec / "args").read_text()  # the gateway, as no host was set
-    system = json.loads(store.meta_get("snmp.system") or "{}")
+    (row,) = store.infra("snmp-target")
+    assert row.key == "192.0.2.1" and row.data["role"] == "router"
+    system = row.data["system"]
     assert system["name"] == "gw-test" and system["vendor"] == "Juniper"
-    assert store.meta_get("snmp.last_error") == ""
+    assert row.data["last_error"] == "" and row.data["fails"] == 0 and row.data["last_ok"]
 
     (tmp_path / "out.txt").write_text("")
     (tmp_path / "err.txt").write_text("snmpbulkwalk: Authentication failure (incorrect password)")
@@ -204,8 +345,9 @@ async def test_collect_snmp_stores_state_and_keeps_it_on_failure(
     script.write_text(script.read_text().replace("exit 0", "exit 1"))
     out = await pipeline.collect_snmp(config, store, sid)
     assert out.error is not None and "auth_password" in out.error
-    assert store.meta_get("snmp.last_error") == out.error
-    assert json.loads(store.meta_get("snmp.system") or "{}")["name"] == "gw-test"
+    (row,) = store.infra("snmp-target")
+    assert row.data["last_error"] == out.error and row.data["fails"] == 1
+    assert row.data["system"]["name"] == "gw-test"  # the last good read stays
 
 
 def test_cli_snmp_off(tmp_path: Path) -> None:
@@ -374,3 +516,177 @@ async def test_merged_device_answering_with_its_other_mac_is_no_mismatch(
         ctx = RuleContext(store, config, sid, None, is_baseline=False)
         emitted = Engine(config).run(ctx).emitted
         assert [f for f in emitted if f.rule_id == "net.router-arp-mismatch"] == []
+
+
+def _fail_host(tmp_path: Path, host: str) -> None:
+    """Make the fake walker time out for one host only."""
+    script = tmp_path / "bin" / "snmpbulkwalk"
+    head, rest = script.read_text().split("\n", 1)
+    script.write_text(
+        f'{head}\ncase " $* " in *" {host} "*) echo "Timeout: No Response from {host}" >&2;'
+        f" exit 1;; esac\n{rest}"
+    )
+
+
+async def test_collect_snmp_reads_every_target_and_keeps_going_past_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    from lanwatch.models import HostObservation
+
+    config.snmp = snmp_config(
+        {
+            "ups": {"host": "192.0.2.9"},
+            "flaky": {"host": "192.0.2.66"},
+            "parked": {"host": "192.0.2.77", "enabled": False},
+        }
+    )
+    disc = store.begin_snapshot("discovery", "t")
+    store.record_hosts(disc, [HostObservation(ip="192.0.2.9", mac="aa:bb:cc:00:00:09", source="t")])
+    store.finish_snapshot(disc, 1)
+    rec = fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    _fail_host(tmp_path, "192.0.2.66")
+
+    sid = store.begin_snapshot("infra", "t")
+    out = await pipeline.collect_snmp(config, store, sid)
+    assert [(t.host, t.role, t.error is None) for t in out.targets] == [
+        ("192.0.2.1", "router", True),
+        ("192.0.2.9", "device", True),
+        ("192.0.2.66", "device", False),
+    ]
+    assert "192.0.2.77" not in (rec / "args").read_text()
+    rows = {r.key: r.data for r in store.infra("snmp-target")}
+    assert set(rows) == {"192.0.2.1", "192.0.2.9", "192.0.2.66"}
+    assert rows["192.0.2.9"]["name"] == "ups" and rows["192.0.2.9"]["role"] == "device"
+    assert rows["192.0.2.9"]["system"]["name"] == "gw-test"
+    assert rows["192.0.2.66"]["system"] is None and rows["192.0.2.66"]["fails"] == 1
+    assert "Timeout" in rows["192.0.2.66"]["last_error"]
+    # The device holding the address gets what it says it is.
+    ups = store.device_by_ip("192.0.2.9")
+    assert ups is not None and ups.id in out.enriched
+    assert ups.attrs["snmp"]["vendor"] == "Juniper" and ups.attrs["snmp"]["role"] == "device"
+
+    # A second failure counts on; a target removed from config loses its row.
+    config.snmp = snmp_config({"flaky": {"host": "192.0.2.66"}})
+    await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    rows = {r.key: r.data for r in store.infra("snmp-target")}
+    assert set(rows) == {"192.0.2.1", "192.0.2.66"} and rows["192.0.2.66"]["fails"] == 2
+
+
+async def test_devices_are_read_with_the_router_link_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    config.snmp = snmp_devices(ups={"host": "192.0.2.9"})
+    rec = fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    out = await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert [t.host for t in out.targets] == ["192.0.2.9"]
+    # The ARP and lease tables are the router's: a device is never asked for them (what
+    # else it is asked depends on the readers that match it).
+    walked = (rec / "args").read_text()
+    assert snmp.SYSTEM in walked
+    for oid in (
+        snmp.NET_TO_PHYSICAL_MAC,
+        snmp.NET_TO_MEDIA_MAC,
+        snmp.JNX_DHCP_BINDINGS,
+    ):
+        assert oid not in walked
+    assert store.infra("router-arp") == []
+
+
+def test_cli_snmp_prints_every_target_and_fails_when_one_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    _fail_host(tmp_path, "192.0.2.66")
+    cfg = tmp_path / "config.toml"
+    login = f'auth_password = "{AUTH}"\npriv_password = "{PRIV}"\n'
+    cfg.write_text(
+        f'[snmp.devices.ups]\nhost = "192.0.2.9"\nuser = "ups"\n{login}'
+        f'[snmp.devices.other]\nhost = "192.0.2.66"\nuser = "other"\n{login}'
+    )
+    r = CliRunner().invoke(app, ["--config", str(cfg), "--data-dir", str(tmp_path), "snmp"])
+    assert "192.0.2.9: ups, Juniper (device)" in r.output
+    assert "error reading 192.0.2.66" in r.output
+    assert r.exit_code == 1
+
+
+async def test_readers_add_facts_and_a_failing_one_keeps_its_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    from lanwatch.collectors.snmp_kinds import ReaderResult, SnmpReader
+
+    calls: list[str] = []
+    broken = {"now": False}
+
+    async def read_ok(client: snmp.SnmpClient, system: snmp.SystemInfo) -> ReaderResult:
+        calls.append(client.host)
+        if broken["now"]:
+            raise snmp.SnmpError("walk failed")
+        return ReaderResult(facts={"model": system.name})
+
+    async def never(client: snmp.SnmpClient, system: snmp.SystemInfo) -> ReaderResult:
+        raise AssertionError("must not run on a device it does not match")
+
+    readers = [
+        SnmpReader("juniper-ish", lambda s: s.vendor == "Juniper", read_ok),
+        SnmpReader("apc", lambda s: s.vendor == "APC", never),
+    ]
+    monkeypatch.setattr(pipeline, "find_readers", lambda: readers)
+    config.snmp = snmp_config({"ups": {"host": "192.0.2.9"}})
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+
+    out = await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert calls == ["192.0.2.1", "192.0.2.9"]
+    assert out.targets[1].facts == {"juniper-ish": {"model": "gw-test"}}
+    rows = {r.key: r.data for r in store.infra("snmp-target")}
+    assert rows["192.0.2.9"]["facts"] == {"juniper-ish": {"model": "gw-test"}}
+    assert rows["192.0.2.9"]["reader_errors"] == {}
+
+    broken["now"] = True
+    await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    rows = {r.key: r.data for r in store.infra("snmp-target")}
+    # The reader failed: its facts stay, the error is kept, the target still read fine.
+    assert rows["192.0.2.9"]["facts"] == {"juniper-ish": {"model": "gw-test"}}
+    assert "walk failed" in rows["192.0.2.9"]["reader_errors"]["juniper-ish"]
+    assert rows["192.0.2.9"]["last_error"] == "" and rows["192.0.2.9"]["fails"] == 0
+
+
+def test_reader_and_rule_discovery() -> None:
+    from lanwatch.collectors.snmp_kinds import find_readers
+    from lanwatch.rules.engine import _FIRST, all_rules
+
+    names = [r.name for r in find_readers()]
+    assert len(names) == len(set(names))
+    rules = all_rules()
+    ids = [r.id for r in rules]
+    assert len(ids) == len(set(ids))
+    # The modules that were listed by hand before come first, their RULES lists in their
+    # old order (wherever each rule's class is defined).
+    import importlib
+
+    first = [r.id for n in _FIRST for r in importlib.import_module(f"lanwatch.rules.{n}").RULES]
+    assert ids[: len(first)] == first
+
+
+async def test_reader_metrics_go_to_the_series_and_attrs_to_the_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    from lanwatch.collectors.snmp_kinds import ReaderResult, SnmpReader
+    from lanwatch.models import HostObservation
+
+    async def read(client: snmp.SnmpClient, system: snmp.SystemInfo) -> ReaderResult:
+        return ReaderResult(
+            facts={"ok": True},
+            metrics={"x.load_w": 121.0},
+            attrs={"firmware": {"product": "X", "version": "1.0"}},
+        )
+
+    monkeypatch.setattr(pipeline, "find_readers", lambda: [SnmpReader("x", lambda s: True, read)])
+    config.snmp = snmp_devices(dev={"host": "192.0.2.9"})
+    disc = store.begin_snapshot("discovery", "t")
+    store.record_hosts(disc, [HostObservation(ip="192.0.2.9", mac="aa:bb:cc:00:00:09", source="t")])
+    store.finish_snapshot(disc, 1)
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert [v for _, v in store.snmp_series("192.0.2.9", "x.load_w", "")] == [121.0]
+    d = store.device_by_ip("192.0.2.9")
+    assert d is not None and d.attrs["firmware"]["version"] == "1.0" and "snmp" in d.attrs

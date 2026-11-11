@@ -239,7 +239,7 @@ async def test_recheck_pings_only_who_should_be_there(
     monkeypatch.setattr(pinger, "neighbours", lambda ex: _const({}))
     assert await recheck() == []
     # The router's ARP table and leases (SNMP) are places to look too, never presence.
-    from lanwatch.config import SnmpConfig
+    from tests.conftest import snmp_devices
 
     store.replace_infra(
         "router-arp",
@@ -249,7 +249,7 @@ async def test_recheck_pings_only_who_should_be_there(
     pinger.answers = {}
     await recheck()
     assert "192.168.1.70" not in pinger.asked[-1]  # snmp is off
-    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+    config.snmp = snmp_devices(gw={"router": True})
     assert await recheck() == []  # asked, did not answer: stays offline
     assert pinger.asked[-1][-1] == "192.168.1.70"
     config.scan.recheck_silent = False
@@ -310,3 +310,87 @@ async def test_recheck_keeps_a_sleepy_device_online_and_still_sees_it_leave(
     device = store.device_by_key("ec:94:cb:77:99:00")
     assert device is not None and not device.online  # this round, not 45 minutes later
     assert [e.kind for e in store.events() if e.kind == "presence.offline"] == ["presence.offline"]
+
+
+async def test_hostnames_resolved_whatever_the_backend(
+    store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """arp-scan never names hosts and nmap runs with -n, so scan.resolve_hostnames must
+    apply after any backend, not only after the ping sweep (regression: it did not)."""
+    import socket
+
+    ifaces = [Interface("eth0", "aa:bb:cc:dd:ee:ff", [ipaddress.IPv4Interface("192.168.1.10/24")])]
+    backend = FakeBackend()
+    backend.hosts = [
+        HostObservation(ip="192.168.1.1", mac="aa:bb:cc:00:00:01", source="arp-scan"),
+        HostObservation(ip="192.168.1.9", mac="aa:bb:cc:00:00:09", source="arp-scan"),
+        HostObservation(ip="192.168.1.20", mac="aa:bb:cc:00:00:20", source="arp-scan"),
+        HostObservation(ip="192.168.1.99", mac="aa:bb:cc:00:00:99", source="arp-scan"),
+    ]
+    names = {"192.168.1.9": "hydra.example.net", "192.168.1.99": "excluded.example.net"}
+    asked: list[str] = []
+
+    def fake_getnameinfo(addr: tuple[str, int], flags: int) -> tuple[str, str]:
+        asked.append(addr[0])
+        assert flags & socket.NI_NAMEREQD
+        if addr[0] not in names:
+            raise socket.gaierror(socket.EAI_NONAME, "no name")
+        return names[addr[0]], "0"
+
+    async def fake_ifaces(ex: object = None) -> list[Interface]:
+        return ifaces
+
+    async def fake_select(ex: object, cfg: ScanConfig) -> FakeBackend:
+        return backend
+
+    async def no_nmap(ex: object) -> bool:
+        return False
+
+    async def gateways(ex: object = None) -> list[str]:
+        return ["192.168.1.1"]
+
+    monkeypatch.setattr(socket, "getnameinfo", fake_getnameinfo)
+    monkeypatch.setattr(pipeline, "default_gateways", gateways)
+    monkeypatch.setattr(pipeline, "list_interfaces", fake_ifaces)
+    monkeypatch.setattr(pipeline, "select_backend", fake_select)
+    monkeypatch.setattr(pipeline, "nmap_available", no_nmap)
+    config.network.exclude_hosts = ["192.168.1.99"]
+
+    config.scan.resolve_hostnames = False
+    await pipeline.run_discovery(config, store)
+    assert asked == []
+    hydra = store.device_by_key("aa:bb:cc:00:00:09")
+    assert hydra is not None and hydra.hostname is None
+
+    # Switched on (the default): known devices get their name on the next round, a
+    # failed lookup leaves the name empty, and excluded hosts are never looked up.
+    config.scan.resolve_hostnames = True
+    await pipeline.run_discovery(config, store)
+    hydra = store.device_by_key("aa:bb:cc:00:00:09")
+    other = store.device_by_key("aa:bb:cc:00:00:20")
+    assert hydra is not None and hydra.hostname == "hydra.example.net"
+    assert other is not None and other.hostname is None
+    assert "192.168.1.99" not in asked and "192.168.1.9" in asked
+
+
+async def test_resolve_hostnames_keeps_backend_names_and_survives_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+    import time
+
+    from lanwatch.collectors.discovery import resolve_hostnames
+
+    def fake_getnameinfo(addr: tuple[str, int], flags: int) -> tuple[str, str]:
+        if addr[0] == "10.0.0.3":
+            time.sleep(0.3)  # a resolver that does not answer in time
+        return f"host-{addr[0].rsplit('.', 1)[1]}", "0"
+
+    monkeypatch.setattr(socket, "getnameinfo", fake_getnameinfo)
+    hosts = [
+        HostObservation(ip="10.0.0.1", hostname="from-nmap", source="nmap"),
+        HostObservation(ip="10.0.0.2", source="arp-scan"),
+        HostObservation(ip="10.0.0.3", source="arp-scan"),
+    ]
+    got = await resolve_hostnames(hosts, timeout=0.1)
+    assert [h.hostname for h in got] == ["from-nmap", "host-2", None]

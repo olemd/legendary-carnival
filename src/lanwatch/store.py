@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -189,7 +189,41 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX latency_target_ts ON latency(target, ts);
     """,
-    # v11: devices that belong together (a BMC and its server). IF NOT EXISTS so the
+    # v11: several SNMP devices. Each target's state is one infra row (kind snmp-target,
+    # keyed by host); the router's state moves there from the meta keys 0.8.0 used.
+    """
+    INSERT INTO infra(kind, key, data, first_seen, last_seen, snapshot_id)
+    SELECT 'snmp-target', h.value,
+           json_object(
+               'host', h.value, 'role', 'router', 'name', '',
+               'system', json(CASE WHEN s.value IS NULL OR s.value = '' THEN 'null'
+                                   ELSE s.value END),
+               'last_ok', NULLIF(ok.value, ''),
+               'last_error', COALESCE(e.value, ''),
+               'fails', CASE WHEN COALESCE(e.value, '') = '' THEN 0 ELSE 1 END),
+           COALESCE(NULLIF(ok.value, ''), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+           COALESCE(NULLIF(ok.value, ''), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+           NULL
+    FROM meta h
+    LEFT JOIN meta s ON s.key = 'snmp.system'
+    LEFT JOIN meta ok ON ok.key = 'snmp.last_ok'
+    LEFT JOIN meta e ON e.key = 'snmp.last_error'
+    WHERE h.key = 'snmp.host' AND h.value != '';
+    DELETE FROM meta WHERE key IN ('snmp.host', 'snmp.system', 'snmp.last_ok',
+                                   'snmp.last_error');
+    """,
+    # v12: numeric SNMP readings over time (UPS load, voltage, runtime...), for graphs.
+    # Generic: one row per metric per read, pruned with the other round history.
+    """
+    CREATE TABLE snmp_series (
+        ts     TEXT NOT NULL,
+        host   TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value  REAL NOT NULL
+    );
+    CREATE INDEX snmp_series_host_metric_ts ON snmp_series(host, metric, ts);
+    """,
+    # v13: devices that belong together (a BMC and its server). IF NOT EXISTS so the
     # migration stays harmless if branches land in another order and it runs twice.
     """
     CREATE TABLE IF NOT EXISTS device_links (
@@ -331,7 +365,14 @@ class Store:
         The newest finished snapshot of every kind always stays, whatever its age: it is
         what "online now" and "last scan" are read from. Snapshots that current state
         still points to (a service's last scan, an infra record) stay as well."""
-        deleted = {"sightings": 0, "snapshots": 0, "latency": 0, "events": 0, "notifications": 0}
+        deleted = {
+            "sightings": 0,
+            "snapshots": 0,
+            "latency": 0,
+            "snmp_series": 0,
+            "events": 0,
+            "notifications": 0,
+        }
         newest = "SELECT MAX(id) FROM snapshots WHERE finished_at IS NOT NULL GROUP BY kind"
         with self._tx():
             if rounds_before is not None:
@@ -350,6 +391,9 @@ class Store:
                 ).rowcount
                 deleted["latency"] = self._db.execute(
                     "DELETE FROM latency WHERE ts < ?", (rounds_before,)
+                ).rowcount
+                deleted["snmp_series"] = self._db.execute(
+                    "DELETE FROM snmp_series WHERE ts < ?", (rounds_before,)
                 ).rowcount
             if events_before is not None:
                 deleted["events"] = self._db.execute(
@@ -1033,6 +1077,30 @@ class Store:
             "INSERT INTO latency(ts, target, sent, received, avg_ms, max_ms) VALUES (?,?,?,?,?,?)",
             (iso(now_utc()), target, sent, received, avg_ms, max_ms),
         )
+
+    # -- SNMP readings over time ----------------------------------------------
+
+    def add_snmp_series(
+        self, host: str, values: Mapping[str, float], ts: str | None = None
+    ) -> None:
+        """One reading per metric for one device, all with the same timestamp."""
+        if not values:
+            return
+        at = ts or iso(now_utc())
+        with self._tx():
+            self._db.executemany(
+                "INSERT INTO snmp_series(ts, host, metric, value) VALUES (?, ?, ?, ?)",
+                [(at, host, m, float(v)) for m, v in sorted(values.items())],
+            )
+
+    def snmp_series(self, host: str, metric: str, since: str) -> list[tuple[str, float]]:
+        """(timestamp, value) of one metric of one device since a timestamp, oldest first."""
+        rows = self._db.execute(
+            "SELECT ts, value FROM snmp_series WHERE host = ? AND metric = ? AND ts >= ?"
+            " ORDER BY ts",
+            (host, metric, since),
+        ).fetchall()
+        return [(str(r["ts"]), float(r["value"])) for r in rows]
 
     def latency_targets(self) -> list[str]:
         rows = self._db.execute("SELECT DISTINCT target FROM latency ORDER BY target").fetchall()

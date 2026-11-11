@@ -1,0 +1,11 @@
+{# The dashboard's UPS tile; `ups` comes from web/ups.py ups_tile(). #}
+{% set u = ups.ups %}
+<div class="tile">
+  <div class="tile-label">UPS {{ ups.name }}{% if ups.more %} <span class="muted">+{{ ups.more }}</span>{% endif %}</div>
+  <div class="tile-value">{% if u.communication_ok is sameas false %}<span class="result-failed">no contact</span>{% elif u.on_battery %}<span class="result-failed">on battery</span>{% else %}<span class="result-ok">on mains</span>{% endif %}</div>
+  {% if ups.chart and ups.chart.n > 1 %}{% set lx, ly = (ups.chart.points.split(' ') | last).split(',') %}
+  <svg class="spark" width="{{ ups.chart.width }}" height="{{ ups.chart.height }}" viewBox="0 0 {{ ups.chart.width }} {{ ups.chart.height }}" role="img"
+       aria-label="UPS load over the last 24 hours: between {{ ups.chart.min | round }} and {{ ups.chart.max | round }} W"><polyline points="{{ ups.chart.points }}"/><circle cx="{{ lx }}" cy="{{ ly }}" r="4"/></svg>
+  {% endif %}
+  <div class="tile-note">{% if u.runtime_min is not none %}{{ u.runtime_min }} min runtime{% endif %}{% if u.load_w is not none %} · {{ u.load_w }} W{% elif u.load_pct is not none %} · {{ u.load_pct }}% load{% endif %}{% if u.charge_pct is not none %} · {{ u.charge_pct }}% charged{% endif %}{% if ups.device %} · <a href="/devices/{{ ups.device.id }}#ups">details</a>{% endif %}{% if ups.stale %} · <span class="result-failed">last read failed</span>{% endif %}</div>
+</div>

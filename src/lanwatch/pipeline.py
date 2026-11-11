@@ -26,14 +26,18 @@ from lanwatch.collectors.airos import (
     same_credentials,
     track_links,
 )
+from lanwatch.collectors.audit_snmp import AuditResult
+from lanwatch.collectors.audit_snmp import audit as audit_snmp
+from lanwatch.collectors.audit_snmp import available as audit_available
 from lanwatch.collectors.base import Executor, make_executor
 from lanwatch.collectors.canary import probe_name_poisoning
-from lanwatch.collectors.discovery import neighbour_table, select_backend
+from lanwatch.collectors.discovery import neighbour_table, resolve_hostnames, select_backend
 from lanwatch.collectors.dnsfilter import check_resolver, system_resolvers
 from lanwatch.collectors.infra import run_probes
 from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.snmp import DhcpLease, Neighbour, SnmpClient, SnmpError, SystemInfo
+from lanwatch.collectors.snmp_kinds import ReaderResult, find_readers, run_readers
 from lanwatch.collectors.unifi import (
     TOTAL_TIMEOUT_S,
     UnifiError,
@@ -45,7 +49,7 @@ from lanwatch.collectors.unifi import (
     infra_rows,
 )
 from lanwatch.collectors.upnp import discover_upnp
-from lanwatch.config import Config
+from lanwatch.config import Config, SnmpTarget
 from lanwatch.decoy import listening_ports
 from lanwatch.exposure import Exposure, check_exposure
 from lanwatch.firmware import Firmware, check_firmware, is_older
@@ -160,6 +164,10 @@ async def run_inventory(
         open_ports = [f"{p.port}/{p.proto}" for p in host.ports if p.state == "open"]
         log.debug("%s (%s): %s", d.ip, d.label, ", ".join(open_ports) or "no open ports")
     store.finish_snapshot(snapshot_id, len(diffs))
+    if config.snmp_audit.enabled and (deep or device_ids is not None):
+        # Weekly with the deep scan, and for new (or named) devices: the SNMP default
+        # credential probe, on the same targets (scan.skip_hosts already left out).
+        await snmp_audit(store, [d for d in targets.values() if d.ip])
 
     ctx = RuleContext(
         store=store,
@@ -323,53 +331,184 @@ class SnmpOutcome:
     error: str | None = None
     new_findings: list[str] = field(default_factory=list)
     resolved_findings: list[str] = field(default_factory=list)
+    # Every target read this round, the router included, in config order.
+    targets: list[SnmpTargetOutcome] = field(default_factory=list)
 
 
-async def snmp_host(config: Config, ex: Executor | None = None) -> str | None:
-    """The configured router, else this host's first default gateway."""
-    if config.snmp.host:
-        return config.snmp.host
+@dataclass(slots=True)
+class SnmpTargetOutcome:
+    host: str | None
+    role: str
+    name: str = ""
+    system: SystemInfo | None = None
+    error: str | None = None
+    # What the matching readers (collectors/snmp_kinds.py) found, per reader name, and
+    # the readers that failed this round.
+    facts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reader_errors: dict[str, str] = field(default_factory=dict)
+
+
+# A router whose address is not known (no host set and no default gateway) still needs a
+# row, so the status page can say why it is not read.
+SNMP_UNKNOWN_HOST = "(default gateway)"
+
+
+async def snmp_host(router: SnmpTarget, ex: Executor | None = None) -> str | None:
+    """The router's configured address, else this host's first default gateway."""
+    if router.host:
+        return router.host
     gateways = await default_gateways(ex)
     return gateways[0] if gateways else None
+
+
+def _snmp_error(e: Exception) -> str:
+    if isinstance(e, SnmpError):
+        return str(e)[:400]
+    log.exception("snmp: unexpected failure, keeping the previous state")
+    return f"{type(e).__name__}: {str(e)[:200]}"
+
+
+def _target_state(prev: dict[str, Any] | None, t: SnmpTargetOutcome, at: str) -> dict[str, Any]:
+    """The stored state of one target after a read. A failed read keeps what the last good
+    one found and counts the failures in a row."""
+    data: dict[str, Any] = dict(prev or {})
+    data.update({"host": t.host, "role": t.role, "name": t.name})
+    data.setdefault("system", None)
+    data.setdefault("last_ok", None)
+    if t.error is None:
+        assert t.system is not None
+        old_facts = data.get("facts")
+        # A reader that failed keeps what it found last time.
+        kept = {
+            k: v
+            for k, v in (old_facts if isinstance(old_facts, dict) else {}).items()
+            if k in t.reader_errors
+        }
+        data.update(
+            {
+                "system": t.system.as_dict(),
+                "last_ok": at,
+                "last_error": "",
+                "fails": 0,
+                "facts": kept | t.facts,
+                "reader_errors": dict(t.reader_errors),
+            }
+        )
+    else:
+        data.update({"last_error": t.error, "fails": int(data.get("fails") or 0) + 1})
+    return data
 
 
 async def collect_snmp(
     config: Config, store: Store, snapshot_id: int, ex: Executor | None = None
 ) -> SnmpOutcome:
-    """Read the router over SNMPv3: what it is, its ARP table and (Juniper) its DHCP
-    leases. None of it counts as presence: a router keeps an ARP entry or a lease for many
-    minutes after a device has gone. The tables tell the discovery recheck where else to
-    look, and give a second view of who holds each address to compare with lanwatch's own.
-    A router that cannot be read keeps the previous state and never fails the round; the
-    error is kept for the status page."""
-    out = SnmpOutcome(host=await snmp_host(config, ex))
+    """Read every SNMPv3 target: the devices under [snmp.devices], the router first.
+
+    Each target gets its system group read, and its state is kept per host (infra kind
+    snmp-target). The router also gets its ARP table and (Juniper) its DHCP leases; see
+    _read_router. One target failing never stops the others nor fails the round: it keeps
+    its previous state, and the error is kept for the status page.
+
+    The returned outcome's top-level fields describe the router, as before; `targets`
+    lists them all."""
+    out = SnmpOutcome()
+    before = {r.key: r.data for r in store.infra("snmp-target")}
+    entries: dict[str, dict[str, Any]] = {}
+    readers = find_readers()
+    for target in config.snmp.targets():
+        at = iso(now_utc())
+        if target.role == "router":
+            await _read_router(target, store, snapshot_id, out, ex)
+            t = SnmpTargetOutcome(
+                host=out.host, role="router", name=target.name, system=out.system, error=out.error
+            )
+        else:
+            t = await _read_device(target)
+        extra = ReaderResult()
+        if t.system is not None and t.host and readers:
+            async with SnmpClient(target.login, t.host) as client:
+                t.facts, t.reader_errors = await run_readers(client, t.system, readers, extra)
+        out.targets.append(t)
+        key = t.host or SNMP_UNKNOWN_HOST
+        entries[key] = _target_state(before.get(key), t, at)
+        if t.system is not None and t.host:
+            out.enriched |= _snmp_device_facts(store, t, extra.attrs)
+            store.add_snmp_series(t.host, extra.metrics, at)
+    store.replace_infra("snmp-target", entries, snapshot_id)
+    return out
+
+
+async def _read_device(target: SnmpTarget) -> SnmpTargetOutcome:
+    assert target.host is not None  # only the router may be "the default gateway"
+    t = SnmpTargetOutcome(host=target.host, role=target.role, name=target.name)
+    try:
+        async with SnmpClient(target.login, target.host) as client:
+            t.system = await client.system()
+    except Exception as e:
+        t.error = _snmp_error(e)
+    if t.error is not None:
+        log.warning("snmp: %s not read, keeping the previous state: %s", t.host, t.error)
+    else:
+        assert t.system is not None
+        log.info(
+            "snmp: %s is %s (%s), up %d days",
+            t.host,
+            t.name or t.system.name or "?",
+            t.system.vendor or t.system.object_id,
+            t.system.uptime_s // 86400,
+        )
+    return t
+
+
+def _snmp_device_facts(
+    store: Store, t: SnmpTargetOutcome, extra: dict[str, Any] | None = None
+) -> set[int]:
+    """attrs.snmp on the device that holds the target's address: what it says it is,
+    plus any attrs the readers add (`extra`)."""
+    assert t.system is not None and t.host is not None
+    d = store.device_by_ip(t.host)
+    if d is None:
+        return set()
+    s = t.system
+    facts = {
+        "role": t.role,
+        "name": s.name,
+        "descr": s.descr,
+        "vendor": s.vendor,
+        "object_id": s.object_id,
+        "location": s.location,
+    }
+    return {d.id} if store.merge_device_attrs(d.id, {**(extra or {}), "snmp": facts}) else set()
+
+
+async def _read_router(
+    router: SnmpTarget, store: Store, snapshot_id: int, out: SnmpOutcome, ex: Executor | None
+) -> None:
+    """Read the router: what it is, its ARP table and (Juniper) its DHCP leases. None of it
+    counts as presence: a router keeps an ARP entry or a lease for many minutes after a
+    device has gone. The tables tell the discovery recheck where else to look, and give a
+    second view of who holds each address to compare with lanwatch's own. A router that
+    cannot be read keeps its previous tables."""
+    out.host = await snmp_host(router, ex)
     if out.host is None:
-        out.error = "no snmp.host set and no default gateway to use instead"
+        out.error = f"no snmp.devices.{router.name}.host set and no default gateway to use instead"
     else:
         try:
-            async with SnmpClient(config.snmp, out.host) as client:
+            async with SnmpClient(router.login, out.host) as client:
                 out.system = await client.system()
                 out.neighbours = await client.neighbours()
                 if out.system.vendor == "Juniper":
                     out.leases = await client.juniper_leases()
-        except SnmpError as e:
-            out.error = str(e)[:400]
         except Exception as e:
-            log.exception("snmp: unexpected failure, keeping the previous state")
-            out.error = f"{type(e).__name__}: {str(e)[:200]}"
+            out.error = _snmp_error(e)
     if out.error is not None:
         log.warning("snmp: %s not read, keeping the previous state: %s", out.host, out.error)
-        store.meta_set("snmp.last_error", out.error)
-        return out
+        return
     assert out.system is not None
-    store.meta_set("snmp.host", out.host or "")
-    store.meta_set("snmp.system", json.dumps(out.system.as_dict()))
-    store.meta_set("snmp.last_ok", iso(now_utc()))
-    store.meta_set("snmp.last_error", "")
     store.replace_infra("router-arp", {n.ip: n.as_dict() for n in out.neighbours}, snapshot_id)
     if out.leases is not None:
         store.replace_infra("router-dhcp", {x.ip: x.as_dict() for x in out.leases}, snapshot_id)
-    out.enriched = _router_device_facts(store, out.neighbours, out.leases)
+    out.enriched |= _router_device_facts(store, out.neighbours, out.leases)
     out.mismatches = _track_router_mismatches(store, out.neighbours, snapshot_id)
     log.info(
         "snmp: %s is %s (%s), up %d days; %d ARP entries%s%s",
@@ -383,7 +522,6 @@ async def collect_snmp(
         if out.mismatches
         else "",
     )
-    return out
 
 
 def _router_device_facts(
@@ -440,11 +578,12 @@ def _track_router_mismatches(store: Store, neighbours: list[Neighbour], snapshot
 
 
 async def run_snmp(config: Config, store: Store) -> SnmpOutcome:
-    """On demand (`lanwatch snmp`): read the router, then the rules."""
+    """On demand (`lanwatch snmp`): read every target, then the rules (unless nothing
+    could be read at all)."""
     snapshot_id = store.begin_snapshot("snmp", "snmpv3")
     out = await collect_snmp(config, store, snapshot_id)
     store.finish_snapshot(snapshot_id, len(out.enriched))
-    if out.error is not None:
+    if all(t.error is not None for t in out.targets):
         return out
     ctx = RuleContext(
         store=store,
@@ -534,7 +673,7 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
             uni.devices,
             uni.error,
         )
-    if config.snmp.enabled:
+    if config.snmp.targets():
         snmp = await collect_snmp(config, store, snapshot_id, ex)
         enriched |= snmp.enriched
         out.snmp_error = snmp.error
@@ -608,6 +747,70 @@ async def run_infra(config: Config, store: Store, executor: Executor | None = No
     )
     # Re-classify enriched devices: new facts (UPnP model, mDNS names) change the cache key.
     await llm_hooks.after_round(config, store, sorted(enriched), rules.new_ids)
+    await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
+    update_overview(store, config)
+    out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
+    return out
+
+
+async def snmp_audit(store: Store, devices: list[Device]) -> list[tuple[Device, AuditResult]]:
+    """Probe the devices for SNMP default credentials and store what answered as
+    attrs.snmp_audit (with the time), where the rules pick it up."""
+    if not devices:
+        return []
+    if not audit_available():
+        log.info("snmp audit: snmpget missing (the snmp package), not probing")
+        return []
+    results = await audit_snmp([d.ip for d in devices if d.ip])
+    by_ip = {r.ip: r for r in results}
+    at = iso(now_utc())
+    out: list[tuple[Device, AuditResult]] = []
+    for d in devices:
+        r = by_ip.get(d.ip or "")
+        if r is None:
+            continue
+        store.merge_device_attrs(d.id, {"snmp_audit": r.as_dict(at)})
+        out.append((d, r))
+    answered = [f"{d.label} ({', '.join(r.communities)})" for d, r in out if r.communities]
+    log.info(
+        "snmp audit: %d devices probed, %d with an SNMPv3 agent%s",
+        len(out),
+        sum(1 for _, r in out if r.v3_agent),
+        f"; default communities answer on {'; '.join(answered)}" if answered else "",
+    )
+    return out
+
+
+@dataclass(slots=True)
+class SnmpAuditOutcome:
+    results: list[tuple[Device, AuditResult]] = field(default_factory=list)
+    new_findings: list[str] = field(default_factory=list)
+    resolved_findings: list[str] = field(default_factory=list)
+
+
+async def run_snmp_audit(config: Config, store: Store, host: str | None = None) -> SnmpAuditOutcome:
+    """On demand (`lanwatch snmp-audit [HOST]`): probe one device, or every online one,
+    then the rules."""
+    if host is not None:
+        d = store.device_by_ip(host)
+        if d is None:
+            raise ValueError(f"no device with the address {host}")
+        devices = [d]
+    else:
+        devices = [d for d in store.devices(online_only=True) if d.ip]
+    devices = [d for d in devices if not _excluded(d, config.scan.skip_hosts)]
+    out = SnmpAuditOutcome(results=await snmp_audit(store, devices))
+    snapshot_id = store.begin_snapshot("snmp-audit", "snmpget")
+    store.finish_snapshot(snapshot_id, len(out.results))
+    ctx = RuleContext(
+        store=store,
+        config=config,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=None,
+        is_baseline=False,
+    )
+    rules = Engine(config).run(ctx)
+    _log_new_findings(config, rules.emitted, rules.new_ids)
     await notify.after_round(config, store, rules.new_ids, rules.resolved_ids)
     update_overview(store, config)
     out.new_findings, out.resolved_findings = rules.new_ids, rules.resolved_ids
@@ -954,7 +1157,7 @@ async def recheck_silent(
         for r in store.infra("unifi-client"):
             ip, mac = r.data.get("ip"), r.data.get("mac")
             consider(ip if isinstance(ip, str) else None, mac if isinstance(mac, str) else None)
-    if config.snmp.enabled:
+    if config.snmp.router() is not None:
         for kind in ("router-arp", "router-dhcp"):
             for r in store.infra(kind):
                 ip, mac = r.data.get("ip"), r.data.get("mac")
@@ -1005,6 +1208,9 @@ async def run_discovery(
         await recheck_silent(config, store, ex, subnets, hosts, previous.id if previous else None)
     )
     hosts = [h for h in hosts if not _excluded(h, config.network.exclude_hosts)]
+    # Whatever the backend: arp-scan never names hosts, and nmap runs with -n.
+    if config.scan.resolve_hostnames:
+        hosts = await resolve_hostnames(hosts)
     # The backend's own OUI list may predate the device's prefix; try a fresher registry.
     hosts = oui.fill_vendors(hosts, oui.load(config.data_dir))
 

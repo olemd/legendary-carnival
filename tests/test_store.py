@@ -290,3 +290,58 @@ def test_concurrent_writers_wait_instead_of_failing(tmp_path: Path) -> None:
     assert errors == []
     assert a.meta_get("k") == "from the other writer"  # it waited, then wrote last
     a.close()
+
+
+def test_v11_moves_the_router_state_out_of_meta(tmp_path: Path) -> None:
+    """A 0.8.0 database keeps the router's SNMP state in meta keys; v11 moves it to the
+    router's snmp-target row, so nothing is lost and nothing reads the old keys."""
+    import json
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    for version, sql in enumerate(MIGRATIONS[:10], start=1):
+        db.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+    system = {"name": "gw", "vendor": "Juniper", "uptime_s": 5}
+    db.executemany(
+        "INSERT INTO meta(key, value) VALUES (?, ?)",
+        [
+            ("snmp.host", "192.0.2.1"),
+            ("snmp.system", json.dumps(system)),
+            ("snmp.last_ok", "2026-11-10T09:00:00+00:00"),
+            ("snmp.last_error", "Timeout"),
+        ],
+    )
+    db.commit()
+    db.close()
+
+    with Store(path) as store:
+        (row,) = store.infra("snmp-target")
+        assert row.key == "192.0.2.1"
+        assert row.data == {
+            "host": "192.0.2.1",
+            "role": "router",
+            "name": "",
+            "system": system,
+            "last_ok": "2026-11-10T09:00:00+00:00",
+            "last_error": "Timeout",
+            "fails": 1,
+        }
+        assert store.meta_get("snmp.system") is None and store.meta_get("snmp.host") is None
+
+
+def test_v11_without_router_state_adds_nothing(tmp_path: Path) -> None:
+    with Store(tmp_path / "new.db") as store:
+        assert store.infra("snmp-target") == []
+
+
+def test_snmp_series_and_pruning(store: Store) -> None:
+    t1, t2 = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    store.add_snmp_series("192.0.2.9", {"ups.load_w": 121, "ups.input_v": 231.5}, ts=t1)
+    store.add_snmp_series("192.0.2.9", {"ups.load_w": 130}, ts=t2)
+    store.add_snmp_series("192.0.2.9", {})
+    assert store.snmp_series("192.0.2.9", "ups.load_w", t1) == [(t1, 121.0), (t2, 130.0)]
+    assert store.snmp_series("192.0.2.9", "ups.input_v", "2026-01-01T12:00:00+00:00") == []
+    deleted = store.prune(rounds_before="2026-01-01T12:00:00+00:00")
+    assert deleted["snmp_series"] == 2
+    assert store.snmp_series("192.0.2.9", "ups.load_w", "") == [(t2, 130.0)]

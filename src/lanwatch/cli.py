@@ -15,6 +15,7 @@ from typing import Annotated, Any
 import typer
 
 from lanwatch import __version__, oui
+from lanwatch.collectors.audit_snmp import available as audit_available
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
 from lanwatch.decoy import Decoys, publish_listening, record_hit
 from lanwatch.logging_setup import set_verbose, setup_logging
@@ -30,6 +31,7 @@ from lanwatch.pipeline import (
     run_inventory,
     run_maintenance,
     run_snmp,
+    run_snmp_audit,
     run_unifi,
 )
 from lanwatch.rules.engine import all_rules
@@ -414,35 +416,88 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
 @app.command()
 def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
-    """Read the router over SNMPv3 now: what it is, its ARP table and DHCP leases."""
+    """Read every SNMPv3 target now: the router (what it is, its ARP table and DHCP
+    leases) and every other device under [snmp.devices]."""
     if verbose:
         set_verbose()
     cfg = _state(ctx).loaded.config
-    if not cfg.snmp.enabled:
+    if not cfg.snmp.targets():
         typer.echo(
-            "the SNMP link is off ([snmp] enabled = false): set auth_password and"
-            " priv_password, see docs/snmp.md",
+            "nothing to read over SNMP: no enabled devices under [snmp.devices]; see docs/snmp.md",
             err=True,
         )
         raise typer.Exit(1)
     with _open_store(ctx) as store:
         out = asyncio.run(run_snmp(cfg, store))
-    if out.error is not None:
-        typer.echo(f"error reading {out.host or 'the router'}: {out.error}", err=True)
+    failed = 0
+    for t in out.targets:
+        label = t.host or "the router"
+        if t.error is not None:
+            failed += 1
+            typer.echo(f"error reading {label}: {t.error}", err=True)
+            continue
+        sys_ = t.system
+        assert sys_ is not None
+        days, rest = divmod(int(sys_.uptime_s), 86400)
+        name = t.name or sys_.name or "(no name)"
+        typer.echo(f"{label}: {name}, {sys_.vendor or sys_.object_id} ({t.role})")
+        typer.echo(f"  {sys_.descr}")
+        typer.echo(f"  up {days} days {rest // 3600} hours")
+        if t.role == "router":
+            typer.echo(
+                f"  {len(out.neighbours)} ARP entries"
+                + (f", {len(out.leases)} DHCP leases" if out.leases is not None else "")
+                + (
+                    f", {out.mismatches} held by another MAC than lanwatch saw"
+                    if out.mismatches
+                    else ""
+                )
+            )
+        if sys_.location:
+            typer.echo(f"  location: {sys_.location}")
+    if failed:
         raise typer.Exit(1)
-    sys_ = out.system
-    assert sys_ is not None
-    days, rest = divmod(int(sys_.uptime_s), 86400)
-    typer.echo(f"{out.host}: {sys_.name or '(no name)'}, {sys_.vendor or sys_.object_id}")
-    typer.echo(f"  {sys_.descr}")
-    typer.echo(f"  up {days} days {rest // 3600} hours")
-    typer.echo(
-        f"  {len(out.neighbours)} ARP entries"
-        + (f", {len(out.leases)} DHCP leases" if out.leases is not None else "")
-        + (f", {out.mismatches} held by another MAC than lanwatch saw" if out.mismatches else "")
-    )
-    if sys_.location:
-        typer.echo(f"  location: {sys_.location}")
+
+
+@app.command("snmp-audit")
+def snmp_audit_cmd(
+    ctx: typer.Context,
+    host: Annotated[str | None, typer.Argument(help="one device's address; default: all")] = None,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Probe for SNMP default credentials now: v1/v2c with public and private, and
+    whether an SNMPv3 agent answers. A GET of sysDescr only."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not audit_available():
+        typer.echo("snmpget not found: install the snmp package", err=True)
+        raise typer.Exit(1)
+    with _open_store(ctx) as store:
+        try:
+            out = asyncio.run(run_snmp_audit(cfg, store, host))
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from e
+    for d, r in out.results:
+        if r.communities:
+            found = "; ".join(
+                f"'{c}' on {', '.join('v' + v for v in vs)}" for c, vs in r.communities.items()
+            )
+            typer.echo(f"{d.ip} {d.label}: DEFAULT COMMUNITY answers: {found}")
+            for key, what in (("sys_name", "name"), ("sys_descr", "description")):
+                value = getattr(r, key)
+                if value:
+                    typer.echo(f"  {what}: {' '.join(value.split())[:200]}")
+            if r.sys_object_id:
+                typer.echo(f"  sysObjectID: {r.sys_object_id}")
+        elif r.v3_agent:
+            typer.echo(f"{d.ip} {d.label}: SNMPv3 agent, no default community answers")
+        elif host is not None:
+            typer.echo(f"{d.ip} {d.label}: no answer (no default community, no SNMPv3 agent)")
+        for login in r.v3_defaults:
+            typer.echo(f"{d.ip} {d.label}: SNMPv3 DEFAULT LOGIN works: {login}")
+    typer.echo(f"{len(out.results)} devices probed, {len(out.new_findings)} new findings")
 
 
 @app.command()

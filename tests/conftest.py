@@ -1,15 +1,33 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from lanwatch.config import Config, LatencyConfig, LlmConfig, RuleOverride, ScanConfig
+from lanwatch.config import (
+    Config,
+    LatencyConfig,
+    LlmConfig,
+    RuleOverride,
+    ScanConfig,
+    SnmpConfig,
+)
 from lanwatch.helper import DEFAULT_SCRIPTS, Policy, validate_argv
 from lanwatch.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+SNMP_AUTH = "auth-secret-123"
+SNMP_PRIV = "priv-secret-456"
+
+
+def snmp_devices(**devices: Mapping[str, object]) -> SnmpConfig:
+    """[snmp.devices] for tests, by name: each device gets a working login unless it
+    names its own fields."""
+    login = {"user": "lanwatch", "auth_password": SNMP_AUTH, "priv_password": SNMP_PRIV}
+    return SnmpConfig.model_validate({"devices": {n: login | dict(d) for n, d in devices.items()}})
 
 
 @pytest.fixture(autouse=True)
@@ -35,10 +53,11 @@ def config(tmp_path: Path) -> Config:
     # No LLM, and no probes that put real packets on the developer's network. The fixtures'
     # aa:bb:cc addresses are locally administered, so the per-device MAC rules would add a
     # finding for every test host; they have their own tests (test_mac_rules.py).
+    # Hostname lookups would ask this machine's resolver about the test addresses.
     return Config(
         data_dir=tmp_path,
         llm=LlmConfig(enabled=False),
-        scan=ScanConfig(name_poisoning_check=False, recheck_silent=False),
+        scan=ScanConfig(name_poisoning_check=False, recheck_silent=False, resolve_hostnames=False),
         latency=LatencyConfig(enabled=False),
         rules={
             "inventory.private-mac": RuleOverride(enabled=False),

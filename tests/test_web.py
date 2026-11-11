@@ -13,7 +13,7 @@ from lanwatch.rules.engine import Engine
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
-from tests.conftest import fixture_text
+from tests.conftest import fixture_text, snmp_devices
 
 
 def _seed(config: Config) -> None:
@@ -108,6 +108,40 @@ def test_config_rejects_open_bind_without_password(tmp_path: Path) -> None:
 
 async def _noop() -> None:
     return None
+
+
+def test_device_page_firmware_line_says_up_to_date_or_behind(config: Config) -> None:
+    """attrs.firmware is a dict, and `fw.update` in a template is the dict's update method
+    (always true): every device read as "behind". The flag must be read as a key."""
+    _seed(config)
+    with Store(config.store_path) as store:
+        current, old = store.devices()[:2]
+        store.merge_device_attrs(
+            current.id,
+            {
+                "firmware": {
+                    "product": "Tasmota",
+                    "version": "16.0.0",
+                    "latest": "16.0.0",
+                    "update": False,
+                }
+            },
+        )
+        store.merge_device_attrs(
+            old.id,
+            {
+                "firmware": {
+                    "product": "Tasmota",
+                    "version": "14.3.0",
+                    "latest": "16.0.0",
+                    "update": True,
+                }
+            },
+        )
+    client = TestClient(create_app(config))
+    page = client.get(f"/devices/{current.id}").text
+    assert "up to date" in page and "behind" not in page
+    assert "behind" in client.get(f"/devices/{old.id}").text
 
 
 def test_status_page_without_a_scheduler_is_read_only(config: Config) -> None:
@@ -248,33 +282,33 @@ def test_router_on_status_infra_and_device_pages(config: Config) -> None:
     """SNMP off: the status tile says so and the infra page has no router section. On, with
     a read stored: the tile, the table with lease, static and disagreement notes, and the
     line on the device page."""
-    import json
 
     from lanwatch.config import SnmpConfig
 
     _seed(config)
     client = TestClient(create_app(config))
-    assert "disabled in config; see docs/snmp.md" in client.get("/status").text
+    assert "no device under [snmp.devices] has router = true" in client.get("/status").text
     assert 'id="router"' not in client.get("/infra").text
 
-    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+    config.snmp = snmp_devices(gw={"router": True})
     with Store(config.store_path) as store:
         sid = store.begin_snapshot("infra", "t")
-        store.meta_set("snmp.host", "192.168.1.1")
-        store.meta_set("snmp.last_ok", "2026-11-10T09:00:00+00:00")
-        store.meta_set("snmp.last_error", "")
-        store.meta_set(
-            "snmp.system",
-            json.dumps(
-                {
-                    "name": "gw-test",
-                    "vendor": "Juniper",
-                    "object_id": "1.3.6.1.4.1.2636.1.1.1.2.133",
-                    "descr": "Juniper Networks, Inc. srx300 internet router",
-                    "uptime_s": 3 * 86400,
-                }
-            ),
-        )
+        router_state = {
+            "host": "192.168.1.1",
+            "role": "router",
+            "name": "",
+            "last_ok": "2026-11-10T09:00:00+00:00",
+            "last_error": "",
+            "fails": 0,
+            "system": {
+                "name": "gw-test",
+                "vendor": "Juniper",
+                "object_id": "1.3.6.1.4.1.2636.1.1.1.2.133",
+                "descr": "Juniper Networks, Inc. srx300 internet router",
+                "uptime_s": 3 * 86400,
+            },
+        }
+        store.replace_infra("snmp-target", {"192.168.1.1": router_state}, sid)
         known = store.devices()[0]
         assert known.mac and known.ip
         store.replace_infra(
@@ -347,9 +381,62 @@ def test_router_on_status_infra_and_device_pages(config: Config) -> None:
     off = TestClient(create_app(config))
     assert "DHCP lease since" not in off.get(f"/devices/{known.id}").text
     assert 'id="router"' not in off.get("/infra").text
-    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+    config.snmp = snmp_devices(gw={"router": True})
 
     with Store(config.store_path) as store:
-        store.meta_set("snmp.last_error", "Timeout: No Response (no answer: ...)")
+        failed = router_state | {"last_error": "Timeout: No Response (no answer: ...)"}
+        store.replace_infra("snmp-target", {"192.168.1.1": failed}, sid)
     status = TestClient(create_app(config)).get("/status").text
     assert "failed" in status and "Timeout: No Response" in status and "last good read" in status
+
+
+def test_snmp_devices_on_infra_status_and_device_pages(config: Config) -> None:
+    """Devices under [snmp.devices] get a row in the infra table (read or failed), a count
+    on the status tile even without a router, and a line on their device page."""
+    _seed(config)
+    config.snmp = snmp_devices(ups={"host": "192.0.2.9"}, flaky={"host": "192.0.2.66"})
+    with Store(config.store_path) as store:
+        sid = store.begin_snapshot("discovery", "t")
+        store.record_hosts(
+            sid, [HostObservation(ip="192.0.2.9", mac="aa:bb:cc:00:00:09", source="t")]
+        )
+        store.finish_snapshot(sid, 1)
+        ups = store.device_by_ip("192.0.2.9")
+        assert ups is not None
+        store.merge_device_attrs(
+            ups.id,
+            {"snmp": {"name": "apcECDAE3", "vendor": "APC", "descr": "APC Web/SNMP Card"}},
+        )
+        store.replace_infra(
+            "snmp-target",
+            {
+                "192.0.2.9": {
+                    "host": "192.0.2.9",
+                    "role": "device",
+                    "name": "ups",
+                    "system": {"vendor": "APC", "descr": "APC Web/SNMP Card", "uptime_s": 90},
+                    "last_ok": "2026-11-10T09:00:00+00:00",
+                    "last_error": "",
+                    "fails": 0,
+                },
+                "192.0.2.66": {
+                    "host": "192.0.2.66",
+                    "role": "device",
+                    "name": "flaky",
+                    "system": None,
+                    "last_ok": None,
+                    "last_error": "Timeout: No Response from 192.0.2.66",
+                    "fails": 3,
+                },
+            },
+            sid,
+        )
+    client = TestClient(create_app(config))
+    infra = client.get("/infra").text
+    assert 'id="snmp"' in infra and f'href="/devices/{ups.id}">ups</a>' in infra
+    assert "APC Web/SNMP Card" in infra and "failed 3 times" in infra
+    assert 'id="router"' not in infra  # no device is the router
+    status = client.get("/status").text
+    assert "2 more over SNMPv3" in status and "1 not read" in status
+    device = client.get(f"/devices/{ups.id}").text
+    assert "<dt>SNMP</dt>" in device and "apcECDAE3" in device

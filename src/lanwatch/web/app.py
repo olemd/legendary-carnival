@@ -25,12 +25,13 @@ from lanwatch.collectors.base import CommandError, make_executor
 from lanwatch.config import Config
 from lanwatch.decoy import Decoys, port_label
 from lanwatch.links import RELATIONS, managing_bmc, other_end, parse_relation, phrase, suggest
-from lanwatch.models import FindingStatus, Severity, local_str
+from lanwatch.models import Device, FindingStatus, Severity, local_str
 from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 from lanwatch.web.topology import build_topology
+from lanwatch.web.ups import ups_block, ups_tile
 
 TEMPLATES = Path(__file__).parent / "templates"
 SEVERITY_ORDER = [s.value for s in Severity]
@@ -130,6 +131,7 @@ def create_app(
             events=s.events(limit=15, exclude_prefix="presence."),
             spark=_sparkline(s.snapshot_series("discovery", _days_ago(7))),
             latency=_latency_tile(s),
+            ups=ups_tile(s, config),
         )
 
     @app.get("/devices", response_class=HTMLResponse, dependencies=deps)
@@ -180,6 +182,7 @@ def create_app(
             powered_off_by=None if d.online else managing_bmc(device_id, links, by_id),
             services=s.services(device_id, open_only=False),
             findings=findings,
+            junos=_junos_view(s, d),
             last_inventory=s.last_inventory_at(device_id),
             events=s.events(device_id=device_id, limit=50),
             presence=_presence_grid(s.presence(device_id, _days_ago(PRESENCE_DAYS))),
@@ -187,6 +190,7 @@ def create_app(
             others=others,
             same_host={o.id for o in others if host and (o.hostname or "").lower() == host},
             kinds=[k.value for k in DeviceKind],
+            ups=ups_block(s, config, d, request.query_params.get("range", "24h")),
         )
 
     @app.post("/devices/{device_id}/edit", dependencies=write_deps)
@@ -394,6 +398,7 @@ def create_app(
             radios=_airos_section(s, config),
             unifi=_unifi_section(s, config),
             router=_router_section(s, config),
+            snmp_targets=_snmp_targets(s, config),
             snapshot=s.latest_snapshot("infra"),
         )
 
@@ -458,6 +463,7 @@ def create_app(
             arp_frames=s.meta_get("arp.frames"),
             devices_total=len(s.devices()),
             router=_router_status(s, config),
+            snmp_targets=_snmp_targets(s, config),
         )
 
     @app.post("/scan/{name}", dependencies=write_deps)
@@ -647,20 +653,60 @@ def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
     }
 
 
+def _junos_view(s: Store, d: Device) -> dict[str, Any] | None:
+    """The Junos extras for a device read over SNMP, if its reader found any."""
+    from lanwatch.collectors.snmp_junos import device_view
+
+    if not d.ip:
+        return None
+    for r in s.infra("snmp-target"):
+        if r.data.get("host") == d.ip:
+            facts = (r.data.get("facts") or {}).get("junos")
+            return device_view(facts if isinstance(facts, dict) else None)
+    return None
+
+
+def _snmp_targets(s: Store, config: Config) -> list[dict[str, Any]]:
+    """Every configured SNMP target with its stored state, in config order. A target not
+    read yet has only what config says."""
+    rows = {r.key: r.data for r in s.infra("snmp-target")}
+    by_ip = {d.ip: d for d in s.devices() if d.ip}
+    out: list[dict[str, Any]] = []
+    for t in config.snmp.targets():
+        if t.role == "router":
+            data = next((d for d in rows.values() if d.get("role") == "router"), {})
+        else:
+            data = rows.get(t.host or "", {})
+        system = data.get("system") if isinstance(data.get("system"), dict) else None
+        host = data.get("host") or t.host
+        out.append(
+            {
+                "host": host,
+                "role": t.role,
+                "name": t.name or (system or {}).get("name") or "",
+                "system": system,
+                "last_ok": data.get("last_ok"),
+                "error": data.get("last_error") or None,
+                "fails": int(data.get("fails") or 0),
+                "facts": data.get("facts") or {},
+                "device": by_ip.get(host) if host else None,
+            }
+        )
+    return out
+
+
 def _router_status(s: Store, config: Config) -> dict[str, Any]:
     """The status page's router tile: what was read over SNMP, when, and what failed."""
-    raw = s.meta_get("snmp.system")
-    try:
-        system = json.loads(raw) if raw else None
-    except ValueError:
-        system = None
+    row = next((r.data for r in s.infra("snmp-target") if r.data.get("role") == "router"), {})
+    system = row.get("system")
+    router = config.snmp.router()
     return {
-        "enabled": config.snmp.enabled,
+        "enabled": router is not None,
         "tool": shutil.which("snmpbulkwalk") is not None,
-        "host": s.meta_get("snmp.host") or config.snmp.host,
+        "host": row.get("host") or (router.host if router else None),
         "system": system if isinstance(system, dict) else None,
-        "last_ok": s.meta_get("snmp.last_ok") or None,
-        "error": s.meta_get("snmp.last_error") or None,
+        "last_ok": row.get("last_ok") or None,
+        "error": row.get("last_error") or None,
     }
 
 

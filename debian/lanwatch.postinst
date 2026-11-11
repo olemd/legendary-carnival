@@ -9,9 +9,14 @@ set -e
 ref=/etc/lanwatch/config.toml.default
 new=/usr/share/lanwatch/config.toml.default
 
-# "section.key" for every key in a reference file, whether set or commented out.
+# "section.key" for every key in a reference file, whether set or commented out. A
+# commented-out header that is a whole line ("# [snmp.devices.fw]") is an example table
+# and counts too. Tables named by the user ([snmp.devices.<name>]) are listed under
+# "<name>", not under the example's name.
 settings() {
-    awk '/^\[[A-Za-z0-9_.]+\]/ { s = substr($0, 2, index($0, "]") - 2) }
+    awk 'function named(s) { if (index(s, "snmp.devices.") == 1) return "snmp.devices.<name>"; return s }
+         /^\[[A-Za-z0-9_.]+\]/ { s = named(substr($0, 2, index($0, "]") - 2)) }
+         /^# ?\[[A-Za-z0-9_.-]+\][ \t]*$/ { h = $0; sub(/^# ?\[/, "", h); sub(/\].*/, "", h); s = named(h) }
          /^(# ?)?[a-z_]+ = / { k = $0; sub(/^# ?/, "", k); sub(/ =.*/, "", k); print s "." k }' "$1" \
         | sort -u
 }

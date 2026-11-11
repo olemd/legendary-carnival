@@ -16,7 +16,7 @@ profile = "gentle"                      # gentle | normal | thorough
 max_parallel_hosts = 4
 rate_limit_pps = 100
 discovery_backend = "auto"              # auto | arp-scan | nmap | ping
-resolve_hostnames = true
+resolve_hostnames = true                # names from reverse DNS or /etc/hosts, after any backend
 light_top_ports = 200                   # hourly and new-device scans
 deep_udp_top_ports = 50                 # weekly deep scan, needs root/CAP_NET_RAW; 0 disables
 exclude_ports = [9100]                  # never probed
@@ -179,19 +179,33 @@ verify_tls = true                       # consoles are self-signed: pin with ca_
 adopt_names = true                      # name unnamed devices as the controller names them
 
 [snmp]
-# Read-only SNMPv3 link to the router: what it is, its uptime, its ARP table and (Juniper)
-# its DHCP leases. They are never taken as presence: they add addresses to the recheck's
-# slower ping, and a router that ties an address to another MAC is a finding. SNMPv3 with authentication and encryption only; lanwatch does
-# not speak v1/v2c communities. Create a read-only v3 user on the router first: docs/snmp.md
-# has an example for Junos. Stays on the LAN. Needs the snmp package (snmpbulkwalk).
-enabled = false
-# host = "192.168.1.1"                  # default: this host's default gateway
-user = "lanwatch"
-auth_protocol = "SHA-256"               # SHA-256, SHA-384, SHA-512, or SHA (SHA-1, e.g. UniFi)
-auth_password = ""                      # at least 8 characters, no spaces
-priv_protocol = "AES"                   # AES (AES-128) or AES-256
-priv_password = ""
-timeout_s = 5
+# Read-only SNMPv3 links to devices on the LAN: one [snmp.devices.<name>] table each, named
+# by you; nothing is read until one is listed. Every device gets what it is and its uptime.
+# The one marked router = true also gets its ARP table and (Juniper) its DHCP leases.
+# They are never taken as presence: they add addresses to the recheck's slower ping, and a
+# router that ties an address to another MAC is a finding. SNMPv3 with authentication and
+# encryption only; lanwatch does not speak v1/v2c communities. Each table holds its
+# device's whole login: nothing is shared between devices. Create a read-only v3 user on
+# each device first: docs/snmp.md has an example for Junos. Stays on the LAN. Needs the
+# snmp package (snmpbulkwalk).
+#
+# [snmp.devices.fw]
+# router = true                         # at most one device
+# host = "192.168.1.1"                  # required; the router may leave it out: this host's default gateway
+# user = "lanwatch"
+# auth_protocol = "SHA-256"             # SHA-256, SHA-384, SHA-512, or SHA (SHA-1, e.g. UniFi)
+# auth_password = ""                    # at least 8 characters, no spaces
+# priv_protocol = "AES"                 # AES (AES-128) or AES-256
+# priv_password = ""
+# timeout_s = 5
+# enabled = true                        # false: keep the table but stop reading the device
+#
+# [snmp.devices.ups]
+# host = "192.168.1.20"
+# user = "lanwatch"
+# auth_protocol = "SHA"                 # what the device offers; SHA-1 on APC NMC2
+# auth_password = ""
+# priv_password = ""
 
 [latency]
 # A few pings to the gateway every discovery round: round-trip time and loss, with a day's
@@ -203,6 +217,14 @@ enabled = true
 targets = ["gateway"]
 count = 4
 loss_threshold = 0.25                   # share of probes lost that counts as a bad round
+
+[snmp_audit]
+# Does any device answer SNMP with the well-known defaults? Once per deep scan (weekly)
+# and for each new device: one GET of sysDescr over SNMPv1 and v2c with `public` and
+# `private`, and whether an SNMPv3 agent answers. Never a SET or a walk, never real
+# credentials; the only place lanwatch speaks v1/v2c. scan.skip_hosts are left out.
+# A default community that answers is a finding (critical for `private`). docs/snmp.md.
+enabled = true
 
 [oui]
 # Vendor names for MAC addresses come from the IEEE registry lists arp-scan and nmap ship,

@@ -30,6 +30,7 @@
       {% endfor %}
     </dl>
   </div>
+  {% if ups %}{% include "_ups_tile.html" %}{% endif %}
   {% if latency %}
   <div class="tile">
     <div class="tile-label">Latency to {{ latency.target }}</div>

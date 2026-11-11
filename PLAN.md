@@ -259,6 +259,14 @@ Hver milepæl skal være kjørbar og nyttig alene.
 Status 2026-11-04: M0–M6 levert. Se README for hva som er verifisert i ekte
 nett og hva som bare er testet mot opptak og mocks.
 
+SNMP etter 0.8.0 (2026-11-10): flere enheter enn routeren over SNMPv3
+(`[snmp.devices.<navn>]`, egen innlogging per enhet, ruteren merket
+`router = true`), lest hver infra-runde. Arbeidet er
+delt i grener som kan flettes uavhengig etter `snmp-multi`: sjekker på alle
+enheter (`snmp-checks`), UPS (`snmp-ups`), ekstra Junos-data (`snmp-junos`,
+bonus, aldri påkrevd) og en probe for standardpassord (`snmp-audit`). Planene
+ligger i `docs/plans/`. Polling er fortsatt kun SNMPv3 authPriv, kun lesing.
+
 Hendelsesloggen (M6) skrives av store selv der tilstand endres, ikke av
 pipelinen, slik at CLI, web og scheduler alle produserer samme historikk.
 Presence-hendelser (online/offline) lagres men skjules som default i UI,
@@ -303,3 +311,12 @@ Bekreftet 2026-11-04:
 5. Home Assistant som første integrasjon etter ntfy/webhook.
 6. ~~Web-UI er sist og valgfritt.~~ Endret 2026-11-04: web-UI er del av M2 og
    primær presentasjonsflate sammen med `overview.md`.
+
+Bekreftet 2026-11-10:
+
+7. SNMP-polling er kun SNMPv3 authPriv, kun lesing. Unntaket er en egen revisjonsprobe
+   (`[snmp_audit]`, på som default): den spør hver enhet ukentlig og når den er ny om
+   `sysDescr` over SNMPv1 og v2c med `public` og `private`, og om en SNMPv3-agent svarer.
+   Kun GET, aldri SET eller walk, og aldri ekte legitimasjon. Et svar på en
+   standard-community er et funn. Communitytabellen lest over v3 er ikke bevis: et
+   APC-kort viser `public` som aktiv selv med SNMPv1 slått av.
