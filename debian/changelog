@@ -1,3 +1,39 @@
+lanwatch (0.9.0) unstable; urgency=medium
+
+  * SNMP for any number of devices: one [snmp.devices.<name>] table per
+    device, each with its own SNMPv3 login; router = true marks the one
+    whose ARP table and leases are read. 0.8.0's form, the router's login
+    straight under [snmp] with enabled = true, is still read as a device
+    named router, and its state moves over on upgrade (#11).
+  * Checks for every SNMP device: a clock that is off (snmp.clock-skew)
+    and a device that stops answering (snmp.unreachable) (#12).
+  * UPS over SNMP (UPS-MIB, and PowerNet on APC cards): state, charge,
+    runtime, load, voltages, battery and self-test on the device page,
+    graphs over a day and a week, a dashboard tile, and seven rules for
+    lost communication, running on battery, low or worn-out battery,
+    alarms, an old self-test and power events (#13).
+  * Junos extras for Juniper gear read over SNMP, with nothing to set up:
+    chassis alarms, full storage, FRUs not online, a full session table,
+    config commits, a missing rescue config and rising DHCP declines
+    (#14).
+  * SNMP default-credential probe ([snmp_audit], on by default): with
+    the weekly deep scan and for each new device, one GET over SNMPv1
+    and v2c with public and private, and whether an SNMPv3 agent answers.
+    A default community that answers is a finding, critical for private.
+    scan.skip_hosts are left out. "lanwatch snmp-audit [HOST]" runs it
+    now (#15).
+  * Links between devices that belong together: a BMC (iLO, iDRAC, IPMI)
+    and its server, a device and its switch, a device and its UPS. Added
+    by hand or from suggestions on the device page; a watched server
+    that is off while its BMC answers says so (#18).
+  * Virtual machines are marked by their hypervisor's MAC prefix (#19).
+  * scan.resolve_hostnames now applies to every discovery backend, not
+    only the ping sweep (#17).
+  * The device page no longer says the firmware is behind when it is
+    current (#16).
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 00:01:27 +0100
+
 lanwatch (0.8.1) unstable; urgency=medium
 
   * KoboldCpp as an LLM backend next to Ollama: set llm.backend =
