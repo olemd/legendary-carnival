@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% set active = 'devices' %}
 {% block title %}{{ device.label }} · lanwatch{% endblock %}
 {% block content %}
-<h1>{{ device.label }} <span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span>{% if device.watch %} <span class="kind">watched</span>{% endif %}</h1>
+<h1>{{ device.label }} {% if powered_off_by %}<span class="state" title="Does not answer, but {{ powered_off_by.label }}, which manages it, does">powered off</span>{% else %}<span class="state {{ 'on' if device.online }}">{{ 'online' if device.online else 'offline' }}</span>{% endif %}{% if device.watch %} <span class="kind">watched</span>{% endif %}</h1>
 <dl class="facts">
   <dt>IP</dt><dd class="mono">{{ device.ip or '-' }}</dd>
   <dt>MAC</dt><dd><span class="mono">{{ device.mac or '-' }}</span>{% if device.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}
@@ -25,6 +25,7 @@
       {% if ud.radios %} · radios {% for r in ud.radios %}{{ r.band }} GHz ch {{ r.channel }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd>{% endif %}
   {% set rt = device.attrs.router %}{% if rt and config.snmp.enabled %}<dt>Router</dt><dd>{% if rt.arp_interface %}in its ARP table on <span class="mono">{{ rt.arp_interface }}</span>{% else %}in its ARP table{% endif %}{% if rt.dhcp_lease is sameas true %} · DHCP lease since {{ rt.dhcp_lease_since or '?' }}{% elif rt.dhcp_lease is sameas false %} · <span class="muted">no DHCP lease: a static address, or another DHCP server</span>{% endif %} <a class="muted" href="/infra#router">table</a></dd>{% endif %}
   {% if device.attrs.ipv6 %}<dt>IPv6</dt><dd class="mono">{{ device.attrs.ipv6 | join(', ') }}{% if device.attrs.ipv6_open %}<br><span class="muted">open: {% for a, ps in device.attrs.ipv6_open.items() %}{{ a }} {{ ps | join(' ') }}{% if not loop.last %}; {% endif %}{% endfor %}</span>{% endif %}</dd>{% endif %}
+  {% if partners %}<dt>Linked</dt><dd>{% for link, o, rel in partners %}{{ rel }} <a href="/devices/{{ o.id }}">{{ o.label }}</a> <span class="mono muted">{{ o.ip or '' }}</span>{% if not o.online %} <span class="muted">offline</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>{% endif %}
   <dt>First seen</dt><dd>{{ device.first_seen | local }}</dd>
   <dt>Last seen</dt><dd>{{ device.last_seen | local }}</dd>
   {% set fw = device.attrs.firmware %}{% if fw %}<dt>Firmware</dt><dd>{{ fw.product }} <span class="mono">{{ fw.version }}</span>{% if fw.model %} <span class="muted">{{ fw.model }}</span>{% endif %}
@@ -49,6 +50,18 @@
 {% endfor %}</tr>
 {% endfor %}
 </tbody></table></div>
+{% endif %}
+
+{% if suggestions %}
+<h2>Suggested links</h2>
+<ul class="suggestions">
+{% for sg, o in suggestions %}<li>{% if sg.a_id == device.id %}This device {{ sg.kind }} <a href="/devices/{{ o.id }}">{{ o.label }}</a>{% else %}<a href="/devices/{{ o.id }}">{{ o.label }}</a> {{ sg.kind }} this device{% endif %} <span class="muted">({{ sg.reason }})</span>
+  <form class="inline" method="post" action="/devices/{{ device.id }}/suggestions">
+    <input type="hidden" name="a" value="{{ sg.a_id }}"><input type="hidden" name="b" value="{{ sg.b_id }}">
+    <input type="hidden" name="kind" value="{{ sg.kind }}"><input type="hidden" name="source" value="{{ sg.source }}">
+    <button class="primary" name="answer" value="confirm">Link</button> <button name="answer" value="dismiss">Not related</button>
+  </form></li>
+{% endfor %}</ul>
 {% endif %}
 
 <h2>Edit</h2>
@@ -94,6 +107,27 @@
 <div class="tbl"><table><thead><tr><th>Severity</th><th>Kind</th><th>Finding</th><th>Device</th><th>Since</th><th>Status</th><th><span class="vh">Action</span></th></tr></thead>
 <tbody>{% set back = '/devices/' ~ device.id %}{% set devices_by_id = {device.id: device} %}{% include "_finding_rows.html" %}</tbody></table></div>
 {% else %}<p class="empty">None.</p>{% endif %}
+
+<h2>Links</h2>
+<details class="panel"{% if partners %} open{% endif %}>
+  <summary>Devices that belong with this one</summary>
+  {% if partners %}<ul>
+  {% for link, o, rel in partners %}<li>{{ rel }} <a href="/devices/{{ o.id }}">{{ o.label }}</a> <span class="muted">{{ 'by you' if link.source == 'manual' else 'suggested by ' ~ link.source }}, {{ link.created | local }}</span>
+    <form class="inline" method="post" action="/devices/{{ device.id }}/links/{{ link.id }}/remove"><button>Remove</button></form></li>
+  {% endfor %}</ul>{% endif %}
+  {% if others %}
+  <form class="inline" method="post" action="/devices/{{ device.id }}/links">
+    <label for="link-rel">This device</label>
+    <select id="link-rel" name="relation" required>{% for value, label in relations %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+    <select id="link-other" name="other" required aria-label="Other device">
+      <option value="">choose a device…</option>
+      {% for o in others %}<option value="{{ o.id }}">{{ o.label }} · {{ o.ip or o.mac or o.key }}</option>{% endfor %}
+    </select>
+    <button>Link</button>
+  </form>
+  <p class="muted">For separate devices that belong together: the management card (iLO, iDRAC, IPMI) of a server, the switch a device hangs off, the UPS it runs on. Both stay devices of their own. A watched server that stops answering while its management card answers is reported as powered off.</p>
+  {% endif %}
+</details>
 
 <h2>Housekeeping</h2>
 <details class="panel">

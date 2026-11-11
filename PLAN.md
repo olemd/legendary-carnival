@@ -272,6 +272,12 @@ med seg listen over verktøykall, så det er sporbart hva modellen slo opp.
 System-prompten har bare et kort sammendrag; detaljer hentes via verktøy,
 som skalerer bedre enn å lime inn hele inventaret.
 
+Koblinger mellom enheter (gren `device-links`, 2026-11-11): egne enheter som
+hører sammen uten å være én, som et iLO og serveren det styrer. Tabellen
+`device_links`, laget for hånd eller foreslått ut fra navn og bekreftet med
+ett klikk, aldri satt stille. Flere adresser for én enhet (del A i
+`docs/plans/device-links.md`) er ikke med ennå.
+
 ## 10. Risiko og ærlige forbehold
 
 - **Små LLM-er hallusinerer.** Derfor skjema-tvang, cache og ingen deteksjon

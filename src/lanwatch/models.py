@@ -248,3 +248,18 @@ class Snapshot:
     started_at: str
     finished_at: str | None
     host_count: int
+
+
+@dataclass(slots=True)
+class LinkRow:
+    """Two devices that belong together without being one: `a` manages, hangs off or is
+    powered by `b`, depending on `kind`. A dismissed row is a suggestion someone turned
+    down, or a link someone removed; it is kept so the suggestion does not come back."""
+
+    id: int
+    a_id: int
+    b_id: int
+    kind: str
+    source: str
+    created: str
+    dismissed: bool

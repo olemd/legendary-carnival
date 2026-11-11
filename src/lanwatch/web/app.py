@@ -24,6 +24,7 @@ from lanwatch import __version__
 from lanwatch.collectors.base import CommandError, make_executor
 from lanwatch.config import Config
 from lanwatch.decoy import Decoys, port_label
+from lanwatch.links import RELATIONS, managing_bmc, other_end, parse_relation, phrase, suggest
 from lanwatch.models import FindingStatus, Severity, local_str
 from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
@@ -156,10 +157,27 @@ def create_app(
         )
         from lanwatch.llm.tasks import DeviceKind
 
+        by_id = {o.id: o for o in others}
+        by_id[d.id] = d
+        links = s.links(device_id)
+        partners = [
+            (link, by_id[other_end(link, device_id)], phrase(link, device_id))
+            for link in links
+            if other_end(link, device_id) in by_id
+        ]
+        suggestions = [
+            (sg, by_id[sg.b_id if sg.a_id == device_id else sg.a_id])
+            for sg in suggest(list(by_id.values()), s.open_services(), s.link_keys())
+            if device_id in (sg.a_id, sg.b_id)
+        ]
         return page(
             request,
             "device.html",
             device=d,
+            partners=partners,
+            suggestions=suggestions,
+            relations=RELATIONS,
+            powered_off_by=None if d.online else managing_bmc(device_id, links, by_id),
             services=s.services(device_id, open_only=False),
             findings=findings,
             last_inventory=s.last_inventory_at(device_id),
@@ -199,6 +217,55 @@ def create_app(
         if not s.merge_devices(device_id, other):
             raise HTTPException(404)
         update_overview(s, config)
+        return RedirectResponse(f"/devices/{device_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/links", dependencies=write_deps)
+    def add_link(
+        s: StoreDep,
+        device_id: int,
+        other: Annotated[int, Form()],
+        relation: Annotated[str, Form()],
+    ) -> RedirectResponse:
+        parsed = parse_relation(relation)
+        if parsed is None:
+            raise HTTPException(400)
+        kind, outgoing = parsed
+        a, b = (device_id, other) if outgoing else (other, device_id)
+        if s.add_link(a, b, kind) is None:
+            raise HTTPException(404)
+        return RedirectResponse(f"/devices/{device_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/links/{link_id}/remove", dependencies=write_deps)
+    def remove_link(s: StoreDep, device_id: int, link_id: int) -> RedirectResponse:
+        if not any(link.id == link_id for link in s.links(device_id)):
+            raise HTTPException(404)
+        s.remove_link(link_id)
+        return RedirectResponse(f"/devices/{device_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/suggestions", dependencies=write_deps)
+    def answer_suggestion(
+        s: StoreDep,
+        device_id: int,
+        a: Annotated[int, Form()],
+        b: Annotated[int, Form()],
+        kind: Annotated[str, Form()],
+        source: Annotated[str, Form()],
+        answer: Annotated[str, Form()],
+    ) -> RedirectResponse:
+        # Only what is currently suggested can be answered: the form carries the ids, and
+        # a hand-edited post must not create arbitrary links under a suggestion's name.
+        current = {
+            (sg.a_id, sg.b_id, sg.kind, sg.source)
+            for sg in suggest(s.devices(), s.open_services(), s.link_keys())
+        }
+        if device_id not in (a, b) or (a, b, kind, source) not in current:
+            raise HTTPException(404)
+        if answer == "confirm":
+            s.add_link(a, b, kind, source)
+        elif answer == "dismiss":
+            s.dismiss_link(a, b, kind, source)
+        else:
+            raise HTTPException(400)
         return RedirectResponse(f"/devices/{device_id}", status_code=303)
 
     @app.post("/devices/{device_id}/forget", dependencies=write_deps)

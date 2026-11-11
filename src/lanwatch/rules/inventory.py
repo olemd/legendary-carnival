@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from lanwatch import oui
+from lanwatch.links import managing_bmc
 from lanwatch.models import Finding, Kind, Severity
 from lanwatch.rules.base import Rule, RuleContext
 
@@ -139,24 +140,36 @@ class WatchedOfflineRule(Rule):
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
         threshold = ctx.config.network.watch_offline_rounds
         out: list[Finding] = []
-        for d in ctx.store.devices():
+        devices = ctx.store.devices()
+        by_id = {d.id: d for d in devices}
+        links = ctx.store.links()
+        for d in devices:
             if not d.watch:
                 continue
             missed = ctx.store.missed_rounds(d.id)
             if missed < threshold:
                 continue
+            evidence: dict[str, object] = {
+                "ip": d.ip,
+                "mac": d.mac,
+                "last_seen": d.last_seen,
+                "missed_rounds": missed,
+            }
+            # A server whose BMC still answers is most likely switched off, not gone.
+            bmc = managing_bmc(d.id, links, by_id)
+            if bmc is not None:
+                evidence["managed_by"] = {"id": bmc.id, "label": bmc.label, "ip": bmc.ip}
             out.append(
                 self.finding(
                     ctx,
-                    title=f"Watched device offline: {d.label}",
+                    title=(
+                        f"Watched device powered off: {d.label} ({bmc.label} answers)"
+                        if bmc is not None
+                        else f"Watched device offline: {d.label}"
+                    ),
                     key_parts=[d.key],
                     device_id=d.id,
-                    evidence={
-                        "ip": d.ip,
-                        "mac": d.mac,
-                        "last_seen": d.last_seen,
-                        "missed_rounds": missed,
-                    },
+                    evidence=evidence,
                 )
             )
         return out

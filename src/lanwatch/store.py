@@ -23,6 +23,7 @@ from lanwatch.models import (
     HostObservation,
     InfraRow,
     Kind,
+    LinkRow,
     NotificationRow,
     ServiceDiff,
     ServiceRow,
@@ -187,6 +188,21 @@ MIGRATIONS: list[str] = [
         max_ms   REAL
     );
     CREATE INDEX latency_target_ts ON latency(target, ts);
+    """,
+    # v11: devices that belong together (a BMC and its server). IF NOT EXISTS so the
+    # migration stays harmless if branches land in another order and it runs twice.
+    """
+    CREATE TABLE IF NOT EXISTS device_links (
+        id        INTEGER PRIMARY KEY,
+        a_id      INTEGER NOT NULL REFERENCES devices(id),
+        b_id      INTEGER NOT NULL REFERENCES devices(id),
+        kind      TEXT NOT NULL,
+        source    TEXT NOT NULL,
+        created   TEXT NOT NULL,
+        dismissed INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (a_id, b_id, kind)
+    );
+    CREATE INDEX IF NOT EXISTS device_links_b ON device_links(b_id);
     """,
 ]
 
@@ -598,6 +614,7 @@ class Store:
         with self._tx():
             for table in ("sightings", "services", "device_scans", "device_aliases", "findings"):
                 self._db.execute(f"DELETE FROM {table} WHERE device_id = ?", (device_id,))
+            self._db.execute("DELETE FROM device_links WHERE a_id = ?1 OR b_id = ?1", (device_id,))
             self._db.execute("UPDATE events SET device_id = NULL WHERE device_id = ?", (device_id,))
             self._db.execute("DELETE FROM devices WHERE id = ?", (device_id,))
             self.add_event(
@@ -630,6 +647,17 @@ class Store:
             )
             for table in ("sightings", "services", "device_scans", "findings"):
                 self._db.execute(f"DELETE FROM {table} WHERE device_id = ?", (other_id,))
+            # Links follow the device. One that `keep` already has stays as `keep` had it;
+            # one between the two merged devices would now point at itself and goes.
+            for col in ("a_id", "b_id"):
+                self._db.execute(
+                    f"UPDATE OR IGNORE device_links SET {col} = ? WHERE {col} = ?",
+                    (keep_id, other_id),
+                )
+            self._db.execute(
+                "DELETE FROM device_links WHERE a_id = ?1 OR b_id = ?1 OR a_id = b_id",
+                (other_id,),
+            )
             self._db.execute(
                 "UPDATE events SET device_id = ? WHERE device_id = ?", (keep_id, other_id)
             )
@@ -661,6 +689,95 @@ class Store:
             "SELECT key FROM device_aliases WHERE device_id = ? ORDER BY key", (device_id,)
         ).fetchall()
         return [str(r[0]) for r in rows]
+
+    # -- links between devices ---------------------------------------------
+
+    def links(self, device_id: int | None = None, dismissed: bool = False) -> list[LinkRow]:
+        """Links touching a device (or all of them), oldest first. Dismissed rows only when
+        asked for: they exist to keep turned-down suggestions from coming back."""
+        sql = "SELECT * FROM device_links WHERE dismissed = ?"
+        args: list[Any] = [int(dismissed)]
+        if device_id is not None:
+            sql += " AND (a_id = ? OR b_id = ?)"
+            args += [device_id, device_id]
+        rows = self._db.execute(sql + " ORDER BY id", args).fetchall()
+        return [_link(r) for r in rows]
+
+    def link_keys(self) -> set[tuple[int, int, str]]:
+        """(a, b, kind) of every link, confirmed or dismissed: what is no longer a
+        suggestion."""
+        rows = self._db.execute("SELECT a_id, b_id, kind FROM device_links").fetchall()
+        return {(int(r[0]), int(r[1]), str(r[2])) for r in rows}
+
+    def add_link(self, a_id: int, b_id: int, kind: str, source: str = "manual") -> int | None:
+        """Record that `a` relates to `b` (a BMC manages its server). Re-adding a dismissed
+        link brings it back. None when the two are the same device or either is unknown."""
+        return self._put_link(a_id, b_id, kind, source, dismissed=False)
+
+    def dismiss_link(self, a_id: int, b_id: int, kind: str, source: str) -> int | None:
+        """Turn down a suggested link, so it is not suggested again."""
+        return self._put_link(a_id, b_id, kind, source, dismissed=True)
+
+    def remove_link(self, link_id: int) -> bool:
+        """Remove a link. It is kept as dismissed, so a suggestion does not recreate it."""
+        row = self._db.execute(
+            "SELECT * FROM device_links WHERE id = ? AND dismissed = 0", (link_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        with self._tx():
+            self._db.execute("UPDATE device_links SET dismissed = 1 WHERE id = ?", (link_id,))
+            self.add_event(
+                "device.unlinked",
+                f"Removed link: {self._link_summary(row['a_id'], row['b_id'], row['kind'])}",
+                int(row["a_id"]),
+                data={"other": int(row["b_id"]), "kind": row["kind"]},
+            )
+        return True
+
+    def _put_link(
+        self, a_id: int, b_id: int, kind: str, source: str, dismissed: bool
+    ) -> int | None:
+        if a_id == b_id:
+            return None
+        n = self._db.execute(
+            "SELECT COUNT(*) FROM devices WHERE id IN (?, ?)", (a_id, b_id)
+        ).fetchone()[0]
+        if n != 2:
+            return None
+        before = self._db.execute(
+            "SELECT dismissed FROM device_links WHERE a_id = ? AND b_id = ? AND kind = ?",
+            (a_id, b_id, kind),
+        ).fetchone()
+        with self._tx():
+            self._db.execute(
+                """INSERT INTO device_links(a_id, b_id, kind, source, created, dismissed)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(a_id, b_id, kind) DO UPDATE SET
+                     dismissed = excluded.dismissed, source = excluded.source""",
+                (a_id, b_id, kind, source, iso(now_utc()), int(dismissed)),
+            )
+            if not dismissed and (before is None or before["dismissed"]):
+                self.add_event(
+                    "device.linked",
+                    f"Linked: {self._link_summary(a_id, b_id, kind)}",
+                    a_id,
+                    data={"other": b_id, "kind": kind, "source": source},
+                )
+        row = self._db.execute(
+            "SELECT id FROM device_links WHERE a_id = ? AND b_id = ? AND kind = ?",
+            (a_id, b_id, kind),
+        ).fetchone()
+        return int(row[0])
+
+    def _link_summary(self, a_id: int, b_id: int, kind: str) -> str:
+        def label(device_id: int) -> str:
+            r = self._db.execute(
+                "SELECT name, hostname, vendor, key FROM devices WHERE id = ?", (device_id,)
+            ).fetchone()
+            return str(r["name"] or r["hostname"] or r["vendor"] or r["key"]) if r else "?"
+
+        return f"{label(a_id)} {kind} {label(b_id)}"
 
     def set_device_classification(
         self, device_id: int, kind: str, description: str, confidence: float
@@ -1352,6 +1469,18 @@ def _device(row: sqlite3.Row, online: bool) -> Device:
         attrs=json.loads(row["attrs"] or "{}"),
         kind_manual=bool(row["kind_manual"]),
         watch=bool(row["watch"]),
+    )
+
+
+def _link(row: sqlite3.Row) -> LinkRow:
+    return LinkRow(
+        id=int(row["id"]),
+        a_id=int(row["a_id"]),
+        b_id=int(row["b_id"]),
+        kind=str(row["kind"]),
+        source=str(row["source"]),
+        created=str(row["created"]),
+        dismissed=bool(row["dismissed"]),
     )
 
 
