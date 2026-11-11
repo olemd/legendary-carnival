@@ -24,7 +24,7 @@ from lanwatch import __version__
 from lanwatch.collectors.base import CommandError, make_executor
 from lanwatch.config import Config
 from lanwatch.decoy import Decoys, port_label
-from lanwatch.models import FindingStatus, Severity, local_str
+from lanwatch.models import Device, FindingStatus, Severity, local_str
 from lanwatch.overview import ports_summary, render
 from lanwatch.overview import update as update_overview
 from lanwatch.scheduler import Job, Scheduler
@@ -164,6 +164,7 @@ def create_app(
             device=d,
             services=s.services(device_id, open_only=False),
             findings=findings,
+            junos=_junos_view(s, d),
             last_inventory=s.last_inventory_at(device_id),
             events=s.events(device_id=device_id, limit=50),
             presence=_presence_grid(s.presence(device_id, _days_ago(PRESENCE_DAYS))),
@@ -583,6 +584,19 @@ def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
         "clients_unknown": sum(1 for r in clients if not r.data.get("known")),
         "clients_guest": sum(1 for r in clients if r.data.get("guest")),
     }
+
+
+def _junos_view(s: Store, d: Device) -> dict[str, Any] | None:
+    """The Junos extras for a device read over SNMP, if its reader found any."""
+    from lanwatch.collectors.snmp_junos import device_view
+
+    if not d.ip:
+        return None
+    for r in s.infra("snmp-target"):
+        if r.data.get("host") == d.ip:
+            facts = (r.data.get("facts") or {}).get("junos")
+            return device_view(facts if isinstance(facts, dict) else None)
+    return None
 
 
 def _snmp_targets(s: Store, config: Config) -> list[dict[str, Any]]:

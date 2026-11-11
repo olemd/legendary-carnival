@@ -156,6 +156,10 @@ Hygiene checks:
   firmware; a **Topology** page; and rules for IoT devices on the main network, clients only
   the controller sees, and UniFi devices offline. API key, nothing leaves the LAN. See
   [docs/unifi.md](docs/unifi.md).
+- **Junos extras** (a Juniper router or switch read over SNMP; nothing to set up): chassis
+  alarms, storage, hardware state, the session table, each committed config change (user
+  and time), a missing rescue config and rising DHCP declines. A bonus: without Juniper
+  gear nothing changes. See [docs/snmp.md](docs/snmp.md#junos-extras).
 - **Router over SNMP** (`[snmp]`, off by default, read-only, every infra round,
   `lanwatch snmp`): the router's ARP and IPv6 neighbour table and, on Juniper, its DHCP
   leases. Each device shows the interface the router reaches it on and whether it holds a

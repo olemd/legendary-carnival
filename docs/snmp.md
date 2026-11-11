@@ -83,6 +83,30 @@ the final `commit`. When nothing else polls v2c any more, remove the community:
 `delete snmp community public`. `show snmp statistics` twice a few minutes apart tells you
 whether anything still does.
 
+### Junos extras
+
+A device that answers as Juniper (any device under `[snmp.devices]`, the router too) gets
+a few more reads, with nothing to configure and nothing to change on the device. They
+cover:
+
+- chassis alarms;
+- health: routing engine CPU, memory and temperature, the state of each FRU, and how
+  full the flash partitions are;
+- the commit log, and whether a rescue config is saved;
+- security sessions against the maximum;
+- screen counters per zone;
+- the DHCP server's decline counter;
+- licences.
+
+They show on the device page. Rules: `junos.chassis-alarm`, `junos.storage-full`,
+`junos.fru-not-online`, `junos.session-table-full`, `junos.config-changed` (one finding
+per commit, acknowledged by you), `junos.no-rescue-config` and `dhcp.declines-rising`.
+
+What a device does not have (no security sessions on an EX switch, no DHCP server, no
+chassis cluster) is left out quietly. The reads need `1.3.6.1.4.1.2636.3` and
+`1.3.6.1.2.1.25` (storage names) in the user's view; the `lanwatch` view from section 1
+has both.
+
 ### UniFi gateways
 
 UniFi Network has SNMPv3 with a username and one password, and fixed algorithms: SHA-1
