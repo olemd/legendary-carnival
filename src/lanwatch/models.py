@@ -62,6 +62,28 @@ def is_private_mac(mac: str | None) -> bool:
         return False
 
 
+# Hypervisors give virtual network cards addresses from their own prefixes, so the MAC
+# alone says "virtual machine". QEMU's 52:54:00 is locally administered, but it is the
+# hypervisor's fixed prefix, not an address a phone made up.
+VM_MAC_PREFIXES: dict[str, str] = {
+    "bc:24:11": "Proxmox",
+    "52:54:00": "QEMU/KVM",
+    "00:50:56": "VMware",
+    "00:0c:29": "VMware",
+    "00:05:69": "VMware",
+    "00:1c:14": "VMware",
+    "00:15:5d": "Hyper-V",
+    "00:16:3e": "Xen",
+    "08:00:27": "VirtualBox",
+    "00:1c:42": "Parallels",
+}
+
+
+def vm_platform(mac: str | None) -> str | None:
+    """The hypervisor whose virtual network cards use this MAC's prefix, or None."""
+    return VM_MAC_PREFIXES.get(mac[:8].lower()) if mac else None
+
+
 def normalize_mac(mac: str | None) -> str | None:
     if not mac:
         return None
@@ -150,7 +172,12 @@ class Device:
     def private_mac(self) -> bool:
         """A locally administered ("randomised") MAC address: phones and laptops make one up
         per network, and may change it, so such a device can reappear as a new one."""
-        return is_private_mac(self.mac)
+        return is_private_mac(self.mac) and self.vm is None
+
+    @property
+    def vm(self) -> str | None:
+        """The hypervisor when the MAC is a virtual network card's ("Proxmox"), else None."""
+        return vm_platform(self.mac)
 
 
 @dataclass(slots=True)
