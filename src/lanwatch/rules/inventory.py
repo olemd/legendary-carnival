@@ -88,7 +88,7 @@ class UnregisteredMacRule(Rule):
             return []  # no registry at hand: nothing to compare with
         out: list[Finding] = []
         for d in ctx.store.devices():
-            if not d.mac or d.private_mac or registry.lookup(d.mac) is not None:
+            if not d.mac or d.private_mac or d.vm or registry.lookup(d.mac) is not None:
                 continue
             out.append(
                 self.finding(

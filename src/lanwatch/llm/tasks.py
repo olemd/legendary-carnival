@@ -215,6 +215,9 @@ def device_facts(d: Device, services: list[ServiceRow]) -> dict[str, Any]:
         "mac_prefix": d.mac[:8] if d.mac else None,
         "open_ports": ports,
     }
+    # Only when set: a new key on every device would change every cache key.
+    if d.vm:
+        facts["virtual_machine"] = d.vm
     if d.attrs.get("upnp"):
         facts["upnp"] = d.attrs["upnp"]
     if d.attrs.get("mdns"):

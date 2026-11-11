@@ -41,8 +41,8 @@ def _tool(
 TOOLS: list[dict[str, Any]] = [
     _tool(
         "list_devices",
-        "List known devices with ip, mac, vendor, hostname, kind, online state and open port "
-        "count. "
+        "List known devices with ip, mac, vendor, vm (hypervisor, from the MAC), hostname, "
+        "kind, online state and open port count. "
         "Filter with online_only or a substring match on any field.",
         {
             "online_only": {"type": "boolean"},
@@ -185,6 +185,7 @@ class ToolRunner:
                 "ip": d.ip,
                 "mac": d.mac,
                 "vendor": d.vendor,
+                "vm": d.vm,
                 "hostname": d.hostname,
                 "name": d.name,
                 "kind": d.kind,
@@ -204,6 +205,7 @@ class ToolRunner:
             return {"error": f"no device {device_id}"}
         return {
             **asdict(d),
+            "vm": d.vm,
             "first_seen": local_str(d.first_seen),
             "last_seen": local_str(d.last_seen),
             "services": [

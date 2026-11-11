@@ -176,6 +176,9 @@ Hygiene checks:
   fresher IEEE registry, downloaded weekly, or from nmap's installed copy with `online = false`.
 - **DNS filtering** (`scan.dns_filter_check`, off by default): whether the resolver DHCP
   hands out blocks ads or known-malicious test names.
+- **Virtual machines** are recognised by the hypervisor's MAC prefix (Proxmox, QEMU/KVM,
+  VMware, Hyper-V, Xen, VirtualBox, Parallels) and marked VM next to the vendor. Such an
+  address is not reported as randomised or unregistered.
 
 History is pruned daily (`[store] keep_*_days`), so the database stops growing.
 

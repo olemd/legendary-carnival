@@ -10,7 +10,7 @@
       {% if d.kind or d.watch %}<br>{% endif %}{% if d.kind %}<span class="kind">{{ d.kind }}</span>{% endif %}{% if d.watch %} <span class="kind" title="A finding is raised when this device goes offline">watched</span>{% endif %}</td>
   <td class="mono">{{ d.ip or '-' }}</td>
   <td><span class="mono">{{ d.mac or '-' }}</span>{% if d.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}</td>
-  <td>{{ d.vendor or '-' }}</td>
+  <td>{{ d.vendor or '-' }}{% if d.vm %} <span class="kind" title="Virtual network card ({{ d.vm }}): a virtual machine">VM</span>{% endif %}</td>
   <td>{{ d.hostname or '-' }}</td>
   <td class="mono">{{ ports or '-' }}</td>
   <td>{% if open_by_dev.get(d.id) %}<a href="/devices/{{ d.id }}">{{ open_by_dev[d.id] }}</a>{% else %}-{% endif %}</td>

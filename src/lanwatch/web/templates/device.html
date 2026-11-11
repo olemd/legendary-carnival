@@ -6,7 +6,7 @@
   <dt>IP</dt><dd class="mono">{{ device.ip or '-' }}</dd>
   <dt>MAC</dt><dd><span class="mono">{{ device.mac or '-' }}</span>{% if device.private_mac %} <span class="kind" title="Locally administered address: made up by the device, and it may change">private</span>{% endif %}
       {% if aliases %}<br><span class="muted">also seen as <span class="mono">{{ aliases | join(', ') }}</span></span>{% endif %}</dd>
-  <dt>Vendor</dt><dd>{{ device.vendor or '-' }}</dd>
+  <dt>Vendor</dt><dd>{{ device.vendor or '-' }}{% if device.vm %} <span class="kind" title="Virtual network card ({{ device.vm }}): a virtual machine">VM</span>{% endif %}</dd>
   <dt>Hostname</dt><dd>{{ device.hostname or '-' }}</dd>
   <dt>Kind</dt><dd>{% if device.kind %}<span class="kind">{{ device.kind }}</span>
       {% if device.kind_manual %}<span class="muted">set by you</span>
