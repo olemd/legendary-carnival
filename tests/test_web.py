@@ -110,6 +110,40 @@ async def _noop() -> None:
     return None
 
 
+def test_device_page_firmware_line_says_up_to_date_or_behind(config: Config) -> None:
+    """attrs.firmware is a dict, and `fw.update` in a template is the dict's update method
+    (always true): every device read as "behind". The flag must be read as a key."""
+    _seed(config)
+    with Store(config.store_path) as store:
+        current, old = store.devices()[:2]
+        store.merge_device_attrs(
+            current.id,
+            {
+                "firmware": {
+                    "product": "Tasmota",
+                    "version": "16.0.0",
+                    "latest": "16.0.0",
+                    "update": False,
+                }
+            },
+        )
+        store.merge_device_attrs(
+            old.id,
+            {
+                "firmware": {
+                    "product": "Tasmota",
+                    "version": "14.3.0",
+                    "latest": "16.0.0",
+                    "update": True,
+                }
+            },
+        )
+    client = TestClient(create_app(config))
+    page = client.get(f"/devices/{current.id}").text
+    assert "up to date" in page and "behind" not in page
+    assert "behind" in client.get(f"/devices/{old.id}").text
+
+
 def test_status_page_without_a_scheduler_is_read_only(config: Config) -> None:
     client = TestClient(create_app(config))
     r = client.get("/status")

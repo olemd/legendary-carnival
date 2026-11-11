@@ -59,7 +59,9 @@ def test_presence_grid_shares_and_quietest_hour() -> None:
 
 def test_device_page_shows_presence(config: Config, tmp_path: Path) -> None:
     with Store(config.store_path) as store:
-        _round(store, [ROUTER, PHONE], timedelta(hours=1))
+        # Far enough apart to land in different hour cells at any time of day (one hour
+        # apart, both fell in the same cell during the first minute of an hour).
+        _round(store, [ROUTER, PHONE], timedelta(hours=3))
         _round(store, [ROUTER], timedelta(minutes=1))
         phone = store.device_by_key(PHONE.mac or "")
         assert phone is not None
