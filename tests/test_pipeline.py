@@ -239,7 +239,7 @@ async def test_recheck_pings_only_who_should_be_there(
     monkeypatch.setattr(pinger, "neighbours", lambda ex: _const({}))
     assert await recheck() == []
     # The router's ARP table and leases (SNMP) are places to look too, never presence.
-    from lanwatch.config import SnmpConfig
+    from tests.conftest import snmp_devices
 
     store.replace_infra(
         "router-arp",
@@ -249,7 +249,7 @@ async def test_recheck_pings_only_who_should_be_there(
     pinger.answers = {}
     await recheck()
     assert "192.168.1.70" not in pinger.asked[-1]  # snmp is off
-    config.snmp = SnmpConfig(enabled=True, auth_password="a" * 8, priv_password="p" * 8)
+    config.snmp = snmp_devices(gw={"router": True})
     assert await recheck() == []  # asked, did not answer: stays offline
     assert pinger.asked[-1][-1] == "192.168.1.70"
     config.scan.recheck_silent = False

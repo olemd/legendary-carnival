@@ -229,8 +229,9 @@ def test_chat_summary_and_tools(store: Store, tmp_path: Path) -> None:
     )
     rules_text = asyncio.run(runner.call("list_rules", {}))
     rules = json.loads(rules_text)  # whole, not cut off at MAX_RESULT_CHARS
-    assert any(r["id"] == "ssh.weak-algorithms" for r in rules)
+    assert any(r.startswith("ssh.weak-algorithms [") for r in rules)
     assert len(rules) == len(all_rules())
+    assert not any(r.endswith("(disabled)") for r in rules)  # only a rule switched off
     # Room to grow: every rule must fit with space to spare for the next ones.
     from lanwatch.llm.tools import MAX_RESULT_CHARS
 
@@ -483,3 +484,24 @@ def _init(self: OllamaClient, cfg: LlmConfig, fake: FakeOllama) -> None:
     self._client = fake.client()
     self._think_supported = None
     self.tools_supported = None
+
+
+def test_list_rules_lines_show_overrides(store: Store, tmp_path: Path) -> None:
+    import asyncio
+
+    from lanwatch.llm.tools import ToolRunner
+
+    config = Config.model_validate(
+        {
+            "data_dir": str(tmp_path),
+            "rules": {
+                "ssh.weak-algorithms": {"severity": "critical"},
+                "service.ftp-cleartext": {"enabled": False},
+            },
+        }
+    )
+    rules = json.loads(asyncio.run(ToolRunner(config, store).call("list_rules", {})))
+    ssh = next(r for r in rules if r.startswith("ssh.weak-algorithms "))
+    assert ssh.startswith("ssh.weak-algorithms [critical security]: ")
+    ftp = next(r for r in rules if r.startswith("service.ftp-cleartext "))
+    assert ftp.endswith(" (disabled)")

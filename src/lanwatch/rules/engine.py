@@ -2,27 +2,39 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
+import pkgutil
 from dataclasses import dataclass, field
 
+from lanwatch import rules as rules_pkg
 from lanwatch.config import Config
 from lanwatch.models import Finding
-from lanwatch.rules import airos, ids, infra, inventory, services, unifi, versions
 from lanwatch.rules.base import Rule, RuleContext
 
 log = logging.getLogger(__name__)
 
+# The modules that existed before rules were found by scanning, in their old order, so
+# the list (and everything that shows it) stays as it was. Any other module in
+# lanwatch.rules with a RULES list follows, by module name: a new rule file needs no
+# edit here.
+_FIRST = ("inventory", "services", "versions", "infra", "unifi", "airos", "ids")
+_NOT_RULES = {"base", "engine"}
+
 
 def all_rules() -> list[Rule]:
-    return [
-        *inventory.RULES,
-        *services.RULES,
-        *versions.RULES,
-        *infra.RULES,
-        *unifi.RULES,
-        *airos.RULES,
-        *ids.RULES,
-    ]
+    names = {m.name for m in pkgutil.iter_modules(rules_pkg.__path__)} - _NOT_RULES
+    ordered = [n for n in _FIRST if n in names] + sorted(names - set(_FIRST))
+    out: list[Rule] = []
+    seen: set[str] = set()
+    for name in ordered:
+        module = importlib.import_module(f"{rules_pkg.__name__}.{name}")
+        for rule in getattr(module, "RULES", []):
+            if rule.id in seen:
+                raise RuntimeError(f"two rules with the id {rule.id!r}")
+            seen.add(rule.id)
+            out.append(rule)
+    return out
 
 
 @dataclass(slots=True)

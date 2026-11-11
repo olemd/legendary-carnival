@@ -162,8 +162,10 @@ Hygiene checks:
   lease, an address the router ties to another MAC than the one that answered lanwatch
   becomes a finding, and addresses the router knows but the scan missed get the second,
   slower ping. SNMPv3 with authentication and encryption only, through net-snmp's
-  `snmpbulkwalk` (the `snmp` package); nothing leaves the LAN. See
-  [docs/snmp.md](docs/snmp.md).
+  `snmpbulkwalk` (the `snmp` package); nothing leaves the LAN. Other devices that answer
+  SNMPv3 (a UPS card, a switch) are read the same way. Every device, the router too, is
+  its own `[snmp.devices.<name>]` table with its own login, and `router = true` marks
+  the router. See [docs/snmp.md](docs/snmp.md).
 - **Internet exposure** (`[exposure]`, off by default, daily, `lanwatch exposure`): the
   public address looked up in Shodan's InternetDB, which scans the whole internet. Ports that
   answer from outside become a finding, critical when Shodan also matched the service to

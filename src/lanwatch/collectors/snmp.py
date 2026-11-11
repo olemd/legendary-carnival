@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from lanwatch.config import SnmpConfig
+from lanwatch.config import SnmpDeviceConfig
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +59,9 @@ JNX_DHCP_BINDINGS = "1.3.6.1.4.1.2636.3.61.61.1.2.1.1"
 # IANA enterprise numbers, the first arc after 1.3.6.1.4.1 in sysObjectID.
 VENDORS = {
     "9": "Cisco",
+    "11": "HP",  # Hewlett-Packard: printers, older ProCurve switches
+    "232": "HPE",  # Compaq's number, kept by HPE for iLO and Insight agents
+    "318": "APC",
     "2011": "Huawei",
     "2636": "Juniper",
     "4413": "Broadcom",
@@ -129,7 +132,7 @@ class DhcpLease:
         return {"ip": self.ip, "mac": self.mac, "since": self.since, "expires": self.expires}
 
 
-def conf_text(cfg: SnmpConfig) -> str:
+def conf_text(cfg: SnmpDeviceConfig) -> str:
     """snmp.conf for one session. The config validator keeps the values free of the
     whitespace and '#' that would end them early."""
     return (
@@ -342,7 +345,7 @@ class SnmpClient:
     """Walks against one host. Use as an async context manager: the private config
     directory lives as long as the client."""
 
-    def __init__(self, cfg: SnmpConfig, host: str) -> None:
+    def __init__(self, cfg: SnmpDeviceConfig, host: str) -> None:
         self.cfg = cfg
         self.host = host
         self._dir: tempfile.TemporaryDirectory[str] | None = None

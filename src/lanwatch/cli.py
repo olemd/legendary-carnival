@@ -414,35 +414,47 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
 
 @app.command()
 def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
-    """Read the router over SNMPv3 now: what it is, its ARP table and DHCP leases."""
+    """Read every SNMPv3 target now: the router (what it is, its ARP table and DHCP
+    leases) and every other device under [snmp.devices]."""
     if verbose:
         set_verbose()
     cfg = _state(ctx).loaded.config
-    if not cfg.snmp.enabled:
+    if not cfg.snmp.targets():
         typer.echo(
-            "the SNMP link is off ([snmp] enabled = false): set auth_password and"
-            " priv_password, see docs/snmp.md",
+            "nothing to read over SNMP: no enabled devices under [snmp.devices]; see docs/snmp.md",
             err=True,
         )
         raise typer.Exit(1)
     with _open_store(ctx) as store:
         out = asyncio.run(run_snmp(cfg, store))
-    if out.error is not None:
-        typer.echo(f"error reading {out.host or 'the router'}: {out.error}", err=True)
+    failed = 0
+    for t in out.targets:
+        label = t.host or "the router"
+        if t.error is not None:
+            failed += 1
+            typer.echo(f"error reading {label}: {t.error}", err=True)
+            continue
+        sys_ = t.system
+        assert sys_ is not None
+        days, rest = divmod(int(sys_.uptime_s), 86400)
+        name = t.name or sys_.name or "(no name)"
+        typer.echo(f"{label}: {name}, {sys_.vendor or sys_.object_id} ({t.role})")
+        typer.echo(f"  {sys_.descr}")
+        typer.echo(f"  up {days} days {rest // 3600} hours")
+        if t.role == "router":
+            typer.echo(
+                f"  {len(out.neighbours)} ARP entries"
+                + (f", {len(out.leases)} DHCP leases" if out.leases is not None else "")
+                + (
+                    f", {out.mismatches} held by another MAC than lanwatch saw"
+                    if out.mismatches
+                    else ""
+                )
+            )
+        if sys_.location:
+            typer.echo(f"  location: {sys_.location}")
+    if failed:
         raise typer.Exit(1)
-    sys_ = out.system
-    assert sys_ is not None
-    days, rest = divmod(int(sys_.uptime_s), 86400)
-    typer.echo(f"{out.host}: {sys_.name or '(no name)'}, {sys_.vendor or sys_.object_id}")
-    typer.echo(f"  {sys_.descr}")
-    typer.echo(f"  up {days} days {rest // 3600} hours")
-    typer.echo(
-        f"  {len(out.neighbours)} ARP entries"
-        + (f", {len(out.leases)} DHCP leases" if out.leases is not None else "")
-        + (f", {out.mismatches} held by another MAC than lanwatch saw" if out.mismatches else "")
-    )
-    if sys_.location:
-        typer.echo(f"  location: {sys_.location}")
 
 
 @app.command()

@@ -61,6 +61,21 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 {% elif not unifi.error %}<p class="empty">Not read yet; the infra round reads the controller every {{ config.schedule.infra_interval_s // 60 }} minutes, or run <code>lanwatch unifi</code>.</p>{% endif %}
 {% endif %}
 
+{% if snmp_targets %}
+<h2 id="snmp">SNMP devices</h2>
+<p class="lede">Everything lanwatch reads over SNMPv3 (read only, authPriv), from <code>[snmp.devices]</code>.</p>
+<div class="tbl"><table><thead><tr><th>Name</th><th>Address</th><th>Role</th><th>What it is</th><th>Up</th><th>Last read</th></tr></thead><tbody>
+{% for t in snmp_targets %}<tr>
+<td>{% if t.device %}<a href="/devices/{{ t.device.id }}">{{ t.name or t.device.label }}</a>{% else %}{{ t.name or '-' }}{% endif %}</td>
+<td class="mono">{{ t.host or 'default gateway' }}</td>
+<td>{{ t.role }}</td>
+<td>{% if t.system %}{{ t.system.vendor or t.system.object_id }} <span class="muted">{{ t.system.descr | truncate(70) }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+<td>{% if t.system %}{{ t.system.uptime_s | duration }}{% else %}-{% endif %}</td>
+<td>{% if t.error %}<span class="result-failed">failed{% if t.fails > 1 %} {{ t.fails }} times{% endif %}</span> <span class="muted mono">{{ t.error | truncate(80) }}</span>{% if t.last_ok %}<br><span class="muted">last good read {{ t.last_ok | local }}</span>{% endif %}{% elif t.last_ok %}<span class="result-ok">ok</span> <span class="muted">{{ t.last_ok | local }}</span>{% else %}<span class="muted">not yet</span>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+
 {% if router.enabled %}
 <h2 id="router">Router{% if router.system and router.system.name %}: {{ router.system.name }}{% endif %}</h2>
 {% if router.error %}<p class="note"><span class="result-failed">last read failed</span> <span class="mono">{{ router.error }}</span>{% if router.last_ok %} <span class="muted">· showing the state from {{ router.last_ok | local }}</span>{% endif %}</p>{% endif %}
