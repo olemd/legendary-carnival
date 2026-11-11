@@ -218,6 +218,14 @@ targets = ["gateway"]
 count = 4
 loss_threshold = 0.25                   # share of probes lost that counts as a bad round
 
+[snmp_audit]
+# Does any device answer SNMP with the well-known defaults? Once per deep scan (weekly)
+# and for each new device: one GET of sysDescr over SNMPv1 and v2c with `public` and
+# `private`, and whether an SNMPv3 agent answers. Never a SET or a walk, never real
+# credentials; the only place lanwatch speaks v1/v2c. scan.skip_hosts are left out.
+# A default community that answers is a finding (critical for `private`). docs/snmp.md.
+enabled = true
+
 [oui]
 # Vendor names for MAC addresses come from the IEEE registry lists arp-scan and nmap ship,
 # which age with the package: a device whose prefix was assigned after that shows no vendor.

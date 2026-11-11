@@ -15,6 +15,7 @@ from typing import Annotated, Any
 import typer
 
 from lanwatch import __version__, oui
+from lanwatch.collectors.audit_snmp import available as audit_available
 from lanwatch.config import ConfigError, LoadedConfig, dump_effective, load_config
 from lanwatch.decoy import Decoys, publish_listening, record_hit
 from lanwatch.logging_setup import set_verbose, setup_logging
@@ -30,6 +31,7 @@ from lanwatch.pipeline import (
     run_inventory,
     run_maintenance,
     run_snmp,
+    run_snmp_audit,
     run_unifi,
 )
 from lanwatch.rules.engine import all_rules
@@ -455,6 +457,47 @@ def snmp(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             typer.echo(f"  location: {sys_.location}")
     if failed:
         raise typer.Exit(1)
+
+
+@app.command("snmp-audit")
+def snmp_audit_cmd(
+    ctx: typer.Context,
+    host: Annotated[str | None, typer.Argument(help="one device's address; default: all")] = None,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Probe for SNMP default credentials now: v1/v2c with public and private, and
+    whether an SNMPv3 agent answers. A GET of sysDescr only."""
+    if verbose:
+        set_verbose()
+    cfg = _state(ctx).loaded.config
+    if not audit_available():
+        typer.echo("snmpget not found: install the snmp package", err=True)
+        raise typer.Exit(1)
+    with _open_store(ctx) as store:
+        try:
+            out = asyncio.run(run_snmp_audit(cfg, store, host))
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from e
+    for d, r in out.results:
+        if r.communities:
+            found = "; ".join(
+                f"'{c}' on {', '.join('v' + v for v in vs)}" for c, vs in r.communities.items()
+            )
+            typer.echo(f"{d.ip} {d.label}: DEFAULT COMMUNITY answers: {found}")
+            for key, what in (("sys_name", "name"), ("sys_descr", "description")):
+                value = getattr(r, key)
+                if value:
+                    typer.echo(f"  {what}: {' '.join(value.split())[:200]}")
+            if r.sys_object_id:
+                typer.echo(f"  sysObjectID: {r.sys_object_id}")
+        elif r.v3_agent:
+            typer.echo(f"{d.ip} {d.label}: SNMPv3 agent, no default community answers")
+        elif host is not None:
+            typer.echo(f"{d.ip} {d.label}: no answer (no default community, no SNMPv3 agent)")
+        for login in r.v3_defaults:
+            typer.echo(f"{d.ip} {d.label}: SNMPv3 DEFAULT LOGIN works: {login}")
+    typer.echo(f"{len(out.results)} devices probed, {len(out.new_findings)} new findings")
 
 
 @app.command()

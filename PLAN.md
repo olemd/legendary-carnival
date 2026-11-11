@@ -305,3 +305,12 @@ Bekreftet 2026-11-04:
 5. Home Assistant som første integrasjon etter ntfy/webhook.
 6. ~~Web-UI er sist og valgfritt.~~ Endret 2026-11-04: web-UI er del av M2 og
    primær presentasjonsflate sammen med `overview.md`.
+
+Bekreftet 2026-11-10:
+
+7. SNMP-polling er kun SNMPv3 authPriv, kun lesing. Unntaket er en egen revisjonsprobe
+   (`[snmp_audit]`, på som default): den spør hver enhet ukentlig og når den er ny om
+   `sysDescr` over SNMPv1 og v2c med `public` og `private`, og om en SNMPv3-agent svarer.
+   Kun GET, aldri SET eller walk, og aldri ekte legitimasjon. Et svar på en
+   standard-community er et funn. Communitytabellen lest over v3 er ikke bevis: et
+   APC-kort viser `public` som aktiv selv med SNMPv1 slått av.
