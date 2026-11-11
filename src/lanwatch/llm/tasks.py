@@ -102,9 +102,12 @@ class LlmService:
         await self.client.aclose()
 
     def cache_key(self, prompt_name: str, version: str, payload: dict[str, Any]) -> str:
+        """Keyed on the model that answers (client.active_model), not on llm.model: with a
+        fallback server, its answers must not be reused as the primary model's once the
+        primary is back, and the other way round."""
         raw = json.dumps(
             {
-                "m": self.config.llm.model,
+                "m": self.client.active_model,
                 "p": prompt_name,
                 "v": version,
                 "l": self.config.llm.language,
@@ -143,7 +146,7 @@ class LlmService:
             try:
                 result = await with_heartbeat(
                     self.client.chat_json(system, user, schema),
-                    f"LLM {prompt_name} ({self.config.llm.model})",
+                    f"LLM {prompt_name} ({self.client.active_model})",
                     log,
                 )
             except LlmUnavailable as e:
@@ -175,7 +178,10 @@ class LlmService:
                 )
                 user = user + f"\n\nYour previous answer was invalid ({last_error}). Answer again."
                 continue
-            self.store.llm_cache_put(key, self.config.llm.model, parsed.model_dump_json())
+            # The call may have switched to the fallback server; file the answer under the
+            # model that actually wrote it.
+            key = self.cache_key(prompt_name, prompt.version, payload)
+            self.store.llm_cache_put(key, self.client.active_model, parsed.model_dump_json())
             log.debug(
                 "LLM %s: %d+%d tokens, %.1fs",
                 prompt_name,

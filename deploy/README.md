@@ -148,8 +148,9 @@ no model, and the log says so. The primary is tried again on the next scan round
 question. A slow or failing answer from a reachable primary does not switch servers.
 Everything else in `[llm]` (timeout, temperature, language) applies to both.
 `lanwatch llm check` and the status page show both servers; the check fails only when
-neither is usable. Answers are cached under the primary's `llm.model` whichever server
-wrote them, so an answer from the fallback is kept when the primary comes back.
+neither is usable. Answers are cached per model that wrote them: what the fallback answered
+is reused while the primary stays down, and asked again of the primary once it is back.
+While the primary is down, each round spends one call finding that out.
 
 ## Config
 

@@ -80,6 +80,11 @@ class LlmClient:
         """The actual servers behind this client, in the order they are tried."""
         return [self]
 
+    @property
+    def active_model(self) -> str:
+        """The model that answers the next call. Cached answers are filed under it."""
+        return self.cfg.model
+
     def missing_model_hint(self) -> str:
         """What to do when status() says the model is not there."""
         raise NotImplementedError
@@ -363,6 +368,10 @@ class FallbackClient(LlmClient):
 
     def servers(self) -> list[LlmClient]:
         return [self.primary, self.fallback]
+
+    @property
+    def active_model(self) -> str:
+        return (self.fallback if self._primary_down else self.primary).cfg.model
 
     async def aclose(self) -> None:
         await self.primary.aclose()

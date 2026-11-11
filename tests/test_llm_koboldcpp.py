@@ -9,7 +9,7 @@ from typing import Any
 import httpx2
 import pytest
 
-from lanwatch.config import LlmConfig, LlmFallbackConfig
+from lanwatch.config import Config, LlmConfig, LlmFallbackConfig
 from lanwatch.llm.client import (
     FallbackClient,
     KoboldCppClient,
@@ -18,6 +18,7 @@ from lanwatch.llm.client import (
     OllamaClient,
     make_client,
 )
+from lanwatch.store import Store
 from tests.fake_koboldcpp import FakeKoboldCpp
 from tests.fake_ollama import FakeOllama
 
@@ -226,3 +227,36 @@ async def test_fallback_status() -> None:
     assert st.reachable and st.model_present and st.version == "0.0-fake"
     st = await FallbackClient(_dead(), _dead()).status()
     assert not st.reachable
+
+
+async def test_cache_is_per_answering_model(config: Config, store: Store) -> None:
+    """A fallback answer is reused while the primary is down, never as the primary's own."""
+    from lanwatch.llm.tasks import Classification, LlmService
+
+    payload = {"facts": "{}", "kinds": ["nas", "printer"]}
+    assert CFG.model != "fallback:1b"
+    ollama = FakeOllama(
+        lambda s, u, sc: {"kind": "nas", "description": "x", "confidence": 0.9},
+        models=["fallback:1b"],
+    )
+
+    async def ask(primary: KoboldCppClient) -> tuple[str, LlmService]:
+        fallback = OllamaClient(LlmConfig(model="fallback:1b"), ollama.client())
+        svc = LlmService(config, store, FallbackClient(primary, fallback))
+        out = await svc.ask("classify", payload, Classification)
+        assert out is not None
+        return out.kind.value, svc
+
+    # Primary down: the fallback answers.
+    assert (await ask(_dead()))[0] == "nas"
+    assert len(ollama.requests) == 1
+
+    # Primary back: it is asked, the fallback's cached answer is not passed off as its own.
+    kobold = FakeKoboldCpp(
+        lambda b: {"content": '{"kind": "printer", "description": "x", "confidence": 0.9}'}
+    )
+    kind, svc = await ask(KoboldCppClient(CFG, kobold.client()))
+    assert kind == "printer" and len(kobold.requests) == 1 and svc.cache_hits == 0
+    # ... and its own answer is cached.
+    kind, svc = await ask(KoboldCppClient(CFG, kobold.client()))
+    assert kind == "printer" and len(kobold.requests) == 1 and svc.cache_hits == 1
