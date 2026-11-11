@@ -1,4 +1,4 @@
-# lanwatch and the router over SNMPv3
+# lanwatch and the router (and other devices) over SNMPv3
 
 Most routers and firewalls answer SNMP, and the router knows things no scan from one host
 on the LAN can see. lanwatch reads them with **SNMPv3 only**, with authentication and
@@ -92,8 +92,8 @@ Network versions; Ubiquiti's article "SNMP Monitoring in UniFi Network"
 lanwatch, use the one password for both:
 
 ```toml
-[snmp]
-enabled = true
+[snmp.devices.gw]
+router = true
 user = "lanwatch"
 auth_protocol = "SHA"       # SHA-1; UniFi has nothing newer
 auth_password = "..."
@@ -113,18 +113,27 @@ answers v1 only) cannot be read.
 
 ## 2. Configure lanwatch
 
-In `/etc/lanwatch/config.toml`:
+In `/etc/lanwatch/config.toml`, every device read over SNMP is a table under
+`[snmp.devices]`, named by you. The name is how lanwatch shows the device. `router = true`
+marks the router, at most one; lanwatch also reads its ARP table and DHCP leases.
 
 ```toml
-[snmp]
-enabled = true
-# host = "192.168.1.1"      # default: this host's default gateway
+[snmp.devices.fw]
+router = true
+host = "192.168.1.1"        # the router only may leave it out: this host's default gateway
 user = "lanwatch"
-auth_protocol = "SHA-256"
+auth_protocol = "SHA-256"   # the default
 auth_password = "..."
-priv_protocol = "AES"       # AES-128; Junos has no other AES variant
+priv_protocol = "AES"       # the default; AES-128, Junos has no other AES variant
 priv_password = "..."
+# timeout_s = 5
+# enabled = false           # keep the table but stop reading the device
 ```
+
+Nothing is shared between devices: each table holds its device's whole login, since a
+user and its passwords belong to the device they were made on. 0.8.0's form, the
+router's login straight under `[snmp]` with `enabled = true`, is still read, as a device
+named `router`; `lanwatch config show` prints it in the new form.
 
 `lanwatch config show` prints `***` for both passwords. lanwatch never puts them on a
 command line: each read writes a private snmp.conf in a temporary directory, readable only
@@ -138,15 +147,42 @@ MIB files are not needed: lanwatch asks for numeric output and knows the few OID
 Debian's `snmp-mibs-downloader` (non-free, and it downloads the MIBs from the internet when
 installed) only makes `snmpwalk` output readable when you query the router by hand.
 
+### More devices than the router
+
+Other devices that answer SNMPv3 (a UPS management card, a switch, another firewall) get
+a table each, like the router but without `router = true`. lanwatch reads what each one
+says it is (the system group) every infra round, keeps its state, and shows them all on
+the infra page (`/infra#snmp`). A router is not needed for them.
+
+```toml
+[snmp.devices.ups]
+host = "192.168.1.20"
+user = "lanwatch"
+auth_protocol = "SHA"       # SHA-1: the newest some agents (APC NMC2, UniFi) offer
+auth_password = "..."
+priv_password = "..."
+
+[snmp.devices.core-switch]
+host = "192.168.1.30"
+user = "monitor"
+auth_password = "..."
+priv_password = "..."
+```
+
+The same rules apply to every login: authPriv, no MD5 or DES, passphrases of 8 characters
+or more. Each device is read on its own; one that fails keeps its last good state and
+does not stop the others.
+
 ## 3. Check it
 
 ```
 sudo lanwatch snmp
 ```
 
-prints what the router says it is, how long it has been up and how many ARP entries and
-leases it has. After that the infra job reads it every round (`schedule.infra_interval_s`,
-15 minutes by default).
+prints what every device under `[snmp.devices]` says it is, how long it has been up,
+and for the router how many ARP entries and leases it has. It exits with an error if any
+of them could not be read. After that the infra job reads them every round
+(`schedule.infra_interval_s`, 15 minutes by default).
 
 To test the user without lanwatch, from the same host:
 

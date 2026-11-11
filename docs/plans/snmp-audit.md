@@ -1,6 +1,6 @@
-# Plan: SNMP audit probe (branch `snmp-audit`, after `snmp-multi`)
+# Plan: SNMP audit probe (branch `snmp-audit`, from `main`, independent of the others)
 
-Status: draft, 2026-11-10.
+Status: built on branch `snmp-audit`, 2026-11-11 (see "Built" at the end).
 
 ## Why
 
@@ -80,3 +80,22 @@ So the probe is the port check itself. Targets:
 
 - UPS card: SNMPv1 is disabled in the UI (2026-11-10), but its community table still
   says active. That is the reason this probe exists, rather than the table check.
+
+## Built
+
+Where the branch differs from the plan above:
+
+- **The v3 presence check** is an unauthenticated GET with a user name no agent has,
+  not an engine-discovery request: net-snmp's `snmpget` does that discovery itself, and
+  the answer "unknown user name" is what tells that an agent is there. The engine ID
+  is not kept.
+- **`V3_DEFAULTS` is empty.** No vendor default could be confirmed from vendor
+  documentation, so `snmp.default-v3-user` has nothing to try yet.
+- **Identity:** when a community answers, one more GET with it reads `sysName.0` and
+  `sysObjectID.0`, so the finding and `lanwatch snmp-audit` say which device it is. Nothing
+  else is read over v1/v2c.
+- **Targets:** the devices of the deep scan (weekly) and of each new-device scan.
+  Configured SNMP devices that are offline are not probed (the branch does not depend
+  on `snmp-multi`); they are probed with the next deep scan once online.
+- First run on the home network (2026-11-11): `public` answered on an HP printer and on
+  two iLO 4 cards; the SRX and the UPS did not answer any default.

@@ -1,6 +1,6 @@
 # Plan: several SNMP devices (branch `snmp-multi`)
 
-Status: in progress, 2026-11-10. This branch is plumbing only, with no new findings and
+Status: done, 2026-11-11 (pull request open). This branch is plumbing only, with no new findings and
 no device-specific reads. The features each have their own branch:
 
 | Branch | Plan | Depends on |
@@ -100,6 +100,6 @@ and graphs (`snmp-ups`); any UPS or Junos read.
 3. ~~Reader registry and the rule module scan, with tests. The rule list must stay the
    same: compare the ids before and after.~~
 4. ~~Web: targets table, status tile, device facts.~~
-5. ~~Docs.~~ Then ruff, mypy, the full suite and the PR.
-6. Locally: migrate `config.toml` (the router and the UPS as `[snmp.devices.<name>]` tables) and build
-   the `.deb`.
+5. ~~Docs. Then ruff, mypy, the full suite and the PR.~~
+6. ~~Locally: migrate `config.toml` (the router and the UPS as `[snmp.devices.<name>]`
+   tables) and build the `.deb`.~~ Read live against an SRX300 and an APC AP9630.
