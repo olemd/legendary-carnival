@@ -104,7 +104,7 @@ cover:
 
 They show on the device page. Rules: `junos.chassis-alarm`, `junos.storage-full`,
 `junos.fru-not-online`, `junos.session-table-full`, `junos.config-changed` (one finding
-per commit, acknowledged by you), `junos.no-rescue-config` and `dhcp.declines-rising`.
+per commit, resolved by itself after a week), `junos.no-rescue-config` and `dhcp.declines-rising`.
 
 What a device does not have (no security sessions on an EX switch, no DHCP server, no
 chassis cluster) is left out quietly. The reads need `1.3.6.1.4.1.2636.3` and

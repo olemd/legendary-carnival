@@ -4,7 +4,7 @@ device that lacks the tables, and the rules over what it found."""
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from lanwatch import pipeline
 from lanwatch.collectors import snmp, snmp_junos
 from lanwatch.collectors.snmp_junos import date_and_time, parse_junos
 from lanwatch.config import Config, SnmpConfig
-from lanwatch.models import HostObservation, Severity
+from lanwatch.models import HostObservation, Severity, iso, now_utc
 from lanwatch.rules import junos
 from lanwatch.rules.base import Rule, RuleContext
 from lanwatch.store import Store
@@ -239,8 +239,28 @@ def test_config_changed_only_after_lanwatch_started_watching(store: Store, confi
     ]
     ctx = _with_facts(store, config, {"config": {"latest_index": 16, "events": events}})
     rule = junos.ConfigChangedRule()
-    assert not rule.auto_resolve
     assert _run(rule, ctx) == [("srx: configuration changed by admin (junoscript)", Severity.INFO)]
+
+
+def test_config_changed_resolves_after_a_week(store: Store, config: Config) -> None:
+    """A commit is a finding for a week, then resolves by itself: none to acknowledge."""
+    rule = junos.ConfigChangedRule()
+    assert rule.auto_resolve
+
+    def commit_ago(days: float) -> RuleContext:
+        at = iso(now_utc() - timedelta(days=days))
+        ev = {"index": 17, "at": at, "source": "cli", "user": "ops"}
+        facts = {"config": {"latest_index": 17, "events": [ev]}}
+        ctx = _with_facts(store, config, facts)
+        # lanwatch has watched the device for a month, so the commit is not "from before".
+        month_ago = iso(now_utc() - timedelta(days=30))
+        store._db.execute(
+            "UPDATE infra SET first_seen = ? WHERE kind = 'snmp-target'", (month_ago,)
+        )
+        return ctx
+
+    assert len(_run(rule, commit_ago(6))) == 1
+    assert _run(rule, commit_ago(8)) == []
 
 
 def test_no_rescue_config(store: Store, config: Config) -> None:

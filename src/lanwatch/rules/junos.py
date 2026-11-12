@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
-from lanwatch.models import Finding, Kind, Severity
+from lanwatch.models import Finding, Kind, Severity, iso, now_utc
 from lanwatch.rules.base import Rule, RuleContext
 
 STORAGE_FULL_PCT = 90
 SESSIONS_FULL = 0.8
+# How long a configuration commit stays a finding (junos.config-changed).
+CONFIG_CHANGE_RECENT = timedelta(days=7)
 # FRU states that mean the part is not doing its job. empty (a free slot), present, ready
 # and standby are normal.
 FRU_BAD = {"offline": Severity.MEDIUM, "announce offline": Severity.MEDIUM, "fault": Severity.HIGH}
@@ -193,20 +196,22 @@ class ConfigChangedRule(Rule):
     id = "junos.config-changed"
     kind = Kind.SECURITY
     default_severity = Severity.INFO
-    auto_resolve = False
+    # A commit is a finding for a week, then resolves by itself: an admin who commits daily
+    # should not have to acknowledge each one. The timeline keeps every one of them.
     description = (
-        "A configuration commit on a Juniper device. Who, how (CLI, NETCONF, ...) and "
-        "when come from the device's own change log. One finding per commit; "
-        "acknowledge it once you know about it. Commits from before lanwatch first read the "
-        "device are not reported."
+        "A configuration commit on a Juniper device in the last 7 days. Who, how (CLI, "
+        "NETCONF, ...) and when come from the device's own change log. One finding per "
+        "commit, which resolves by itself after a week; the timeline keeps them. Commits from "
+        "before lanwatch first read the device are not reported."
     )
 
     def evaluate(self, ctx: RuleContext) -> list[Finding]:
         out: list[Finding] = []
+        recent = iso(now_utc() - CONFIG_CHANGE_RECENT)
         for row in junos_rows(ctx):
             for ev in (row.facts.get("config") or {}).get("events") or []:
                 at = str(ev.get("at") or "")
-                if not at or at <= row.first_seen:
+                if not at or at <= row.first_seen or at < recent:
                     continue
                 user = ev.get("user") or "?"
                 out.append(
