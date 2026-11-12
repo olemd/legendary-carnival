@@ -227,3 +227,130 @@ async def test_a_failed_batch_costs_only_its_own_hosts() -> None:
 
     with pytest.raises(RuntimeError, match="nmap failed"):
         await scan_services(_Nmap(fail_all=True), targets, ScanConfig(), deep=False)
+
+
+def _host_xml(ip: str, ports: str = "", timedout: bool = False) -> str:
+    flag = ' timedout="true"' if timedout else ""
+    return (
+        f'<host starttime="1" endtime="2"{flag}>'
+        '<status state="up" reason="user-set" reason_ttl="0"/>'
+        f'<address addr="{ip}" addrtype="ipv4"/><ports>{ports}</ports></host>'
+    )
+
+
+def _scan_xml(proto: str, spec: str, *hosts: str) -> str:
+    return (
+        f'<nmaprun><scaninfo type="connect" protocol="{proto}" numservices="1" '
+        f'services="{spec}"/>{"".join(hosts)}</nmaprun>'
+    )
+
+
+_SSH = '<port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port>'
+_SNMP = '<port protocol="udp" portid="161"><state state="open"/><service name="snmp"/></port>'
+
+
+def test_timed_out_host_is_not_read_as_all_ports_closed() -> None:
+    # nmap reports a host it gave up on (--host-timeout) as up, with no ports and exit 0.
+    # Read literally that closes every port it had, and resolves every finding on them:
+    # hydra lost its SSH legacy-algorithms finding this way while sshd kept running.
+    xml = _scan_xml("tcp", "1-1000", _host_xml("10.0.0.1", timedout=True))
+    res = parse_nmap_xml_services(xml)
+    assert res.hosts == [] and res.timed_out == {"10.0.0.1"}
+    assert res.scanned  # the port range is still known for the hosts that did finish
+
+
+class _TimeoutNmap:
+    """nmap whose TCP and UDP passes each give a fixed answer."""
+
+    name = "fake"
+
+    def __init__(self, tcp: str, udp: str) -> None:
+        self.tcp, self.udp = tcp, udp
+
+    async def which(self, binary: str) -> tuple[bool, bool]:
+        return True, True  # root, so the deep scan runs its UDP pass
+
+    async def run(self, args: list[str], timeout: float) -> tuple[int, str, str]:
+        return 0, (self.udp if "-sU" in args else self.tcp), ""
+
+
+async def test_host_timed_out_in_either_pass_is_left_out_whole() -> None:
+    from lanwatch.collectors.services import scan_services
+
+    targets = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+    tcp = _scan_xml(
+        "tcp",
+        "1-65535",
+        _host_xml("10.0.0.1", _SSH),
+        _host_xml("10.0.0.2", timedout=True),  # TCP gave up: its UDP half must not count
+        _host_xml("10.0.0.3", _SSH),
+    )
+    udp = _scan_xml(
+        "udp",
+        "161",
+        _host_xml("10.0.0.1", _SNMP),
+        _host_xml("10.0.0.2", _SNMP),
+        _host_xml("10.0.0.3", timedout=True),  # UDP gave up: its TCP half must not count
+    )
+    cfg = ScanConfig(deep_udp_top_ports=1)
+    result = await scan_services(_TimeoutNmap(tcp, udp), targets, cfg, deep=True)
+    assert [h.ip for h in result.hosts] == ["10.0.0.1"]
+    assert [(p.port, p.proto) for p in result.hosts[0].ports] == [(22, "tcp"), (161, "udp")]
+    assert result.timed_out == {"10.0.0.2", "10.0.0.3"}
+
+
+class _GroupNmap:
+    """nmap where a group holding the slow host times out as a whole, as the switch at
+    172.16.123.67 made hydra do; a run of one fast host finishes."""
+
+    name = "fake"
+
+    def __init__(self, slow: str) -> None:
+        self.slow = slow
+        self.runs: list[list[str]] = []
+        self.running = self.most = 0
+
+    async def which(self, binary: str) -> tuple[bool, bool]:
+        return True, False
+
+    async def run(self, args: list[str], timeout: float) -> tuple[int, str, str]:
+        import asyncio
+
+        targets = [a for a in args if a.startswith("10.0.0.")]
+        self.runs.append(targets)
+        self.running += 1
+        self.most = max(self.most, self.running)
+        await asyncio.sleep(0)  # let parallel rescans overlap
+        self.running -= 1
+        stuck = self.slow in targets
+        hosts = [_host_xml(ip, "" if stuck else _SSH, timedout=stuck) for ip in targets]
+        return 0, _scan_xml("tcp", "1-1000", *hosts), ""
+
+
+async def test_hosts_held_back_by_a_slow_group_member_are_rescanned_alone() -> None:
+    from lanwatch.collectors.services import scan_services
+
+    targets = [f"10.0.0.{n}" for n in range(1, 9)]
+    ex = _GroupNmap(slow="10.0.0.3")
+    result = await scan_services(ex, targets, ScanConfig(max_parallel_hosts=2), deep=False)
+
+    # The first run (4 hosts) timed out as a whole; its three fast hosts are scanned again
+    # one by one and finish. The slow host times out alone too and is left out.
+    assert sorted(h.ip for h in result.hosts) == sorted(set(targets) - {"10.0.0.3"})
+    assert all(h.ports for h in result.hosts)
+    assert result.timed_out == {"10.0.0.3"}
+    retries = ex.runs[2:]
+    assert sorted(r[0] for r in retries) == ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    assert all(len(r) == 1 for r in retries)
+    assert ex.most <= 2  # no more rescans at once than a host group holds
+
+
+async def test_deep_scan_does_not_rescan_timed_out_hosts() -> None:
+    # A deep scan's 15-minute limit per host would make one-by-one retries cost hours.
+    from lanwatch.collectors.services import scan_services
+
+    ex = _GroupNmap(slow="10.0.0.1")
+    cfg = ScanConfig(deep_udp_top_ports=0)
+    result = await scan_services(ex, ["10.0.0.1", "10.0.0.2"], cfg, deep=True)
+    assert result.hosts == [] and result.timed_out == {"10.0.0.1", "10.0.0.2"}
+    assert len(ex.runs) == 1
