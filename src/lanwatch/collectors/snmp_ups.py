@@ -139,6 +139,9 @@ APC_TEST_SCHEDULE_DAYS: dict[int, int | None] = {
 # machine-readable release list. Checked 2026-11-10 against se.com (NMC2 for Smart-UPS:
 # 7.2.2, 2025-09-04). NMC3 (AP964x) is not pinned until there is one to compare with.
 NMC_LATEST = {"AP9630": "7.2.2", "AP9631": "7.2.2", "AP9635": "7.2.2"}
+# When NMC_LATEST was last checked. The table goes stale between lanwatch releases, so
+# "newest" is only ever claimed as of this date.
+NMC_LATEST_CHECKED = "2026-11-10"
 NMC_FAMILY = {"AP9630": "NMC2", "AP9631": "NMC2", "AP9635": "NMC2"}
 
 
@@ -200,6 +203,7 @@ def card_firmware(descr: str, checked: str) -> dict[str, Any] | None:
         "product": "APC NMC",
         "version": version,
         "latest": latest,
+        "latest_checked": NMC_LATEST_CHECKED if latest else None,
         "update": is_older(version, latest) if latest else None,
         "source": "snmp",
         "model": model,

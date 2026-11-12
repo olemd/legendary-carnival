@@ -86,10 +86,13 @@ def test_card_firmware_against_the_pinned_latest() -> None:
         "7.2.2",
         False,
     )
+    # "Newest" only ever as of the day the list was checked: the table goes stale.
+    assert fw["latest_checked"] == snmp_ups.NMC_LATEST_CHECKED
     older = snmp_ups.card_firmware(descr.replace("AF1:v7.2.2", "AF1:v6.9.6"), "t")
     assert older is not None and older["update"] is True
     unknown = snmp_ups.card_firmware(descr.replace("MN:AP9630", "MN:AP9641"), "t")
     assert unknown is not None and unknown["latest"] is None and unknown["update"] is None
+    assert unknown["latest_checked"] is None
 
 
 def _powernet_walks(tmp_path: Path) -> None:
@@ -281,7 +284,8 @@ def test_ups_on_the_device_page_and_dashboard(config: Config) -> None:
     page = client.get(f"/devices/{device.id}").text
     assert 'id="ups"' in page and "on battery" in page
     assert "RBC43" in page and "2030-05-31" in page
-    assert "AP9630" in page and "newest" in page
+    assert "AP9630" in page and "newest known" in page
+    assert f"list checked {snmp_ups.NMC_LATEST_CHECKED}" in page
     assert page.count('class="ups-chart"') == 2  # load and input voltage have readings
     assert 'class="ref"' in page and ">207 V<" in page and ">253 V<" in page
     assert "Went on battery" in page

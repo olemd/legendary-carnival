@@ -86,7 +86,7 @@ svg.ups-chart rect.frame { fill:none; stroke:var(--line) }
 <h3>Firmware</h3>
 <dl class="facts">
   {% if u.firmware %}<dt>UPS</dt><dd class="mono">{{ u.firmware }} <span class="muted">· shown only: there is no official list to compare with</span></dd>{% endif %}
-  {% set fw = device.attrs.firmware %}{% if fw and fw.product == 'APC NMC' %}<dt>Card</dt><dd>{{ fw.model }}{% if fw.platform %} ({{ fw.platform }}){% endif %} <span class="mono">{{ fw.version }}</span>{% if fw['update'] %} · <span class="result-failed">{{ fw.latest }} available</span>{% elif fw.latest %} · <span class="result-ok">newest</span> <span class="muted">({{ fw.latest }}, pinned)</span>{% endif %}</dd>{% endif %}
+  {% set fw = device.attrs.firmware %}{% if fw and fw.product == 'APC NMC' %}<dt>Card</dt><dd>{{ fw.model }}{% if fw.platform %} ({{ fw.platform }}){% endif %} <span class="mono">{{ fw.version }}</span>{% if fw['update'] %} · <span class="result-failed">{{ fw.latest }} available</span>{% elif fw.latest %} · <span class="result-ok">newest known</span> <span class="muted">({{ fw.latest }}{% if fw.latest_checked %}, list checked {{ fw.latest_checked }}{% endif %})</span>{% endif %}</dd>{% endif %}
   {% if u.sku or u.manufactured %}<dt>Unit</dt><dd>{{ u.sku or '' }}{% if u.manufactured %} <span class="muted">· made {{ u.manufactured }}</span>{% endif %}</dd>{% endif %}
 </dl>
 
