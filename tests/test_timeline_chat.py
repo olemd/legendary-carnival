@@ -308,7 +308,7 @@ def test_answer_question_tool_loop(store: Store, tmp_path: Path) -> None:
     assert [m["role"] for m in first["messages"]] == ["system", "user", "assistant", "user"]
     assert (
         "devices: 2 known" in first["messages"][0]["content"]
-        and "Norwegian" in first["messages"][0]["content"]
+        and "Answer in English" in first["messages"][0]["content"]
     )
     assert [m["role"] for m in fake.requests[2]["messages"]][-4:] == [
         "assistant",

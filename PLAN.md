@@ -169,7 +169,7 @@ Rolle: språk og klassifisering, ikke deteksjon.
   budsjett per runde, digest-prioriteringer som peker på ukjente id-er kastes.
 - Degradering: Ollama nede → skanning upåvirket, LLM-arbeid tas igjen neste
   runde. Varsel i logg maks én gang i timen.
-- Språk: `llm.language`, default `nb`. Tekniske termer holdes på engelsk i prompt.
+- Språk: `llm.language`, default `en`. Tekniske termer holdes på engelsk i prompt.
 
 ## 6. Scheduler, defaults
 
