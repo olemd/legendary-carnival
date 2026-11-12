@@ -1,3 +1,15 @@
+lanwatch (0.9.4) unstable; urgency=medium
+
+  * The packages are now published in an apt repository on kode.naiv.no,
+    with a suite for Debian 12 (bookworm), Debian 13 (trixie) and Ubuntu
+    24.04 (noble), so "apt upgrade" brings new releases. The README's
+    quick start shows the sources file. An existing install has to add
+    it once.
+  * The source repository is public. It has a LICENSE file (MIT, as
+    before) and a SECURITY.md that says how to report a vulnerability.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 11:50:15 +0100
+
 lanwatch (0.9.3) unstable; urgency=medium
 
   * A config error now fails "systemctl start" and "systemctl restart"
