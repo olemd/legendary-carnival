@@ -10,15 +10,21 @@ from lanwatch.collectors.audit_snmp import identity
 from lanwatch.models import Device, Finding, Kind, Severity, iso, now_utc
 from lanwatch.rules.base import Rule, RuleContext
 
-# The probe runs weekly; a result older than this says nothing about now (the device may
-# be gone, or the probe switched off), and the finding then resolves.
-MAX_AGE = timedelta(days=10)
+# The probe runs with the deep scan (weekly by default). A result older than this many
+# deep intervals says nothing about now (the device may be gone, or the probe switched off),
+# and the finding then resolves. Three, not one: a device that is off on the day of one
+# deep scan goes two intervals between probes, and its finding must not resolve and reopen.
+MAX_AGE_INTERVALS = 3
+
+
+def max_age(ctx: RuleContext) -> timedelta:
+    return timedelta(seconds=MAX_AGE_INTERVALS * ctx.config.schedule.deep_interval_s)
 
 
 def _fresh_audits(ctx: RuleContext) -> list[tuple[Device, dict[str, Any]]]:
     if not ctx.config.snmp_audit.enabled:
         return []
-    fresh = iso(now_utc() - MAX_AGE)
+    fresh = iso(now_utc() - max_age(ctx))
     out: list[tuple[Device, dict[str, Any]]] = []
     for d in ctx.store.devices():
         a = d.attrs.get("snmp_audit")

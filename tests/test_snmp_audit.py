@@ -4,6 +4,7 @@ the schedule hook and the CLI."""
 from __future__ import annotations
 
 import stat
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from lanwatch import pipeline
 from lanwatch.cli import app
 from lanwatch.collectors import audit_snmp
 from lanwatch.config import Config
-from lanwatch.models import HostObservation, Severity
+from lanwatch.models import HostObservation, Severity, iso, now_utc
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.engine import Engine
 from lanwatch.store import Store
@@ -172,6 +173,29 @@ async def test_old_results_and_switched_off_do_not_count(
     assert _findings(store, config) == {}
     store.merge_device_attrs(d.id, {"snmp_audit": dict(old, checked="2999-01-01T00:00:00+00:00")})
     config.snmp_audit.enabled = False
+    assert _findings(store, config) == {}
+
+
+async def test_one_missed_deep_scan_keeps_the_finding_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: Store, config: Config
+) -> None:
+    """A device that is off on the day of one weekly deep scan goes two weeks between
+    probes; its finding must stay open, not resolve and reopen. Three weeks resolves it."""
+    fake_snmpget(tmp_path, monkeypatch)
+    _devices(store, "192.0.2.10")
+    agent(tmp_path, "192.0.2.10", "public:1")
+    await pipeline.snmp_audit(store, store.devices())
+    d = store.device_by_ip("192.0.2.10")
+    assert d is not None
+    week = config.schedule.deep_interval_s
+
+    def probed_ago(seconds: float) -> None:
+        at = iso(now_utc() - timedelta(seconds=seconds))
+        store.merge_device_attrs(d.id, {"snmp_audit": dict(d.attrs["snmp_audit"], checked=at)})
+
+    probed_ago(2 * week + 3600)
+    assert len(_findings(store, config)) == 1
+    probed_ago(3 * week + 3600)
     assert _findings(store, config) == {}
 
 
