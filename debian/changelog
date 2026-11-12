@@ -1,3 +1,26 @@
+lanwatch (0.10.0) unstable; urgency=medium
+
+  * UniFi: link speed per port on the device page and the infra page, and
+    net.unifi-slow-link (info) for a port that can do 1 Gbit/s or more but
+    is up at 100 Mbit/s or less: a 10/100 device, or a cable with a broken
+    pair (#20).
+  * UniFi: uptime, CPU and memory use and uplink rate per UniFi device,
+    with graphs over a day and a week on the device page. The rate is a
+    sample at each read, not an average. A device that has restarted
+    since the previous read gets a unifi.device-restarted entry on the
+    timeline. One more request per online UniFi device per infra round
+    (#20).
+  * UniFi: net.unifi-radio-retries (low) for a radio that has resent at
+    least 30 % of what it transmitted at every read for about an hour.
+    The threshold is the new setting tx_retries_warn_pct under [unifi]
+    (#20).
+  * UniFi: gear the controller sees but nobody has adopted is listed on
+    the infra page and by "lanwatch unifi", and raises
+    inventory.unifi-pending-device (low). Needs Network 10 or later
+    (#20).
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 13:37:57 +0100
+
 lanwatch (0.9.5) unstable; urgency=medium
 
   * The LLM now writes in English unless told otherwise: the default for
