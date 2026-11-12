@@ -204,6 +204,41 @@ class UnifiSlowLinkRule(Rule):
         return out
 
 
+class UnifiPendingDeviceRule(Rule):
+    id = "inventory.unifi-pending-device"
+    kind = Kind.PROBLEM
+    default_severity = Severity.LOW
+    description = (
+        "The controller sees UniFi gear on the network that nobody has adopted. It is new "
+        "out of the box, it has been factory reset (and then no longer does its job), or it "
+        "is not yours. Adopt it in the controller if it is yours; if you do not recognise "
+        "it, find where it is plugged in. Resolves when it is adopted or gone."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("unifi-pending"):
+            d = ctx.store.device_by_key(r.key)
+            what = r.data.get("model") or "device"
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"UniFi {what} ({r.data.get('ip') or r.key}) is waiting to be adopted",
+                    key_parts=[r.key],
+                    device_id=d.id if d else None,
+                    evidence={
+                        "model": r.data.get("model"),
+                        "mac": r.key,
+                        "ip": r.data.get("ip"),
+                        "state": r.data.get("state"),
+                        "firmware_version": r.data.get("firmware_version"),
+                        "known_to_lanwatch": d is not None,
+                    },
+                )
+            )
+        return out
+
+
 # net.unifi-radio-retries looks at this many infra rounds and needs a reading from at least
 # MIN_RETRY_READS of them, all at or above the threshold: one bad sample is just a busy
 # moment.
@@ -275,4 +310,5 @@ RULES: list[Rule] = [
     UnifiDeviceOfflineRule(),
     UnifiSlowLinkRule(),
     UnifiRadioRetriesRule(),
+    UnifiPendingDeviceRule(),
 ]

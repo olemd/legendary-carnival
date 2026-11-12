@@ -32,6 +32,7 @@ from lanwatch.rules.unifi import (
     IotOnMainNetworkRule,
     UnifiDeviceOfflineRule,
     UnifiOnlyClientRule,
+    UnifiPendingDeviceRule,
     UnifiRadioRetriesRule,
     UnifiSlowLinkRule,
 )
@@ -66,6 +67,8 @@ class Controller:
         self.patch: dict[str, Any] = {}
         # Per device id: the statistics answer, instead of the fixture.
         self.stats: dict[str, Any] = {}
+        # False: answer 404 for /pending-devices, as a controller older than Network 10.
+        self.has_pending = True
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.calls.append(
@@ -107,6 +110,10 @@ class Controller:
         if path.startswith(f"/sites/{SITE}/networks/"):
             which = {NET_DEFAULT: "network-default", NET_IOT: "network-iot"}[path.rsplit("/", 1)[1]]
             return httpx2.Response(200, json=_fx(which))
+        if path == "/pending-devices":
+            if not self.has_pending:
+                return httpx2.Response(404, text="not found")
+            return httpx2.Response(200, json=_fx("pending-devices"))
         if path == f"/sites/{SITE}/wifi/broadcasts":
             return httpx2.Response(200, json=_fx("wifi-broadcasts"))
         raise AssertionError(f"unexpected request {path}")
@@ -737,6 +744,35 @@ async def test_radio_retries_rule_needs_an_hour_of_bad_reads(config: Config) -> 
         _cfg(tx_retries_warn_pct=0)
 
 
+async def test_pending_devices_rule_and_page(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        out = await collect_unifi(config, store, sid, Controller().client())
+        assert out.snapshot is not None
+        assert [(p.mac, p.model) for p in out.snapshot.pending] == [
+            ("a8:bb:cc:00:00:09", "U6 Lite")
+        ]
+        found = UnifiPendingDeviceRule().evaluate(_ctx(store, config))
+        assert [f.title for f in found] == ["UniFi U6 Lite (192.168.1.50) is waiting to be adopted"]
+        assert found[0].severity is Severity.LOW and found[0].device_id is None
+        assert found[0].evidence["known_to_lanwatch"] is False
+        assert found[0].evidence["firmware_version"] == "6.6.77"
+    page = TestClient(create_app(config)).get("/infra").text
+    assert "Waiting for adoption" in page and "a8:bb:cc:00:00:09" in page
+
+    # A controller without the endpoint: the rest is read as before, and nothing is pending.
+    with Store(config.store_path) as store:
+        ctl = Controller()
+        ctl.has_pending = False
+        out = await collect_unifi(config, store, sid, ctl.client())
+        assert out.error is None and out.devices == 3
+        assert store.infra("unifi-pending") == []
+        assert UnifiPendingDeviceRule().evaluate(_ctx(store, config)) == []
+    assert "Waiting for adoption" not in TestClient(create_app(config)).get("/infra").text
+
+
 def test_topology_layout_and_overflow(store: Store) -> None:
     assert build_topology(store) is None
     sid = store.begin_snapshot("infra", "t")
@@ -849,8 +885,10 @@ def test_cli_unifi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert "UniFi Network 10.1.84, site Home" in r.output and "update available" in r.output
     # Device columns are as wide as their longest entry: a long model name ("USW-Lite-8-PoE")
     # no longer runs into the state column.
-    rows = r.output.split("devices:\n", 1)[1].split("clients:", 1)[0].splitlines()
+    devices, pending = r.output.split("devices:\n", 1)[1].split("waiting for adoption:\n", 1)
+    rows = devices.splitlines()
     assert len(rows) == 3
+    assert pending.startswith("  U6 Lite  192.168.1.50  a8:bb:cc:00:00:09\nclients:")
     states = {row.index(state) for row in rows for state in ("online", "offline") if state in row}
     assert len(states) == 1, rows
     assert "clients: 2 (1 wired, 1 wireless, 1 guest); 2 not seen by lanwatch" in r.output

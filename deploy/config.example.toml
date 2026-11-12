@@ -167,8 +167,8 @@ timeout_s = 8
 [unifi]
 # Read-only link to a UniFi Network controller (a UniFi OS console or UniFi OS Server,
 # Network 9.3+). Per client: wired/wireless, uplink device, guest, controller name,
-# network/VLAN; the networks, SSIDs and UniFi devices themselves (state, pending firmware);
-# the Topology page; three rules. The key comes from the Network app's Integrations page
+# network/VLAN; the networks, SSIDs and UniFi devices themselves (state, pending firmware,
+# link speed per port, uptime, CPU, memory, uplink rate); the Topology page; six rules. The key comes from the Network app's Integrations page
 # (/network/default/integrations). Stays on the LAN. See docs/unifi.md.
 enabled = false
 url = "https://192.168.1.1"             # the console; lanwatch appends the API path

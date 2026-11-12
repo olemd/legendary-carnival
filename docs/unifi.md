@@ -11,10 +11,13 @@ can read what the controller knows and no scan can see:
   radios, and how they are chained together;
 - per UniFi device that is online: uptime, CPU and memory use, how much it was sending
   and receiving on its uplink when the controller last heard from it, and for each radio
-  the share of its transmissions it had to resend.
+  the share of its transmissions it had to resend;
+- UniFi gear the controller sees on the network but nobody has adopted (Network 10 or
+  later).
 
-That feeds five rules (`net.iot-on-main-network`, `inventory.unifi-only`,
-`net.unifi-device-offline`, `net.unifi-slow-link`, `net.unifi-radio-retries`), sharpens the flat-network note, puts UniFi firmware under the
+That feeds six rules (`net.iot-on-main-network`, `inventory.unifi-only`,
+`net.unifi-device-offline`, `net.unifi-slow-link`, `net.unifi-radio-retries`,
+`inventory.unifi-pending-device`), sharpens the flat-network note, puts UniFi firmware under the
 existing `device.firmware-outdated` rule, and draws the **Topology** page.
 
 Everything lanwatch does is read-only, over HTTPS, on the LAN: none of the API's write
@@ -115,7 +118,8 @@ used in between. A device whose uptime has gone down since the previous read get
 **Infra page.** Controller version and site, the networks with VLAN, subnet, SSIDs,
 isolation and internet access, the SSIDs with their type, and the UniFi devices with state,
 firmware, client counts, any port with a slow link, uptime, CPU and memory use, and the
-uplink rate. Plus how many clients lanwatch has never seen itself.
+uplink rate. Under *Waiting for adoption*, UniFi gear nobody has adopted. Plus how many
+clients lanwatch has never seen itself.
 
 **Topology page.** Gateway on the left, access points and switches beside it, clients under
 the device they hang off, each labelled with its network. The same tree as a list below.
@@ -129,11 +133,12 @@ the device they hang off, each labelled with its network. The same tree as a lis
 | `net.unifi-device-offline` | high | An adopted device is offline, isolated or has its connection interrupted. Resolves when it is back. |
 | `net.unifi-slow-link` | info | A port that can do 1 Gbit/s or more has a link at 100 Mbit/s or less: a 10/100 device, or a cable with a broken pair. The controller does not say what is plugged in; accept the finding if it is a 10/100 device. |
 | `net.unifi-radio-retries` | low | A radio has resent at least `tx_retries_warn_pct` of what it transmitted at every read for about an hour (four infra rounds, at least three readings): a crowded channel, interference, or clients at the edge of its range. Resolves when a read is below the threshold. |
+| `inventory.unifi-pending-device` | low | The controller sees UniFi gear that nobody has adopted: new, factory reset, or not yours. Resolves when it is adopted or gone. |
 | `device.firmware-outdated` | low | Now also fires for UniFi devices with a pending update. |
 | `improvement.flat-network` | info | Groups by the controller's networks instead of guessing a /24. |
 
-`lanwatch unifi` prints the same summary on the command line and lists the clients the
-controller sees but lanwatch does not.
+`lanwatch unifi` prints a summary on the command line: networks, UniFi devices, gear
+waiting for adoption, and the clients the controller sees but lanwatch does not.
 
 ## 4. What the API key cannot tell
 

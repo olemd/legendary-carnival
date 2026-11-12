@@ -668,6 +668,7 @@ def _unifi_section(s: Store, config: Config) -> dict[str, Any]:
             s.infra("unifi-device"),
             key=lambda r: (not r.data.get("is_gateway"), str(r.data.get("name"))),
         ),
+        "pending": s.infra("unifi-pending"),
         "clients_total": len(clients),
         "clients_unknown": sum(1 for r in clients if not r.data.get("known")),
         "clients_guest": sum(1 for r in clients if r.data.get("guest")),

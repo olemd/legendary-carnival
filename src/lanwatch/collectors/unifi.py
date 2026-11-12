@@ -231,6 +231,18 @@ class UnifiDevice:
 
 
 @dataclass(slots=True)
+class UnifiPendingDevice:
+    """UniFi gear the controller has seen on the network but that nobody has adopted: new
+    out of the box, factory reset, or somebody else's."""
+
+    mac: str
+    ip: str | None = None
+    model: str = ""
+    state: str = "PENDING_ADOPTION"
+    firmware_version: str | None = None
+
+
+@dataclass(slots=True)
 class UnifiNetwork:
     id: str = ""
     name: str = ""
@@ -263,6 +275,7 @@ class UnifiSnapshot:
     devices: list[UnifiDevice] = field(default_factory=list)
     networks: list[UnifiNetwork] = field(default_factory=list)
     ssids: list[UnifiSsid] = field(default_factory=list)
+    pending: list[UnifiPendingDevice] = field(default_factory=list)
     fetched_at: str = field(default_factory=lambda: iso(now_utc()))
 
     @property
@@ -467,6 +480,21 @@ def parse_device(overview: Any, details: Any = None, stats: Any = None) -> Unifi
     )
 
 
+def parse_pending(data: Any) -> UnifiPendingDevice | None:
+    if not isinstance(data, dict) or not isinstance(data.get("macAddress"), str):
+        return None
+    mac = normalize_mac(data["macAddress"])
+    if not mac:
+        return None
+    return UnifiPendingDevice(
+        mac=mac,
+        ip=_text(data.get("ipAddress"), 45),
+        model=_text(data.get("model"), 40) or "",
+        state=_enum(data.get("state"), DEVICE_STATES, "PENDING_ADOPTION"),
+        firmware_version=_text(data.get("firmwareVersion"), 40),
+    )
+
+
 def parse_network(overview: Any, details: Any = None) -> UnifiNetwork | None:
     """A network from the list, with subnet and isolation from the detail answer when it is
     gateway-managed (the only kind that carries an IPv4 configuration)."""
@@ -588,6 +616,9 @@ class UnifiApi:
     async def device_statistics(self, site: str, device_id: str) -> Any:
         return await self.get(f"/sites/{site}/devices/{device_id}/statistics/latest")
 
+    async def pending_devices(self) -> list[Any]:
+        return await self.paged("/pending-devices")
+
     async def networks(self, site: str) -> list[Any]:
         return await self.paged(f"/sites/{site}/networks")
 
@@ -618,8 +649,8 @@ def _pick_site(sites: list[Any], wanted: str | None) -> tuple[str, str]:
 async def fetch_unifi(cfg: UnifiConfig, client: httpx2.AsyncClient | None = None) -> UnifiSnapshot:
     """Everything lanwatch uses, in a handful of GETs: info, sites, clients, devices (with
     details for the first MAX_DEVICE_DETAILS, and statistics for those that are online),
-    networks (details for gateway-managed ones),
-    SSIDs. A failed detail call keeps the overview; anything else raises UnifiError."""
+    networks (details for gateway-managed ones), SSIDs, and the devices waiting for
+    adoption. A failed detail call keeps the overview; anything else raises UnifiError."""
     own = client is None
     client = client or make_client(cfg)
     try:
@@ -665,6 +696,14 @@ async def fetch_unifi(cfg: UnifiConfig, client: httpx2.AsyncClient | None = None
                 networks.append(net)
 
         ssids = [s for s in (parse_ssid(x) for x in await api.wifi_broadcasts(site_id)) if s]
+
+        # Not per site, and newer than the rest (Network 10): an older controller answers
+        # 404, which is taken as nothing pending.
+        pending: list[UnifiPendingDevice] = []
+        try:
+            pending = [p for p in (parse_pending(x) for x in await api.pending_devices()) if p]
+        except UnifiError as e:
+            log.debug("unifi: pending devices unavailable: %s", e)
     except httpx2.HTTPError as e:
         # TLS failures, refused connections, timeouts: say what, not the key.
         raise UnifiError(f"{type(e).__name__}: {str(e)[:200]}") from e
@@ -679,6 +718,7 @@ async def fetch_unifi(cfg: UnifiConfig, client: httpx2.AsyncClient | None = None
         devices=devices,
         networks=networks,
         ssids=ssids,
+        pending=pending,
     )
 
 
@@ -756,7 +796,7 @@ def firmware_attrs(dev: UnifiDevice, checked: str) -> dict[str, Any]:
 def infra_rows(
     snap: UnifiSnapshot, known: Callable[[str], bool]
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    """The four infra kinds, keyed as the rules and pages look them up. `known(mac)` says
+    """The five infra kinds, keyed as the rules and pages look them up. `known(mac)` says
     whether lanwatch's own discovery has a device for the address."""
     networks = {
         n.id: {
@@ -840,4 +880,14 @@ def infra_rows(
         "unifi-ssid": ssids,
         "unifi-device": devices,
         "unifi-client": clients,
+        "unifi-pending": {
+            p.mac: {
+                "mac": p.mac,
+                "ip": p.ip,
+                "model": p.model,
+                "state": p.state,
+                "firmware_version": p.firmware_version,
+            }
+            for p in snap.pending
+        },
     }

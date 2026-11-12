@@ -192,8 +192,10 @@ Hygiene checks:
 - **UniFi controller** (`[unifi]`, read-only, every infra round, `lanwatch unifi`): with a
   UniFi OS console or UniFi OS Server on the LAN, each client's uplink device, wired/wireless, guest flag,
   controller name and network/VLAN; the networks, SSIDs and UniFi devices with pending
-  firmware; a **Topology** page; and rules for IoT devices on the main network, clients only
-  the controller sees, and UniFi devices offline. API key, nothing leaves the LAN. See
+  firmware, link speed per port, uptime, CPU and memory use and uplink rate (graphed over
+  time); a **Topology** page; and rules for IoT devices on the main network, clients only
+  the controller sees, UniFi devices offline or waiting for adoption, a port with a slow
+  link, and a radio that keeps resending. API key, nothing leaves the LAN. See
   [docs/unifi.md](docs/unifi.md).
 - **Junos extras** (a Juniper router or switch read over SNMP; nothing to set up): chassis
   alarms, storage, hardware state, the session table, each committed config change (user
