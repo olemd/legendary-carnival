@@ -5,7 +5,7 @@ the unreachable rule's business, and its old values must not pass for current on
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from lanwatch.models import Finding, Kind, Severity
@@ -284,15 +284,13 @@ class UpsPowerEventRule(Rule):
         for data, facts, did in ups_targets(ctx):
             if not _reads_ups(facts) or facts.get("on_battery") is not True:
                 continue
-            read_at = data.get("last_ok")
-            seconds = facts.get("seconds_on_battery")
-            if not isinstance(read_at, str):
+            # Worked out on the outage's first read and carried since (see
+            # snmp_ups.carry_outage_start), so every read of one outage names the same event.
+            since = facts.get("on_battery_since")
+            if not isinstance(since, str):
                 continue
-            start = datetime.fromisoformat(read_at) - timedelta(
-                seconds=seconds if isinstance(seconds, int) else 0
-            )
-            # Rounded to 10 minutes so every read during one outage names the same event.
-            bucket = start.replace(minute=start.minute - start.minute % 10, second=0, microsecond=0)
+            start = datetime.fromisoformat(since)
+            seconds = facts.get("seconds_on_battery")
             cause = facts.get("last_transfer_cause")
             out.append(
                 self.finding(
@@ -300,7 +298,7 @@ class UpsPowerEventRule(Rule):
                     title=f"{label(data, facts)} went on battery at "
                     f"{start.astimezone().strftime('%Y-%m-%d %H:%M')}"
                     + (f" ({cause})" if cause and cause != "no transfer" else ""),
-                    key_parts=[str(data.get("host")), bucket.isoformat()],
+                    key_parts=[str(data.get("host")), since],
                     device_id=did,
                     evidence={
                         "started": start.isoformat(timespec="seconds"),

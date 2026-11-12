@@ -189,6 +189,7 @@ def test_on_battery_low_and_the_power_event(store: Store, config: Config) -> Non
         on_battery=True,
         output_status="on battery",
         seconds_on_battery=300,
+        on_battery_since="2026-11-12T10:00:00+00:00",
         runtime_min=8,
         last_transfer_cause="blackout",
     )
@@ -207,6 +208,47 @@ def test_on_battery_low_and_the_power_event(store: Store, config: Config) -> Non
     open_ids = {f.id for f in store.findings()}
     assert events[0].id in open_ids
     assert any(i for i in result.resolved_ids)
+
+
+def test_one_outage_keeps_one_start_across_reads() -> None:
+    """The outage start is worked out on its first read and then carried, so the
+    power-event finding keeps one key: also when the UPS stops reporting its time on
+    battery, or when the reads drift against it across a 10-minute boundary."""
+    first: dict[str, object] = {"on_battery": True, "seconds_on_battery": 299}
+    snmp_ups.carry_outage_start(None, first, "2026-11-12T10:10:00+00:00")
+    assert first["on_battery_since"] == "2026-11-12T10:05:01+00:00"
+    for at, seconds in (("2026-11-12T10:25:00+00:00", None), ("2026-11-12T10:40:02+00:00", 1500)):
+        later: dict[str, object] = {"on_battery": True, "seconds_on_battery": seconds}
+        snmp_ups.carry_outage_start(first, later, at)
+        assert later["on_battery_since"] == "2026-11-12T10:05:01+00:00"
+    back: dict[str, object] = {"on_battery": False}
+    snmp_ups.carry_outage_start(first, back, "2026-11-12T10:55:00+00:00")
+    assert "on_battery_since" not in back
+    # The next outage starts afresh: no time on battery reported, so the read time.
+    again: dict[str, object] = {"on_battery": True}
+    snmp_ups.carry_outage_start(back, again, "2026-11-12T12:00:00+00:00")
+    assert again["on_battery_since"] == "2026-11-12T12:00:00+00:00"
+
+
+def test_the_stored_target_state_carries_the_outage_start() -> None:
+    """Through the stored target state: three reads of one outage, the last without a
+    time on battery, all name the start the first read worked out."""
+    ups = {"ups": _facts() | {"on_battery": True, "output_status": "on battery"}}
+    system = parse_system(_walk("system"))
+    prev: dict[str, Any] | None = None
+    keys: set[str] = set()
+    for at, seconds in (
+        ("2026-11-12T10:09:50+00:00", 280),
+        ("2026-11-12T10:24:55+00:00", 1190),
+        ("2026-11-12T10:40:00+00:00", None),
+    ):
+        facts = {"ups": dict(ups["ups"], seconds_on_battery=seconds)}
+        t = pipeline.SnmpTargetOutcome(
+            host="192.0.2.9", role="device", name="ups", system=system, facts=facts
+        )
+        prev = pipeline._target_state(prev, t, at)
+        keys.add(prev["facts"]["ups"]["on_battery_since"])
+    assert keys == {"2026-11-12T10:05:10+00:00"}
 
 
 def test_low_battery_without_mains_loss_is_medium(store: Store, config: Config) -> None:
@@ -268,7 +310,15 @@ def test_ups_on_the_device_page_and_dashboard(config: Config) -> None:
         disc = store.begin_snapshot("discovery", "t")
         store.record_hosts(disc, [HostObservation(ip=UPS, mac="aa:bb:cc:00:00:09", source="t")])
         store.finish_snapshot(disc, 1)
-        sid = _with_ups(store, config, on_battery=True, seconds_on_battery=120, runtime_min=40)
+        since = iso(now_utc() - timedelta(seconds=120))
+        sid = _with_ups(
+            store,
+            config,
+            on_battery=True,
+            seconds_on_battery=120,
+            on_battery_since=since,
+            runtime_min=40,
+        )
         device = store.device_by_ip(UPS)
         assert device is not None
         fw = snmp_ups.card_firmware(parse_system(_walk("system")).descr, iso(now_utc()))

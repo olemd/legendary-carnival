@@ -21,7 +21,7 @@ parse is unknown (None), never guessed.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from lanwatch.collectors.snmp import SnmpClient, SystemInfo, Value, text
@@ -331,6 +331,26 @@ def parse_ups(
 
 def is_apc(system: SystemInfo) -> bool:
     return system.object_id.lstrip(".").startswith(f"{APC}.")
+
+
+def carry_outage_start(old: Any, new: dict[str, Any], at: str) -> None:
+    """Set new["on_battery_since"] while the UPS is on battery: kept from the previous read
+    if that was on battery too, else the read time less the UPS's own time on battery.
+    Worked out once per outage and then carried, so every read during one outage names the
+    same start (ups.power-event keys its finding on it), even when the UPS does not report
+    its time on battery or the reads drift against it."""
+    if new.get("on_battery") is not True:
+        return
+    since = None
+    if isinstance(old, dict) and old.get("on_battery") is True:
+        since = old.get("on_battery_since")
+    if not isinstance(since, str):
+        seconds = new.get("seconds_on_battery")
+        start = datetime.fromisoformat(at) - timedelta(
+            seconds=seconds if isinstance(seconds, int) else 0
+        )
+        since = start.isoformat(timespec="seconds")
+    new["on_battery_since"] = since
 
 
 async def read_ups(client: SnmpClient, system: SystemInfo) -> ReaderResult:

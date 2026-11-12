@@ -38,6 +38,7 @@ from lanwatch.collectors.latency import measure, resolve_targets
 from lanwatch.collectors.services import nmap_available, scan_services
 from lanwatch.collectors.snmp import DhcpLease, Neighbour, SnmpClient, SnmpError, SystemInfo
 from lanwatch.collectors.snmp_kinds import ReaderResult, find_readers, run_readers
+from lanwatch.collectors.snmp_ups import carry_outage_start
 from lanwatch.collectors.unifi import (
     TOTAL_TIMEOUT_S,
     UnifiError,
@@ -384,13 +385,18 @@ def _target_state(prev: dict[str, Any] | None, t: SnmpTargetOutcome, at: str) ->
             for k, v in (old_facts if isinstance(old_facts, dict) else {}).items()
             if k in t.reader_errors
         }
+        facts = kept | t.facts
+        ups = facts.get("ups")
+        if isinstance(ups, dict):
+            prev_ups = old_facts.get("ups") if isinstance(old_facts, dict) else None
+            carry_outage_start(prev_ups, ups, at)
         data.update(
             {
                 "system": t.system.as_dict(),
                 "last_ok": at,
                 "last_error": "",
                 "fails": 0,
-                "facts": kept | t.facts,
+                "facts": facts,
                 "reader_errors": dict(t.reader_errors),
             }
         )
