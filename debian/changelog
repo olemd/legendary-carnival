@@ -1,3 +1,20 @@
+lanwatch (0.9.1) unstable; urgency=medium
+
+  * [snmp] enabled is the switch for all of SNMP again: false reads none
+    of the devices and checks no logins. enabled = true left over from
+    0.8.0 next to device tables no longer fails with a password error.
+  * A device listed at the router's default-gateway address is read once,
+    as the router, instead of overwriting the router's state.
+  * SNMP default-credential findings stay open when a device misses one
+    weekly probe: results now age out after three deep-scan intervals,
+    not 10 days.
+  * The UPS card's firmware is shown as the newest known, with the date
+    the list of releases was last checked.
+  * SNMP times without a zone are read as local time everywhere; the
+    Junos reader took them as UTC.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 09:02:37 +0100
+
 lanwatch (0.9.0) unstable; urgency=medium
 
   * SNMP for any number of devices: one [snmp.devices.<name>] table per
