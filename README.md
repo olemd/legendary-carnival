@@ -245,3 +245,7 @@ runs only allowlisted scan commands over a unix socket. Ollama with ROCm has its
 uv sync
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
+
+## License
+
+GNU Affero General Public License, version 3 or later. See [LICENSE](LICENSE).
