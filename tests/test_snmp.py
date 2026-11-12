@@ -149,8 +149,8 @@ def test_config_show_redacts_snmp_passwords(tmp_path: Path) -> None:
     assert AUTH not in text and PRIV not in text and own not in text
     assert 'auth_password = "***"' in text and 'priv_password = "***"' in text
     assert "[snmp.devices.ups]" in text and 'host = "192.0.2.9"' in text
-    # Each device's table, with no empty [snmp] or [snmp.devices] above them.
-    assert "[snmp]" not in text and "[snmp.devices]" not in text
+    # Each device's table, with no empty [snmp.devices] above them; [snmp] holds the switch.
+    assert "[snmp]\nenabled = true" in text and "[snmp.devices]" not in text
 
 
 def test_devices_are_tables_by_name_each_with_its_own_login() -> None:
@@ -230,6 +230,20 @@ def test_the_080_form_is_read_as_the_router() -> None:
     assert SnmpConfig.model_validate({"enabled": False, "host": "192.0.2.1"}).targets() == []
     with pytest.raises(ValidationError, match="router"):
         SnmpConfig.model_validate(old | {"devices": {"router": {"host": "192.0.2.9"}}})
+
+
+def test_snmp_enabled_is_the_switch_for_every_device() -> None:
+    """`enabled` under [snmp] next to device tables is the switch, not a half 0.8.0 login:
+    true reads the devices, false reads none and checks no logins."""
+    ups = {"host": "192.0.2.9", "user": "u", "auth_password": AUTH, "priv_password": PRIV}
+    on = SnmpConfig.model_validate({"enabled": True, "devices": {"ups": ups}})
+    assert [t.name for t in on.targets()] == ["ups"]
+    off = SnmpConfig.model_validate({"enabled": False, "devices": {"ups": ups}})
+    assert off.targets() == [] and off.router() is None
+    unfinished = {"host": "192.0.2.9", "user": "u", "auth_password": ""}
+    assert SnmpConfig.model_validate({"enabled": False, "devices": {"ups": unfinished}})
+    # The 0.8.0 login without `enabled = true` was never read, and still is not.
+    assert SnmpConfig.model_validate({"host": "192.0.2.1"}).targets() == []
 
 
 def test_device_entries_are_validated() -> None:
@@ -570,6 +584,29 @@ async def test_collect_snmp_reads_every_target_and_keeps_going_past_a_failure(
     await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
     rows = {r.key: r.data for r in store.infra("snmp-target")}
     assert set(rows) == {"192.0.2.1", "192.0.2.66"} and rows["192.0.2.66"]["fails"] == 2
+
+
+async def test_a_device_at_the_routers_gateway_address_is_read_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store: Store,
+    config: Config,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The router without a host is the default gateway; a second table at that address is
+    the same device, read once as the router instead of overwriting its state."""
+    config.snmp = snmp_config({"twin": {"host": "192.0.2.1"}}, host=None)
+
+    async def gateways(ex: object = None) -> list[str]:
+        return ["192.0.2.1"]
+
+    monkeypatch.setattr(pipeline, "default_gateways", gateways)
+    fake_walker(tmp_path, monkeypatch, (FIXTURES / "snmp-system.txt").read_text())
+    out = await pipeline.collect_snmp(config, store, store.begin_snapshot("infra", "t"))
+    assert [(t.name, t.role) for t in out.targets] == [("gw", "router")]
+    (row,) = store.infra("snmp-target")
+    assert row.key == "192.0.2.1" and row.data["role"] == "router"
+    assert "snmp.devices.twin is the router's address" in caplog.text
 
 
 async def test_devices_are_read_with_the_router_link_off(

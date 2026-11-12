@@ -405,9 +405,9 @@ _SNMP_USER = re.compile(r"[A-Za-z0-9._-]{1,32}")
 _SNMP_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
 # The 0.8.0 form: the router's login straight under [snmp]. Still read, as a device
 # named "router".
+# `enabled` is not among them: it stays the switch for all of SNMP (see SnmpConfig).
 _SNMP_LEGACY_KEYS = frozenset(
     {
-        "enabled",
         "host",
         "user",
         "auth_protocol",
@@ -468,6 +468,9 @@ class SnmpConfig(StrictModel):
 
     # By name: the table key, shown in the UI and logs.
     devices: dict[str, SnmpDeviceConfig] = Field(default_factory=dict)
+    # The switch for all of SNMP: false reads none of the devices, whatever their own
+    # `enabled` says. Each device's `enabled` turns that one off.
+    enabled: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -478,7 +481,9 @@ class SnmpConfig(StrictModel):
             return data
         data = dict(data)
         old = {k: data.pop(k) for k in _SNMP_LEGACY_KEYS & data.keys()}
-        if not old.pop("enabled", False):
+        # 0.8.0 was off unless `enabled = true` sat next to the login; its login without
+        # that switch was never read, and is not now.
+        if not data.get("enabled", False):
             return data
         devices = dict(data.get("devices") or {})
         if "router" in devices:
@@ -509,7 +514,7 @@ class SnmpConfig(StrictModel):
                 raise ValueError(f"{where}: {d.host} is listed twice")
             else:
                 hosts.add(d.host.lower())
-            if d.enabled:
+            if self.enabled and d.enabled:
                 _check_snmp_credentials(where, d.user, d.auth_password, d.priv_password)
         if len(routers) > 1:
             raise ValueError(f"snmp.devices: only one can be the router ({', '.join(routers)})")
@@ -522,6 +527,8 @@ class SnmpConfig(StrictModel):
     def targets(self) -> list[SnmpTarget]:
         """Every enabled device to read this round: the router first (its host may be
         unknown, meaning the default gateway), then the others in config order."""
+        if not self.enabled:
+            return []
         out = [
             SnmpTarget(host=d.host, name=name, role="router" if d.router else "device", login=d)
             for name, d in self.devices.items()

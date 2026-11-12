@@ -188,6 +188,7 @@ adopt_names = true                      # name unnamed devices as the controller
 # device's whole login: nothing is shared between devices. Create a read-only v3 user on
 # each device first: docs/snmp.md has an example for Junos. Stays on the LAN. Needs the
 # snmp package (snmpbulkwalk).
+enabled = true                          # false: read none of the devices below
 #
 # [snmp.devices.fw]
 # router = true                         # at most one device

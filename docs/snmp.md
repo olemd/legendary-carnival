@@ -163,6 +163,10 @@ user and its passwords belong to the device they were made on. 0.8.0's form, the
 router's login straight under `[snmp]` with `enabled = true`, is still read, as a device
 named `router`; `lanwatch config show` prints it in the new form.
 
+`enabled` under `[snmp]` is the switch for all of it: `enabled = false` reads none of
+the devices, whatever their own tables say, and their logins are not checked. It is on
+by default, so listing a device is enough.
+
 `lanwatch config show` prints `***` for both passwords. lanwatch never puts them on a
 command line: each read writes a private snmp.conf in a temporary directory, readable only
 by the service, and removes it afterwards.
