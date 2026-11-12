@@ -1,3 +1,15 @@
+lanwatch (0.9.2) unstable; urgency=medium
+
+  * One ups.power-event finding per outage: the start is worked out on
+    the outage's first read and kept while the UPS stays on battery.
+    Reads that drifted across a 10-minute boundary, or a UPS that does
+    not report its time on battery, used to open several.
+  * junos.config-changed findings resolve by themselves after 7 days
+    instead of waiting to be acknowledged; the timeline keeps every
+    commit.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 10:05:23 +0100
+
 lanwatch (0.9.1) unstable; urgency=medium
 
   * [snmp] enabled is the switch for all of SNMP again: false reads none
