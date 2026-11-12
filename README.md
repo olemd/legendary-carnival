@@ -21,12 +21,25 @@ Assistant. Runs from a Debian package, bare, in rootful podman, or rootless podm
 ## Quick start
 
 On Debian or Ubuntu, install the package. It bundles its own Python, starts the service
-and runs nothing as root. Each release carries an amd64 and an arm64 `.deb`:
+and runs nothing as root. Each release is published for amd64 and arm64 in an apt
+repository, so `apt upgrade` picks up new versions:
 
 ```sh
-gh release download -R olemd/legendary-carnival -p "lanwatch_*_$(dpkg --print-architecture).deb"
-sudo apt install ./lanwatch_*.deb
+sudo curl -fsSL https://kode.naiv.no/api/packages/olemd/debian/repository.key \
+  -o /etc/apt/keyrings/forgejo-olemd.asc
+sudo tee /etc/apt/sources.list.d/lanwatch.sources > /dev/null <<'SOURCES'
+Types: deb
+URIs: https://kode.naiv.no/api/packages/olemd/debian/
+Suites: trixie
+Components: main
+Signed-By: /etc/apt/keyrings/forgejo-olemd.asc
+SOURCES
+sudo apt update && sudo apt install lanwatch
 ```
+
+`Suites: trixie` is the name of the suite in the repository, not a requirement: the same
+package is for Debian 12 and 13 and Ubuntu 24.04. The `.deb` files are also attached to
+each GitHub release.
 
 The service is now scanning the networks this machine is attached to: discovery every
 5 minutes, service inventory hourly, a deep scan weekly. The first round is the baseline;

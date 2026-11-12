@@ -6,9 +6,11 @@ watch (a VM behind NAT sees nothing).
 ## 0. Debian package (recommended on Debian and Ubuntu)
 
 ```sh
-make deb                                          # needs debhelper and uv; or take the
-sudo apt install ./dist/lanwatch_*_amd64.deb   # .deb from a GitHub release
+make deb                                          # needs debhelper and uv
+sudo apt install ./dist/lanwatch_*_amd64.deb
 ```
+
+Or install it from the apt repository, as in the Quick start of the main README.
 
 Self-contained (own Python and libraries under `/usr/lib/lanwatch`), tested on Debian 12,
 Debian 13 and Ubuntu 24.04. Releases also carry an arm64 package (Raspberry Pi and

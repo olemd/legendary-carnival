@@ -1,7 +1,7 @@
 name: release
 # Pushing a tag vX.Y.Z builds the Debian packages for amd64 and arm64, each on its own
-# architecture, tests them under systemd, and publishes them as a GitHub release. Nothing
-# is published unless every job before `publish` passed.
+# architecture, tests them under systemd, and publishes them as a GitHub release and in
+# the apt repository on kode.naiv.no. Nothing is published unless both builds passed.
 on:
   push:
     tags: ["v*"]
@@ -77,3 +77,42 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb --verify-tag --generate-notes
+
+  # The same packages go to the apt repository on kode.naiv.no (Forgejo's Debian registry,
+  # which signs the index with its own key), so an install gets new releases through apt.
+  # A job of its own, so it can be re-run alone when only the upload failed.
+  #
+  # Needs the repository secret FORGEJO_PACKAGES_TOKEN: an access token of the Forgejo user
+  # below with write:package.
+  apt:
+    needs: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    env:
+      FORGEJO_OWNER: olemd
+      # The suite is only a name in the registry: the one package serves every supported
+      # distribution. It is the suite the owner's other packages are published in.
+      UPLOAD_URL: https://kode.naiv.no/api/packages/olemd/debian/pool/trixie/main/upload
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: deb-*
+          merge-multiple: true
+      - name: Upload to the Debian registry
+        env:
+          FORGEJO_PACKAGES_TOKEN: ${{ secrets.FORGEJO_PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$FORGEJO_PACKAGES_TOKEN" ]; then
+            echo "::error::the secret FORGEJO_PACKAGES_TOKEN is not set"
+            exit 1
+          fi
+          for deb in dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              --user "$FORGEJO_OWNER:$FORGEJO_PACKAGES_TOKEN" --upload-file "$deb" "$UPLOAD_URL")
+            # 409: this version and architecture is there already, as on a re-run.
+            case "$code" in
+              201) echo "uploaded $deb" ;;
+              409) echo "already in the registry: $deb" ;;
+              *) echo "::error::uploading $deb failed with HTTP $code"; exit 1 ;;
+            esac
+          done
