@@ -7,7 +7,9 @@ After=network-online.target lanwatch-helper.socket
 Requires=lanwatch-helper.socket
 
 [Service]
-Type=exec
+# notify: the start job waits until lanwatch is up, so a config error fails
+# `systemctl start` and `restart` at once instead of only showing in the journal.
+Type=notify
 User=lanwatch
 Group=lanwatch
 # The wrapper sets the data directory and helper socket; see /usr/bin/lanwatch.

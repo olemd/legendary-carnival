@@ -36,6 +36,7 @@ from lanwatch.pipeline import (
 )
 from lanwatch.rules.engine import all_rules
 from lanwatch.scheduler import Job, Scheduler
+from lanwatch.sdnotify import notify_ready
 from lanwatch.store import Store
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="lanwatch: audit your own LAN.")
@@ -643,6 +644,8 @@ def run(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
                 server = make_server(create_app(cfg, sched, decoys), cfg.web.host, cfg.web.port)
                 log.info("web ui on http://%s:%d", cfg.web.host, cfg.web.port)
                 tasks.append(asyncio.create_task(serve_until(server, sched.stopped)))
+            # Config read and everything set up: a Type=notify unit's start job ends here.
+            notify_ready()
             await asyncio.gather(*tasks)
 
     asyncio.run(_main())

@@ -6,7 +6,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# notify: the start job waits until lanwatch is up, so a config error fails
+# `systemctl start` and `restart` at once instead of only showing in the journal.
+Type=notify
 User=lanwatch
 Group=lanwatch
 ExecStart=/opt/lanwatch/.venv/bin/lanwatch run

@@ -36,6 +36,13 @@ if [ "$1" = configure ]; then
         fi
     fi
     install -m 0644 "$new" "$ref"
+    # A config this version cannot read keeps the service from starting (a key that was
+    # renamed, say). Say why here, where the upgrade is watched, not only in the journal.
+    if [ -f /etc/lanwatch/config.toml ] \
+        && ! err=$(/usr/bin/lanwatch --config /etc/lanwatch/config.toml config path 2>&1 >/dev/null); then
+        echo "lanwatch: /etc/lanwatch/config.toml has a problem; the service will not start until it is fixed:"
+        printf '%s\n' "$err" | sed 's/^/    /'
+    fi
 fi
 
 #DEBHELPER#
