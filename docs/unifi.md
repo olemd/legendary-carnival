@@ -8,7 +8,9 @@ can read what the controller knows and no scan can see:
   the name set in the controller, when it connected, and which network (VLAN) it is on;
 - the networks and SSIDs that exist, with VLAN ids, subnets and isolation settings;
 - the UniFi devices themselves: state, firmware, whether an update is pending, ports and
-  radios, and how they are chained together.
+  radios, and how they are chained together;
+- per UniFi device that is online: uptime, CPU and memory use, and how much it was sending
+  and receiving on its uplink when the controller last heard from it.
 
 That feeds four rules (`net.iot-on-main-network`, `inventory.unifi-only`,
 `net.unifi-device-offline`, `net.unifi-slow-link`), sharpens the flat-network note, puts UniFi firmware under the
@@ -98,11 +100,20 @@ The two are mutually exclusive: `ca_file` with `verify_tls = false` is a config 
 network and VLAN, and the SSIDs on that network. A UniFi device's page gets a *UniFi device*
 row (model, state, uplink, ports up, radios, and the link speed of every port that is
 up) and a *Firmware* row that says *update
-available* when the controller has one pending.
+available* when the controller has one pending. It also shows uptime, CPU and memory use
+and the uplink rate, and under **UniFi statistics** a graph of each over the last 24 hours
+or 7 days.
+
+The uplink rate is what the device was sending and receiving towards the gateway at the
+moment of the read; for the gateway itself it is the internet connection. lanwatch keeps
+one sample per read (every 15 minutes), so the graph shows spot checks, not how much was
+used in between. A device whose uptime has gone down since the previous read gets a
+`unifi.device-restarted` entry on the **Timeline**.
 
 **Infra page.** Controller version and site, the networks with VLAN, subnet, SSIDs,
 isolation and internet access, the SSIDs with their type, and the UniFi devices with state,
-firmware, client counts and any port with a slow link. Plus how many clients lanwatch has never seen itself.
+firmware, client counts, any port with a slow link, uptime, CPU and memory use, and the
+uplink rate. Plus how many clients lanwatch has never seen itself.
 
 **Topology page.** Gateway on the left, access points and switches beside it, clients under
 the device they hang off, each labelled with its network. The same tree as a list below.

@@ -31,6 +31,7 @@ from lanwatch.overview import update as update_overview
 from lanwatch.scheduler import Job, Scheduler
 from lanwatch.store import Store
 from lanwatch.web.topology import build_topology
+from lanwatch.web.unifi import unifi_block
 from lanwatch.web.ups import ups_block, ups_tile
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -47,6 +48,7 @@ def create_app(
     templates.env.filters["local"] = local_str
     templates.env.filters["duration"] = _duration
     templates.env.filters["mbps"] = _mbps
+    templates.env.filters["rate"] = _rate
     templates.env.filters["port_label"] = port_label
     basic = HTTPBasic(auto_error=False)
 
@@ -192,6 +194,7 @@ def create_app(
             same_host={o.id for o in others if host and (o.hostname or "").lower() == host},
             kinds=[k.value for k in DeviceKind],
             ups=ups_block(s, config, d, request.query_params.get("range", "24h")),
+            unifi_stats=unifi_block(s, d, request.query_params.get("range", "24h")),
         )
 
     @app.post("/devices/{device_id}/edit", dependencies=write_deps)
@@ -525,6 +528,16 @@ def _mbps(mbps: float | None) -> str:
     if mbps is None:
         return "?"
     return f"{mbps / 1000:g} Gbit/s" if mbps >= 1000 else f"{mbps:g} Mbit/s"
+
+
+def _rate(bps: float | None) -> str:
+    """A traffic rate: 640 bit/s, 12 kbit/s, 3.4 Mbit/s, 1.2 Gbit/s."""
+    if bps is None:
+        return "?"
+    for limit, unit in ((1e9, "Gbit/s"), (1e6, "Mbit/s"), (1e3, "kbit/s")):
+        if bps >= limit:
+            return f"{bps / limit:.3g} {unit}"
+    return f"{bps:g} bit/s"
 
 
 def _job_rows(scheduler: Scheduler, s: Store) -> list[dict[str, Any]]:

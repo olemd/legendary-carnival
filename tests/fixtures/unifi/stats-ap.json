@@ -1,0 +1,16 @@
+{
+  "uptimeSec": 7200,
+  "cpuUtilizationPct": 3,
+  "memoryUtilizationPct": 44,
+  "uplink": {
+    "txRateBps": 12000,
+    "rxRateBps": 640
+  },
+  "interfaces": {
+    "radios": [
+      {
+        "frequencyGHz": 6
+      }
+    ]
+  }
+}

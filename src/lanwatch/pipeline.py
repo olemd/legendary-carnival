@@ -236,6 +236,24 @@ class UnifiOutcome:
     resolved_findings: list[str] = field(default_factory=list)
 
 
+def _unifi_restarts(store: Store, devices: dict[str, dict[str, Any]]) -> None:
+    """A timeline event for each UniFi device whose uptime is shorter than at the previous
+    read: it has restarted in between. Call before the new rows replace the old."""
+    before = {r.key: r.data for r in store.infra("unifi-device")}
+    for mac, data in devices.items():
+        old = (before.get(mac, {}).get("stats") or {}).get("uptime_s")
+        new = (data.get("stats") or {}).get("uptime_s")
+        if isinstance(old, int) and isinstance(new, int) and new < old:
+            d = store.device_by_key(mac)
+            store.add_event(
+                "unifi.device-restarted",
+                f"UniFi {data.get('name') or data.get('model') or mac} restarted"
+                f" {round(new / 60)} min before this read",
+                device_id=d.id if d else None,
+                data={"mac": mac, "uptime_s": new, "uptime_before_s": old},
+            )
+
+
 async def collect_unifi(
     config: Config, store: Store, snapshot_id: int, client: httpx2.AsyncClient | None = None
 ) -> UnifiOutcome:
@@ -258,6 +276,11 @@ async def collect_unifi(
         return out
 
     rows = infra_rows(snap, lambda mac: store.device_by_key(mac) is not None)
+    _unifi_restarts(store, rows["unifi-device"])
+    for dev in snap.devices:
+        if dev.mac and dev.stats:
+            # Kept with the SNMP readings: the same shape, keyed by the device's MAC.
+            store.add_snmp_series(dev.mac, dev.stats.metrics(), snap.fetched_at)
     for kind, entries in rows.items():
         store.replace_infra(kind, entries, snapshot_id)
     store.meta_set("unifi.site", json.dumps({"id": snap.site_id, "name": snap.site_name}))

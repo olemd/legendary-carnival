@@ -5,12 +5,14 @@ client hangs off, wired or wireless, guest or not, the name its owner gave it, w
 networks (VLANs) exist and, through the subnet, which one a client is on, and the state and
 firmware of the UniFi devices themselves. This module fetches all of that with an API key
 (UniFi OS console, Settings -> Control Plane -> Integrations; Network 9.3 or later) and turns
-it into plain dataclasses. It reads only: none of the API's write endpoints are used.
+it into plain dataclasses. For each online UniFi device it also reads the latest statistics:
+uptime, CPU and memory use, and the rate on its uplink at that moment. It reads only: none
+of the API's write endpoints are used.
 
 What the API key does not give, and so nothing here pretends to: the SSID and signal
 strength of a wireless client, the switch port of a wired one, or traffic per client or
-per port. The network a client is
-on is derived from its address against the gateway-managed subnets.
+per port. The network a client is on is derived from its address against the
+gateway-managed subnets.
 
 Everything coming back is third-party data and is checked field by field before use; the
 rules and templates trust what is stored. Nothing raised here reaches the infra round:
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -134,6 +137,51 @@ class UnifiRadio:
 
 
 @dataclass(slots=True)
+class UnifiRadioStats:
+    frequency_ghz: float
+    tx_retries_pct: float | None = None
+
+
+@dataclass(slots=True)
+class UnifiStats:
+    """The controller's latest statistics for one device. Rates are what the device sent
+    (tx) and received (rx) on its uplink when the controller last heard from it: a sample,
+    not an average. For the gateway the uplink is the internet connection."""
+
+    uptime_s: int | None = None
+    cpu_pct: float | None = None
+    mem_pct: float | None = None
+    load_1: float | None = None
+    uplink_tx_bps: int | None = None
+    uplink_rx_bps: int | None = None
+    radios: list[UnifiRadioStats] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "uptime_s": self.uptime_s,
+            "cpu_pct": self.cpu_pct,
+            "mem_pct": self.mem_pct,
+            "load_1": self.load_1,
+            "uplink_tx_bps": self.uplink_tx_bps,
+            "uplink_rx_bps": self.uplink_rx_bps,
+            "radios": [
+                {"band": r.frequency_ghz, "tx_retries_pct": r.tx_retries_pct} for r in self.radios
+            ],
+        }
+
+    def metrics(self) -> dict[str, float]:
+        """What is kept over time (Store.add_snmp_series), by metric name."""
+        values = {
+            "unifi.uplink_tx_bps": self.uplink_tx_bps,
+            "unifi.uplink_rx_bps": self.uplink_rx_bps,
+            "unifi.cpu_pct": self.cpu_pct,
+            "unifi.mem_pct": self.mem_pct,
+            **{f"unifi.tx_retries_pct.{r.frequency_ghz:g}": r.tx_retries_pct for r in self.radios},
+        }
+        return {k: float(v) for k, v in values.items() if v is not None}
+
+
+@dataclass(slots=True)
 class UnifiDevice:
     id: str = ""
     mac: str | None = None
@@ -149,6 +197,7 @@ class UnifiDevice:
     ports: list[UnifiPort] = field(default_factory=list)
     radios: list[UnifiRadio] = field(default_factory=list)
     adopted_at: str | None = None
+    stats: UnifiStats | None = None
 
     @property
     def is_gateway(self) -> bool:
@@ -273,6 +322,13 @@ def _int(v: Any) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
+def _num(v: Any) -> float | None:
+    """A finite, non-negative number, else None."""
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        return None
+    return float(v) if math.isfinite(v) and v >= 0 else None
+
+
 def _enum(v: Any, allowed: set[str], default: str) -> str:
     return v if isinstance(v, str) and v in allowed else default
 
@@ -336,9 +392,44 @@ def _parse_radio(data: Any) -> UnifiRadio | None:
     )
 
 
-def parse_device(overview: Any, details: Any = None) -> UnifiDevice | None:
+def parse_stats(data: Any) -> UnifiStats | None:
+    """The answer of .../statistics/latest. Every field is optional in the API."""
+    if not isinstance(data, dict):
+        return None
+
+    def whole(v: Any) -> int | None:
+        n = _num(v)
+        return int(n) if n is not None else None
+
+    def pct(v: Any) -> float | None:
+        n = _num(v)
+        return round(n, 1) if n is not None and n <= 100 else None
+
+    uplink = data.get("uplink")
+    uplink = uplink if isinstance(uplink, dict) else {}
+    interfaces = data.get("interfaces")
+    radios_raw = interfaces.get("radios") if isinstance(interfaces, dict) else None
+    radios = []
+    for r in radios_raw if isinstance(radios_raw, list) else []:
+        band = _num(r.get("frequencyGHz")) if isinstance(r, dict) else None
+        if band is not None:
+            radios.append(UnifiRadioStats(band, pct(r.get("txRetriesPct"))))
+    load = _num(data.get("loadAverage1Min"))
+    return UnifiStats(
+        uptime_s=whole(data.get("uptimeSec")),
+        cpu_pct=pct(data.get("cpuUtilizationPct")),
+        mem_pct=pct(data.get("memoryUtilizationPct")),
+        load_1=round(load, 2) if load is not None else None,
+        uplink_tx_bps=whole(uplink.get("txRateBps")),
+        uplink_rx_bps=whole(uplink.get("rxRateBps")),
+        radios=radios,
+    )
+
+
+def parse_device(overview: Any, details: Any = None, stats: Any = None) -> UnifiDevice | None:
     """An adopted device from the list, enriched with the detail answer when given (uplink,
-    ports, radios). Both are checked; the detail answer may be missing on older releases."""
+    ports, radios) and the statistics answer. All are checked; the detail answer may be
+    missing on older releases."""
     if not isinstance(overview, dict) or not isinstance(overview.get("id"), str):
         return None
     details = details if isinstance(details, dict) else {}
@@ -372,6 +463,7 @@ def parse_device(overview: Any, details: Any = None) -> UnifiDevice | None:
         ports=[p for p in (_parse_port(x) for x in ports_raw or []) if p is not None],
         radios=[r for r in (_parse_radio(x) for x in radios_raw or []) if r is not None],
         adopted_at=_text(details.get("adoptedAt"), 40),
+        stats=parse_stats(stats),
     )
 
 
@@ -493,6 +585,9 @@ class UnifiApi:
     async def device(self, site: str, device_id: str) -> Any:
         return await self.get(f"/sites/{site}/devices/{device_id}")
 
+    async def device_statistics(self, site: str, device_id: str) -> Any:
+        return await self.get(f"/sites/{site}/devices/{device_id}/statistics/latest")
+
     async def networks(self, site: str) -> list[Any]:
         return await self.paged(f"/sites/{site}/networks")
 
@@ -522,7 +617,8 @@ def _pick_site(sites: list[Any], wanted: str | None) -> tuple[str, str]:
 
 async def fetch_unifi(cfg: UnifiConfig, client: httpx2.AsyncClient | None = None) -> UnifiSnapshot:
     """Everything lanwatch uses, in a handful of GETs: info, sites, clients, devices (with
-    details for the first MAX_DEVICE_DETAILS), networks (details for gateway-managed ones),
+    details for the first MAX_DEVICE_DETAILS, and statistics for those that are online),
+    networks (details for gateway-managed ones),
     SSIDs. A failed detail call keeps the overview; anything else raises UnifiError."""
     own = client is None
     client = client or make_client(cfg)
@@ -536,13 +632,18 @@ async def fetch_unifi(cfg: UnifiConfig, client: httpx2.AsyncClient | None = None
 
         devices: list[UnifiDevice] = []
         for i, raw in enumerate(await api.devices(site_id)):
-            details = None
+            details = stats = None
             if i < MAX_DEVICE_DETAILS and isinstance(raw, dict) and isinstance(raw.get("id"), str):
                 try:
                     details = await api.device(site_id, raw["id"])
                 except UnifiError as e:
                     log.debug("unifi: device details unavailable: %s", e)
-            if (dev := parse_device(raw, details)) is not None:
+                if raw.get("state") == "ONLINE":  # the others have nothing current to say
+                    try:
+                        stats = await api.device_statistics(site_id, raw["id"])
+                    except UnifiError as e:
+                        log.debug("unifi: device statistics unavailable: %s", e)
+            if (dev := parse_device(raw, details, stats)) is not None:
                 devices.append(dev)
 
         networks: list[UnifiNetwork] = []
@@ -619,6 +720,7 @@ def device_attrs(dev: UnifiDevice, snap: UnifiSnapshot) -> dict[str, Any]:
     """attrs["unifi_device"] for a LAN device that is itself UniFi gear."""
     return {
         "id": dev.id,
+        "mac": dev.mac,
         "name": dev.name,
         "model": dev.model,
         "state": dev.state,
@@ -631,6 +733,7 @@ def device_attrs(dev: UnifiDevice, snap: UnifiSnapshot) -> dict[str, Any]:
         "port_list": [p.as_dict() for p in sorted(dev.ports, key=lambda p: p.idx)],
         "radios": dev.radios_summary(),
         "adopted_at": dev.adopted_at,
+        "stats": dev.stats.as_dict() if dev.stats else None,
         "seen": snap.fetched_at,
     }
 
