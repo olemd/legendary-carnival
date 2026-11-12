@@ -109,10 +109,9 @@ available* when the controller has one pending. It also shows uptime, CPU and me
 the uplink rate and the share each radio resends, and under **UniFi statistics** a graph of each over the last 24 hours
 or 7 days.
 
-The uplink rate is what the device was sending and receiving towards the gateway at the
-moment of the read; for the gateway itself it is the internet connection. lanwatch keeps
-one sample per read (every 15 minutes), so the graph shows spot checks, not how much was
-used in between. A device whose uptime has gone down since the previous read gets a
+The uplink rate is what the device was sending and receiving on its uplink at the moment
+of the read. lanwatch keeps one sample per read (every 15 minutes), so the graph shows
+spot checks, not how much was used in between. A device whose uptime has gone down since the previous read gets a
 `unifi.device-restarted` entry on the **Timeline**.
 
 **Infra page.** Controller version and site, the networks with VLAN, subnet, SSIDs,

@@ -146,7 +146,7 @@ class UnifiRadioStats:
 class UnifiStats:
     """The controller's latest statistics for one device. Rates are what the device sent
     (tx) and received (rx) on its uplink when the controller last heard from it: a sample,
-    not an average. For the gateway the uplink is the internet connection."""
+    not an average."""
 
     uptime_s: int | None = None
     cpu_pct: float | None = None
