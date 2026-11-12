@@ -87,6 +87,12 @@ cached on input, and references to ids not in the input are dropped. If Ollama i
 scanning continues and the LLM catches up later. `lanwatch llm eval` scores a model on a
 device-classification golden set in `evals/`.
 
+The LLM writes in the language set by `language` under `[llm]` in the config file. The
+default is English (`en`). `nb`, `nn`, `sv`, `da` and `de` are also known by name; any
+other value is passed to the model as written, so use a language name the model
+understands (`language = "French"`). Technical terms stay in English. Before 0.9.5 the
+default was `nb`: set `language = "nb"` to keep Norwegian after an upgrade.
+
 Infra probes (every 15 min, `lanwatch infra`): which DHCP servers answer on each segment
 (two is a critical finding), UPnP devices and, for the router, every active port forward
 (each one is a finding), devices with globally routable IPv6 addresses that expose

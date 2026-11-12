@@ -1,3 +1,12 @@
+lanwatch (0.9.5) UNRELEASED; urgency=medium
+
+  * The LLM now writes in English unless told otherwise: the default for
+    "language" under [llm] is "en", it was "nb". To keep Norwegian, set
+    language = "nb" under [llm] in /etc/lanwatch/config.toml. The README
+    lists the language codes.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 12:53:28 +0100
+
 lanwatch (0.9.4) unstable; urgency=medium
 
   * The packages are now published in an apt repository on kode.naiv.no,
