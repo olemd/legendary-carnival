@@ -33,7 +33,25 @@ def test_layering_file_env_cli(tmp_path: Path) -> None:
 def test_unknown_key_is_an_error(tmp_path: Path) -> None:
     f = tmp_path / "c.toml"
     f.write_text("[scan]\nprofil = 1\n")
-    with pytest.raises(ConfigError, match=r"scan\.profil"):
+    with pytest.raises(ConfigError, match=r"scan\.profil: unknown setting") as e:
+        load_config(f, environ={})
+    # Said plainly, not as pydantic's "Extra inputs are not permitted".
+    assert "Extra inputs" not in str(e.value) and "config.toml.default" in str(e.value)
+
+
+def test_unreadable_file_says_so_without_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The packaged config.toml is root:lanwatch 0640: an ordinary user gets a sentence,
+    not a PermissionError traceback."""
+    f = tmp_path / "c.toml"
+    f.write_text("")
+
+    def denied(*a: object, **kw: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "open", denied)
+    with pytest.raises(ConfigError, match=r"cannot read .*permission denied"):
         load_config(f, environ={})
 
 

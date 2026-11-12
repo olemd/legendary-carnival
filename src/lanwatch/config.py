@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from lanwatch import __version__
 from lanwatch.models import Severity
 
 ENV_PREFIX = "LANWATCH_"
@@ -679,6 +680,11 @@ def load_toml(path: Path) -> dict[str, Any]:
             return tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: invalid TOML: {e}") from e
+    except PermissionError as e:
+        # The packaged config.toml is root:lanwatch 0640: an ordinary user cannot read it.
+        raise ConfigError(f"cannot read {path}: permission denied (try sudo)") from e
+    except OSError as e:
+        raise ConfigError(f"cannot read {path}: {e.strerror or e}") from e
 
 
 def load_config(
@@ -721,7 +727,16 @@ def format_validation_error(e: ValidationError, file_path: Path | None) -> str:
     lines = [f"invalid configuration ({where}):"]
     for err in e.errors():
         loc = ".".join(str(p) for p in err["loc"]) or "<root>"
-        lines.append(f"  {loc}: {err['msg']}")
+        msg = err["msg"]
+        if err["type"] == "extra_forbidden":
+            # Pydantic says "Extra inputs are not permitted", which does not tell a user
+            # that the key is simply not one this version knows (misspelt, renamed, or
+            # from another version).
+            msg = (
+                f"unknown setting: lanwatch {__version__} has no such key "
+                "(config.toml.default lists every key)"
+            )
+        lines.append(f"  {loc}: {msg}")
     return "\n".join(lines)
 
 
