@@ -8,7 +8,8 @@ firmware of the UniFi devices themselves. This module fetches all of that with a
 it into plain dataclasses. It reads only: none of the API's write endpoints are used.
 
 What the API key does not give, and so nothing here pretends to: the SSID and signal
-strength of a wireless client, or the switch port of a wired one. The network a client is
+strength of a wireless client, the switch port of a wired one, or traffic per client or
+per port. The network a client is
 on is derived from its address against the gateway-managed subnets.
 
 Everything coming back is third-party data and is checked field by field before use; the
@@ -57,6 +58,10 @@ OFFLINE_STATES = {"OFFLINE", "CONNECTION_INTERRUPTED", "ISOLATED"}
 MANAGEMENTS = {"UNMANAGED", "GATEWAY", "SWITCH"}
 SSID_TYPES = {"STANDARD", "IOT_OPTIMIZED"}
 MAX_TEXT = 80
+# A port that can do a gigabit or more but has negotiated this or less: a 10/100 device, or
+# a cable with a broken pair (gigabit needs all four).
+SLOW_LINK_MBPS = 100
+GIGABIT_MBPS = 1000
 
 
 class UnifiError(Exception):
@@ -95,6 +100,28 @@ class UnifiPort:
     max_speed_mbps: int | None = None
     speed_mbps: int | None = None
     poe_state: str | None = None
+
+    @property
+    def slow(self) -> bool:
+        """Up at 100 Mbit/s or less on a port that can do a gigabit or more."""
+        return (
+            self.state == "UP"
+            and self.speed_mbps is not None
+            and self.max_speed_mbps is not None
+            and self.speed_mbps <= SLOW_LINK_MBPS
+            and self.max_speed_mbps >= GIGABIT_MBPS
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "idx": self.idx,
+            "state": self.state,
+            "connector": self.connector,
+            "speed": self.speed_mbps,
+            "max_speed": self.max_speed_mbps,
+            "poe": self.poe_state,
+            "slow": self.slow,
+        }
 
 
 @dataclass(slots=True)
@@ -601,6 +628,7 @@ def device_attrs(dev: UnifiDevice, snap: UnifiSnapshot) -> dict[str, Any]:
         "uplink": _uplink(snap, dev.uplink_device_id),
         "network": _network(snap, dev.ip),
         "ports": dev.ports_summary(),
+        "port_list": [p.as_dict() for p in sorted(dev.ports, key=lambda p: p.idx)],
         "radios": dev.radios_summary(),
         "adopted_at": dev.adopted_at,
         "seen": snap.fetched_at,

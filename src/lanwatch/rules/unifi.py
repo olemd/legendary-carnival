@@ -158,4 +158,53 @@ class UnifiDeviceOfflineRule(Rule):
         return out
 
 
-RULES: list[Rule] = [IotOnMainNetworkRule(), UnifiOnlyClientRule(), UnifiDeviceOfflineRule()]
+class UnifiSlowLinkRule(Rule):
+    id = "net.unifi-slow-link"
+    kind = Kind.PROBLEM
+    default_severity = Severity.INFO
+    description = (
+        "A port on a UniFi device that can do 1 Gbit/s or more has a link at 100 Mbit/s or "
+        "less. Either what is plugged in is a 10/100 device (many TVs, printers and smart "
+        "home hubs are), or the cable or a connector has a broken pair: gigabit needs all "
+        "four pairs, and a link with fewer falls back to 100 Mbit/s. The controller does not "
+        "say what is on the port. If it is an access point, a switch or a computer, try "
+        "another cable; if it is a 10/100 device, accept the finding."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("unifi-device"):
+            d = ctx.store.device_by_key(r.key)
+            name = r.data.get("name") or r.data.get("model") or r.key
+            for p in r.data.get("port_list") or []:
+                if not p.get("slow"):
+                    continue
+                out.append(
+                    self.finding(
+                        ctx,
+                        title=f"Port {p.get('idx')} on UniFi "
+                        f"{_name_and_model(name, r.data.get('model'))} runs at "
+                        f"{p.get('speed')} Mbit/s, the port can do {p.get('max_speed')}",
+                        key_parts=[r.key, str(p.get("idx"))],
+                        device_id=d.id if d else None,
+                        evidence={
+                            "name": r.data.get("name"),
+                            "model": r.data.get("model"),
+                            "mac": r.key,
+                            "port": p.get("idx"),
+                            "connector": p.get("connector"),
+                            "speed_mbps": p.get("speed"),
+                            "max_speed_mbps": p.get("max_speed"),
+                            "poe": p.get("poe"),
+                        },
+                    )
+                )
+        return out
+
+
+RULES: list[Rule] = [
+    IotOnMainNetworkRule(),
+    UnifiOnlyClientRule(),
+    UnifiDeviceOfflineRule(),
+    UnifiSlowLinkRule(),
+]

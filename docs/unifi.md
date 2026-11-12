@@ -10,8 +10,8 @@ can read what the controller knows and no scan can see:
 - the UniFi devices themselves: state, firmware, whether an update is pending, ports and
   radios, and how they are chained together.
 
-That feeds three rules (`net.iot-on-main-network`, `inventory.unifi-only`,
-`net.unifi-device-offline`), sharpens the flat-network note, puts UniFi firmware under the
+That feeds four rules (`net.iot-on-main-network`, `inventory.unifi-only`,
+`net.unifi-device-offline`, `net.unifi-slow-link`), sharpens the flat-network note, puts UniFi firmware under the
 existing `device.firmware-outdated` rule, and draws the **Topology** page.
 
 Everything lanwatch does is read-only, over HTTPS, on the LAN: none of the API's write
@@ -96,12 +96,13 @@ The two are mutually exclusive: `ca_file` with `verify_tls = false` is a config 
 
 **Device pages.** A *UniFi* row: name, wired/wireless, guest, via which device, which
 network and VLAN, and the SSIDs on that network. A UniFi device's page gets a *UniFi device*
-row (model, state, uplink, ports up, radios) and a *Firmware* row that says *update
+row (model, state, uplink, ports up, radios, and the link speed of every port that is
+up) and a *Firmware* row that says *update
 available* when the controller has one pending.
 
 **Infra page.** Controller version and site, the networks with VLAN, subnet, SSIDs,
 isolation and internet access, the SSIDs with their type, and the UniFi devices with state,
-firmware and client counts. Plus how many clients lanwatch has never seen itself.
+firmware, client counts and any port with a slow link. Plus how many clients lanwatch has never seen itself.
 
 **Topology page.** Gateway on the left, access points and switches beside it, clients under
 the device they hang off, each labelled with its network. The same tree as a list below.
@@ -113,6 +114,7 @@ the device they hang off, each labelled with its network. The same tree as a lis
 | `net.iot-on-main-network` | medium | An IoT-class device is on the default network while another network, or an IoT-optimised SSID, exists. Silent on a flat network. |
 | `inventory.unifi-only` | info | The controller lists a client lanwatch has never seen: another VLAN, or client isolation. |
 | `net.unifi-device-offline` | high | An adopted device is offline, isolated or has its connection interrupted. Resolves when it is back. |
+| `net.unifi-slow-link` | info | A port that can do 1 Gbit/s or more has a link at 100 Mbit/s or less: a 10/100 device, or a cable with a broken pair. The controller does not say what is plugged in; accept the finding if it is a 10/100 device. |
 | `device.firmware-outdated` | low | Now also fires for UniFi devices with a pending update. |
 | `improvement.flat-network` | info | Groups by the controller's networks instead of guessing a /24. |
 
@@ -121,7 +123,8 @@ controller sees but lanwatch does not.
 
 ## 4. What the API key cannot tell
 
-The Integration API reports no SSID, signal strength or switch port per client. Those exist
+The Integration API reports no SSID, signal strength or switch port per client, and no
+traffic per client or per port. Those exist
 only in the controller's older local API, which needs an admin password rather than a key
 and is not used by lanwatch. The network a client is on is derived from its address against
 the gateway-managed subnets, so a client without an address, or on a network the gateway

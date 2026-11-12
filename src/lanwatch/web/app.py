@@ -46,6 +46,7 @@ def create_app(
     templates = Jinja2Templates(directory=str(TEMPLATES))
     templates.env.filters["local"] = local_str
     templates.env.filters["duration"] = _duration
+    templates.env.filters["mbps"] = _mbps
     templates.env.filters["port_label"] = port_label
     basic = HTTPBasic(auto_error=False)
 
@@ -517,6 +518,13 @@ def _duration(seconds: float | None) -> str:
     if s < 172800:
         return f"{s // 3600} h {s % 3600 // 60} min"
     return f"{round(s / 86400)} d"
+
+
+def _mbps(mbps: float | None) -> str:
+    """A link speed: 100 Mbit/s, 1 Gbit/s, 2.5 Gbit/s."""
+    if mbps is None:
+        return "?"
+    return f"{mbps / 1000:g} Gbit/s" if mbps >= 1000 else f"{mbps:g} Mbit/s"
 
 
 def _job_rows(scheduler: Scheduler, s: Store) -> list[dict[str, Any]]:

@@ -27,7 +27,12 @@ from lanwatch.models import HostObservation, Severity
 from lanwatch.pipeline import collect_unifi, run_unifi
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.infra import FlatNetworkRule
-from lanwatch.rules.unifi import IotOnMainNetworkRule, UnifiDeviceOfflineRule, UnifiOnlyClientRule
+from lanwatch.rules.unifi import (
+    IotOnMainNetworkRule,
+    UnifiDeviceOfflineRule,
+    UnifiOnlyClientRule,
+    UnifiSlowLinkRule,
+)
 from lanwatch.rules.versions import FirmwareOutdatedRule
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
@@ -55,6 +60,8 @@ class Controller:
         self.calls: list[str] = []
         self.status = status
         self.broken_details = broken_details
+        # Per device id: a function that changes the detail answer before it is sent.
+        self.patch: dict[str, Any] = {}
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.calls.append(
@@ -80,8 +87,11 @@ class Controller:
         if path.startswith(f"/sites/{SITE}/devices/"):
             if self.broken_details:
                 return httpx2.Response(500, text="boom")
-            which = {GW: "device-gw", AP: "device-ap", SW: "device-sw"}[path.rsplit("/", 1)[1]]
-            return httpx2.Response(200, json=_fx(which))
+            device_id = path.rsplit("/", 1)[1]
+            details = _fx({GW: "device-gw", AP: "device-ap", SW: "device-sw"}[device_id])
+            if device_id in self.patch:
+                details = self.patch[device_id](details)
+            return httpx2.Response(200, json=details)
         if path == f"/sites/{SITE}/networks":
             return httpx2.Response(200, json=_fx("networks"))
         if path.startswith(f"/sites/{SITE}/networks/"):
@@ -545,6 +555,57 @@ async def test_pages_show_controller_devices_and_topology(config: Config) -> Non
     assert "Visitor phone" in topo and "Garage switch" in topo and "offline" in topo
     assert f'href="/devices/{ids["nas"]}"' in topo and '<ol class="topo-list">' in topo
     assert 'aria-current="page"' in topo and ">Topology<" in topo
+
+
+def _with_slow_port(details: dict[str, Any]) -> dict[str, Any]:
+    """The gateway's second port up at 100 Mbit/s, although it can do a gigabit."""
+    details["interfaces"]["ports"][1].update(state="UP", speedMbps=100)
+    return details
+
+
+def test_port_list_and_slow_links() -> None:
+    gw = parse_device(_fx("devices")["data"][0], _with_slow_port(_fx("device-gw")))
+    assert gw is not None
+    assert [(p.idx, p.speed_mbps, p.slow) for p in gw.ports] == [(1, 2500, False), (2, 100, True)]
+    assert gw.ports[1].as_dict() == {
+        "idx": 2,
+        "state": "UP",
+        "connector": "RJ45",
+        "speed": 100,
+        "max_speed": 1000,
+        "poe": None,
+        "slow": True,
+    }
+    # 1 Gbit/s on a 2.5 Gbit/s port is what most devices do; a down port has no speed.
+    ap = parse_device(_fx("devices")["data"][1], _fx("device-ap"))
+    assert ap is not None and not ap.ports[0].slow
+    plain = parse_device(_fx("devices")["data"][0], _fx("device-gw"))
+    assert plain is not None and not plain.ports[1].slow
+
+
+async def test_slow_link_rule_and_pages(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        ids = _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        await collect_unifi(config, store, sid, Controller().client())
+        assert UnifiSlowLinkRule().evaluate(_ctx(store, config)) == []
+        gw_row = next(r for r in store.infra("unifi-device") if r.key.endswith(":01"))
+        assert [p["speed"] for p in gw_row.data["port_list"]] == [2500, None]
+
+        ctl = Controller()
+        ctl.patch = {GW: _with_slow_port}
+        await collect_unifi(config, store, sid, ctl.client())
+        found = UnifiSlowLinkRule().evaluate(_ctx(store, config))
+        assert [f.title for f in found] == [
+            "Port 2 on UniFi Express (UX7) runs at 100 Mbit/s, the port can do 1000"
+        ]
+        assert found[0].device_id == ids["gw"] and found[0].severity is Severity.INFO
+        assert found[0].evidence["port"] == 2 and found[0].evidence["connector"] == "RJ45"
+    client = TestClient(create_app(config))
+    assert "port 2 at 100 Mbit/s" in client.get("/infra").text
+    gw = client.get(f"/devices/{ids['gw']}").text
+    assert "port 1 2.5 Gbit/s" in gw and "100 Mbit/s, can do 1 Gbit/s" in gw
 
 
 def test_topology_layout_and_overflow(store: Store) -> None:

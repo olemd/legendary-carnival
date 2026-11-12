@@ -56,7 +56,7 @@ Runs every {{ config.schedule.infra_interval_s // 60 }} min, or <code>lanwatch i
 <tr><td>{% if d %}<a href="/devices/{{ d.id }}">{{ r.data.name or r.data.model }}</a>{% else %}{{ r.data.name or r.data.model }}{% endif %}{% if r.data.is_gateway %} <span class="kind">gateway</span>{% elif r.data.is_access_point %} <span class="kind">access point</span>{% endif %}</td>
 <td>{{ r.data.model }}</td><td>{% if r.data.state == 'ONLINE' %}<span class="result-ok">online</span>{% else %}<span class="result-failed">{{ r.data.state | lower | replace('_', ' ') }}</span>{% endif %}</td>
 <td class="mono">{{ r.data.ip or '-' }}</td><td class="mono">{{ r.data.firmware_version or '-' }}{% if r.data.firmware_updatable %} <span class="result-failed">update available</span>{% endif %}</td>
-<td class="muted">{% if r.data.ports.total %}{{ r.data.ports.up }}/{{ r.data.ports.total }} up{% if r.data.ports.poe %}, {{ r.data.ports.poe }} PoE{% endif %}{% else %}-{% endif %}</td><td>{{ r.data.clients }}</td></tr>{% endfor %}
+<td class="muted">{% if r.data.ports.total %}{{ r.data.ports.up }}/{{ r.data.ports.total }} up{% if r.data.ports.poe %}, {{ r.data.ports.poe }} PoE{% endif %}{% for p in r.data.port_list or [] if p.slow %}<br><span class="result-failed">port {{ p.idx }} at {{ p.speed | mbps }}</span>{% endfor %}{% else %}-{% endif %}</td><td>{{ r.data.clients }}</td></tr>{% endfor %}
 </tbody></table></div>
 {% elif not unifi.error %}<p class="empty">Not read yet; the infra round reads the controller every {{ config.schedule.infra_interval_s // 60 }} minutes, or run <code>lanwatch unifi</code>.</p>{% endif %}
 {% endif %}
