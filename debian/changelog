@@ -1,3 +1,18 @@
+lanwatch (0.9.3) unstable; urgency=medium
+
+  * A config error now fails "systemctl start" and "systemctl restart"
+    at once, with the reason in "systemctl status": the service is
+    Type=notify and tells systemd when it is up. Before, systemctl
+    reported success and the reason was only in the journal.
+  * After an upgrade, the package checks /etc/lanwatch/config.toml and
+    prints why the service will not start, if it will not.
+  * An unknown key is reported as "unknown setting" with the version,
+    instead of pydantic's "Extra inputs are not permitted".
+  * Running lanwatch without sudo on a packaged install says the config
+    file cannot be read, instead of printing a traceback.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 10:34:28 +0100
+
 lanwatch (0.9.2) unstable; urgency=medium
 
   * One ups.power-event finding per outage: the start is worked out on
