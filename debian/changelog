@@ -1,3 +1,16 @@
+lanwatch (0.10.1) unstable; urgency=medium
+
+  * A host nmap gave up on (--host-timeout) no longer counts as having no
+    open ports. Its ports used to be closed and its findings
+    auto-resolved; now its services are left as they were and the log
+    names it. A deep scan leaves out a host that timed out in either the
+    TCP or the UDP pass.
+  * Hosts held back by a slow member of their nmap host group are scanned
+    again one by one after an inventory scan, so a switch that drops
+    every probe no longer costs the hosts scanned with it their results.
+
+ -- olemd <olemd@glemt.net>  Thu, 12 Nov 2026 21:59:09 +0100
+
 lanwatch (0.10.0) unstable; urgency=medium
 
   * UniFi: link speed per port on the device page and the infra page, and

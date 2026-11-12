@@ -3,6 +3,7 @@ output (certificate validity, SSH algorithm lists, SMB dialects) for the rules."
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -73,6 +74,10 @@ class PortSet:
 class ServiceScanResult:
     hosts: list[HostServices] = field(default_factory=list)
     scanned: dict[str, PortSet] = field(default_factory=dict)  # proto -> ports
+    # Hosts nmap gave up on (--host-timeout). nmap still reports them as up, with
+    # whatever it had found so far, which is usually nothing. They are left out of
+    # `hosts` so their services stay as they were instead of all being closed.
+    timed_out: set[str] = field(default_factory=set)
 
 
 # -- XML parsing ---------------------------------------------------------------
@@ -116,6 +121,9 @@ def parse_nmap_xml_services(xml_text: str, address_type: str = "ipv4") -> Servic
             elif addr.get("addrtype") == "mac":
                 mac = normalize_mac(addr.get("addr"))
         if not ip:
+            continue
+        if host.get("timedout") == "true":
+            result.timed_out.add(ip)
             continue
         hs = HostServices(ip=ip, mac=mac)
         hostscript = host.find("hostscript")
@@ -219,6 +227,36 @@ async def nmap_available(ex: Executor) -> bool:
     return (await ex.which("nmap"))[0]
 
 
+async def _retry_alone(ex: Executor, result: ServiceScanResult, cfg: ScanConfig) -> None:
+    """Rescan each timed-out host in an nmap run of its own.
+
+    nmap takes a host group through each phase together, so one host that drops every
+    probe holds the others back until the whole group runs out of time: a server that
+    needs 96 s alone timed out at 240 s next to a switch that filters all its ports. Alone,
+    the held-back hosts finish; a host that is slow by itself times out again and is left
+    as it was. The runs go in parallel, as many at a time as a host group holds, so a bad
+    round costs a few minutes more rather than one timeout per host.
+    """
+    sem = asyncio.Semaphore(max(1, cfg.max_parallel_hosts))
+    timeout = _host_timeout_s(deep=False) + 120
+
+    async def one(ip: str) -> ServiceScanResult | None:
+        async with sem:
+            rc, out, err = await ex.run(build_nmap_args([ip], cfg, deep=False), timeout=timeout)
+        if rc != 0:
+            log.warning("rescan of %s failed (rc=%s): %s", ip, rc, err.strip()[:200])
+            return None
+        return parse_nmap_xml_services(out)
+
+    ips = sorted(result.timed_out)
+    log.info("service scan: rescanning %d timed-out hosts one by one", len(ips))
+    for part in await asyncio.gather(*(one(ip) for ip in ips)):
+        if part is None:
+            continue
+        result.hosts.extend(part.hosts)
+        result.timed_out -= {h.ip for h in part.hosts}
+
+
 async def scan_services(
     ex: Executor, targets: list[str], cfg: ScanConfig, deep: bool
 ) -> ServiceScanResult:
@@ -245,10 +283,13 @@ async def scan_services(
         part = parse_nmap_xml_services(out)
         result.hosts.extend(part.hosts)
         result.scanned.update(part.scanned)
+        result.timed_out |= part.timed_out
         if len(plan) > 1:
             log.info("service scan: %d of %d hosts done", done, len(targets))
     if len(failures) == len(plan):
         raise RuntimeError(f"nmap failed ({failures[0]})")
+    if result.timed_out and not deep:
+        await _retry_alone(ex, result, cfg)
     if deep and cfg.deep_udp_top_ports > 0:
         if not root:
             log.warning("skipping UDP scan: needs root or CAP_NET_RAW")
@@ -261,10 +302,20 @@ async def scan_services(
                     continue
                 udp = parse_nmap_xml_services(out)
                 result.scanned.update(udp.scanned)
+                result.timed_out |= udp.timed_out
                 for h in udp.hosts:
                     if h.ip in by_ip:
                         by_ip[h.ip].ports.extend(h.ports)
                     else:
                         result.hosts.append(h)
                         by_ip[h.ip] = h
+    if result.timed_out:
+        # A host that timed out in one pass has only half a result. Recording it would
+        # close the other protocol's ports, so it is left out as a whole.
+        result.hosts = [h for h in result.hosts if h.ip not in result.timed_out]
+        log.warning(
+            "service scan timed out on %d hosts, their services are left as they were: %s",
+            len(result.timed_out),
+            ", ".join(sorted(result.timed_out)),
+        )
     return result
