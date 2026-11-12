@@ -250,4 +250,4 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 
 ## License
 
-GNU Affero General Public License, version 3 or later. See [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
