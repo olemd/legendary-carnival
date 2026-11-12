@@ -1,0 +1,21 @@
+{# The device page's graphs for a UniFi device; `unifi_stats` comes from web/unifi.py. #}
+<style>
+.unifi-graphs { display:grid; grid-template-columns:repeat(auto-fit, minmax(18rem, 1fr)); gap:.9rem; margin:.6rem 0 1rem }
+svg.unifi-chart { display:block; width:100%; height:auto; overflow:visible }
+svg.unifi-chart polyline { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; stroke-linecap:round }
+svg.unifi-chart rect.frame { fill:none; stroke:var(--line) }
+.unifi-range a[aria-current] { font-weight:700; text-decoration:none; color:var(--fg) }
+</style>
+{% set span = 'last 7 days' if unifi_stats.range == '7d' else 'last 24 hours' %}
+<h2 id="unifi-stats">UniFi statistics <span class="unifi-range muted">· {% for key, title in (('24h', 'last 24 hours'), ('7d', 'last 7 days')) %}<a href="?range={{ key }}#unifi-stats"{% if unifi_stats.range == key %} aria-current="true"{% endif %}>{{ title }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</span></h2>
+<p class="lede">One sample per read of the controller (every {{ config.schedule.infra_interval_s // 60 }} minutes): what the device reported at that moment, not an average over the interval.</p>
+<div class="unifi-graphs">
+  {% for g in unifi_stats.graphs %}<div class="tile">
+    <div class="tile-label">{{ g.title }} <span class="muted">{{ g.chart.last | round(1) }} {{ g.unit }} now · {{ g.chart.min | round(1) }}–{{ g.chart.max | round(1) }}</span></div>
+    <svg class="unifi-chart" viewBox="0 0 {{ g.chart.width }} {{ g.chart.height }}" role="img"
+         aria-label="{{ g.title }} over the {{ span }}: between {{ g.chart.min | round(1) }} and {{ g.chart.max | round(1) }} {{ g.unit }}">
+      <rect class="frame" x="0.5" y="0.5" width="{{ g.chart.width - 1 }}" height="{{ g.chart.height - 1 }}" rx="4"/>
+      {% if g.chart.n > 1 %}<polyline points="{{ g.chart.points }}"/>{% else %}{% set px, py = g.chart.points.split(',') %}<circle cx="{{ px }}" cy="{{ py }}" r="3" fill="currentColor"/>{% endif %}
+    </svg>
+  </div>{% endfor %}
+</div>

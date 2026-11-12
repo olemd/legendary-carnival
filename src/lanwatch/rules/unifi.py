@@ -5,8 +5,10 @@ there are no rows and nothing fires."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from lanwatch.collectors.unifi import OFFLINE_STATES
-from lanwatch.models import Finding, Kind, Severity
+from lanwatch.models import Finding, Kind, Severity, iso, now_utc
 from lanwatch.rules.base import Rule, RuleContext
 from lanwatch.rules.infra import IOT_KINDS
 
@@ -158,4 +160,155 @@ class UnifiDeviceOfflineRule(Rule):
         return out
 
 
-RULES: list[Rule] = [IotOnMainNetworkRule(), UnifiOnlyClientRule(), UnifiDeviceOfflineRule()]
+class UnifiSlowLinkRule(Rule):
+    id = "net.unifi-slow-link"
+    kind = Kind.PROBLEM
+    default_severity = Severity.INFO
+    description = (
+        "A port on a UniFi device that can do 1 Gbit/s or more has a link at 100 Mbit/s or "
+        "less. Either what is plugged in is a 10/100 device (many TVs, printers and smart "
+        "home hubs are), or the cable or a connector has a broken pair: gigabit needs all "
+        "four pairs, and a link with fewer falls back to 100 Mbit/s. The controller does not "
+        "say what is on the port. If it is an access point, a switch or a computer, try "
+        "another cable; if it is a 10/100 device, accept the finding."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("unifi-device"):
+            d = ctx.store.device_by_key(r.key)
+            name = r.data.get("name") or r.data.get("model") or r.key
+            for p in r.data.get("port_list") or []:
+                if not p.get("slow"):
+                    continue
+                out.append(
+                    self.finding(
+                        ctx,
+                        title=f"Port {p.get('idx')} on UniFi "
+                        f"{_name_and_model(name, r.data.get('model'))} runs at "
+                        f"{p.get('speed')} Mbit/s, the port can do {p.get('max_speed')}",
+                        key_parts=[r.key, str(p.get("idx"))],
+                        device_id=d.id if d else None,
+                        evidence={
+                            "name": r.data.get("name"),
+                            "model": r.data.get("model"),
+                            "mac": r.key,
+                            "port": p.get("idx"),
+                            "connector": p.get("connector"),
+                            "speed_mbps": p.get("speed"),
+                            "max_speed_mbps": p.get("max_speed"),
+                            "poe": p.get("poe"),
+                        },
+                    )
+                )
+        return out
+
+
+class UnifiPendingDeviceRule(Rule):
+    id = "inventory.unifi-pending-device"
+    kind = Kind.PROBLEM
+    default_severity = Severity.LOW
+    description = (
+        "The controller sees UniFi gear on the network that nobody has adopted. It is new "
+        "out of the box, it has been factory reset (and then no longer does its job), or it "
+        "is not yours. Adopt it in the controller if it is yours; if you do not recognise "
+        "it, find where it is plugged in. Resolves when it is adopted or gone."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        out: list[Finding] = []
+        for r in ctx.store.infra("unifi-pending"):
+            d = ctx.store.device_by_key(r.key)
+            what = r.data.get("model") or "device"
+            out.append(
+                self.finding(
+                    ctx,
+                    title=f"UniFi {what} ({r.data.get('ip') or r.key}) is waiting to be adopted",
+                    key_parts=[r.key],
+                    device_id=d.id if d else None,
+                    evidence={
+                        "model": r.data.get("model"),
+                        "mac": r.key,
+                        "ip": r.data.get("ip"),
+                        "state": r.data.get("state"),
+                        "firmware_version": r.data.get("firmware_version"),
+                        "known_to_lanwatch": d is not None,
+                    },
+                )
+            )
+        return out
+
+
+# net.unifi-radio-retries looks at this many infra rounds and needs a reading from at least
+# MIN_RETRY_READS of them, all at or above the threshold: one bad sample is just a busy
+# moment.
+RETRY_ROUNDS = 4
+MIN_RETRY_READS = 3
+
+
+class UnifiRadioRetriesRule(Rule):
+    id = "net.unifi-radio-retries"
+    kind = Kind.PROBLEM
+    default_severity = Severity.LOW
+    description = (
+        "A radio on a UniFi access point has had to resend a large share of what it "
+        "transmitted (unifi.tx_retries_warn_pct, 30 % by default) at every read for about "
+        "an hour. Clients on that band get a slow and uneven connection. The usual causes "
+        "are a crowded channel (neighbours' networks, or your own access points on the "
+        "same one), interference, or clients at the edge of its range. Try another channel "
+        "or a narrower channel width, or move the access point. Resolves when a read is "
+        "below the threshold."
+    )
+
+    def evaluate(self, ctx: RuleContext) -> list[Finding]:
+        threshold = ctx.config.unifi.tx_retries_warn_pct
+        window = timedelta(seconds=RETRY_ROUNDS * ctx.config.schedule.infra_interval_s)
+        since = iso(now_utc() - window)
+        out: list[Finding] = []
+        for r in ctx.store.infra("unifi-device"):
+            channels = {x.get("band"): x for x in r.data.get("radios") or []}
+            for radio in (r.data.get("stats") or {}).get("radios") or []:
+                band = radio.get("band")
+                if not isinstance(band, int | float) or radio.get("tx_retries_pct") is None:
+                    continue
+                reads = [
+                    v
+                    for _, v in ctx.store.snmp_series(
+                        r.key, f"unifi.tx_retries_pct.{band:g}", since
+                    )
+                ]
+                if len(reads) < MIN_RETRY_READS or min(reads) < threshold:
+                    continue
+                d = ctx.store.device_by_key(r.key)
+                name = r.data.get("name") or r.data.get("model") or r.key
+                out.append(
+                    self.finding(
+                        ctx,
+                        title=f"UniFi {_name_and_model(name, r.data.get('model'))} resends "
+                        f"{reads[-1]:g} % of what it transmits on {band:g} GHz",
+                        key_parts=[r.key, f"{band:g}"],
+                        device_id=d.id if d else None,
+                        evidence={
+                            "name": r.data.get("name"),
+                            "model": r.data.get("model"),
+                            "mac": r.key,
+                            "band_ghz": band,
+                            "channel": channels.get(band, {}).get("channel"),
+                            "channel_width_mhz": channels.get(band, {}).get("width"),
+                            "tx_retries_pct": reads,
+                            "threshold_pct": threshold,
+                            "clients": r.data.get("clients"),
+                        },
+                    )
+                )
+        return out
+
+
+RULES: list[Rule] = [
+    IotOnMainNetworkRule(),
+    UnifiOnlyClientRule(),
+    UnifiDeviceOfflineRule(),
+    UnifiSlowLinkRule(),
+    UnifiRadioRetriesRule(),
+    UnifiPendingDeviceRule(),
+]

@@ -398,6 +398,10 @@ def unifi(ctx: typer.Context, verbose: VerboseOpt = False) -> None:
             f"  {(dev.name or dev.model)[:24]:<{name_w}}  {dev.model:<{model_w}}  "
             f"{dev.state.lower():<8} {dev.firmware_version or '-':<14}{update}".rstrip()
         )
+    if snap.pending:
+        typer.echo("waiting for adoption:")
+    for p in snap.pending:
+        typer.echo(f"  {p.model or '?'}  {p.ip or '-'}  {p.mac}")
     wired = sum(1 for c in snap.clients if c.mac and c.wired)
     wireless = sum(1 for c in snap.clients if c.mac and not c.wired)
     guests = sum(1 for c in snap.clients if c.mac and c.guest)

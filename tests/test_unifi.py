@@ -19,6 +19,7 @@ from lanwatch.collectors.unifi import (
     parse_device,
     parse_network,
     parse_ssid,
+    parse_stats,
     tls_verify,
 )
 from lanwatch.config import Config, ConfigError, UnifiConfig, load_config
@@ -27,7 +28,14 @@ from lanwatch.models import HostObservation, Severity
 from lanwatch.pipeline import collect_unifi, run_unifi
 from lanwatch.rules.base import RuleContext
 from lanwatch.rules.infra import FlatNetworkRule
-from lanwatch.rules.unifi import IotOnMainNetworkRule, UnifiDeviceOfflineRule, UnifiOnlyClientRule
+from lanwatch.rules.unifi import (
+    IotOnMainNetworkRule,
+    UnifiDeviceOfflineRule,
+    UnifiOnlyClientRule,
+    UnifiPendingDeviceRule,
+    UnifiRadioRetriesRule,
+    UnifiSlowLinkRule,
+)
 from lanwatch.rules.versions import FirmwareOutdatedRule
 from lanwatch.store import Store
 from lanwatch.web.app import create_app
@@ -55,6 +63,12 @@ class Controller:
         self.calls: list[str] = []
         self.status = status
         self.broken_details = broken_details
+        # Per device id: a function that changes the detail answer before it is sent.
+        self.patch: dict[str, Any] = {}
+        # Per device id: the statistics answer, instead of the fixture.
+        self.stats: dict[str, Any] = {}
+        # False: answer 404 for /pending-devices, as a controller older than Network 10.
+        self.has_pending = True
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.calls.append(
@@ -77,16 +91,29 @@ class Controller:
             )
         if path == f"/sites/{SITE}/devices":
             return httpx2.Response(200, json=_fx("devices"))
+        if path.startswith(f"/sites/{SITE}/devices/") and self.broken_details:
+            return httpx2.Response(500, text="boom")
+        if path.endswith("/statistics/latest"):
+            device_id = path.split("/")[-3]
+            assert device_id != SW, "no statistics are asked of an offline device"
+            if device_id in self.stats:
+                return httpx2.Response(200, json=self.stats[device_id])
+            return httpx2.Response(200, json=_fx({GW: "stats-gw", AP: "stats-ap"}[device_id]))
         if path.startswith(f"/sites/{SITE}/devices/"):
-            if self.broken_details:
-                return httpx2.Response(500, text="boom")
-            which = {GW: "device-gw", AP: "device-ap", SW: "device-sw"}[path.rsplit("/", 1)[1]]
-            return httpx2.Response(200, json=_fx(which))
+            device_id = path.rsplit("/", 1)[1]
+            details = _fx({GW: "device-gw", AP: "device-ap", SW: "device-sw"}[device_id])
+            if device_id in self.patch:
+                details = self.patch[device_id](details)
+            return httpx2.Response(200, json=details)
         if path == f"/sites/{SITE}/networks":
             return httpx2.Response(200, json=_fx("networks"))
         if path.startswith(f"/sites/{SITE}/networks/"):
             which = {NET_DEFAULT: "network-default", NET_IOT: "network-iot"}[path.rsplit("/", 1)[1]]
             return httpx2.Response(200, json=_fx(which))
+        if path == "/pending-devices":
+            if not self.has_pending:
+                return httpx2.Response(404, text="not found")
+            return httpx2.Response(200, json=_fx("pending-devices"))
         if path == f"/sites/{SITE}/wifi/broadcasts":
             return httpx2.Response(200, json=_fx("wifi-broadcasts"))
         raise AssertionError(f"unexpected request {path}")
@@ -168,7 +195,11 @@ async def test_fetch_paginates_and_authenticates() -> None:
     client_pages = [c for c in ctl.calls if c.endswith("limit=200") and "/clients?" in c]
     assert [c.split("offset=")[1].split("&")[0] for c in client_pages] == ["0", "2"]
     # Details for every device, but only for the gateway-managed networks.
-    assert sum(1 for c in ctl.calls if "/devices/" in c) == 3
+    # Statistics only for the two that are online.
+    assert sum(1 for c in ctl.calls if "/devices/" in c and "/statistics" not in c) == 3
+    assert sum(1 for c in ctl.calls if c.endswith("/statistics/latest")) == 2
+    assert snap.devices[0].stats is not None and snap.devices[0].stats.uptime_s == 864000
+    assert snap.devices[2].stats is None
     assert sum(1 for c in ctl.calls if "/networks/" in c) == 2
 
 
@@ -189,6 +220,7 @@ async def test_site_by_name_and_detail_failure_keeps_overview() -> None:
     snap = await fetch_unifi(_cfg(site="Home"), Controller(broken_details=True).client())
     assert snap.site_id == SITE and len(snap.devices) == 3
     assert snap.devices[1].uplink_device_id is None  # overview only
+    assert snap.devices[1].stats is None
     with pytest.raises(UnifiError, match="no site called"):
         await fetch_unifi(_cfg(site="Cabin"), Controller().client())
 
@@ -547,6 +579,200 @@ async def test_pages_show_controller_devices_and_topology(config: Config) -> Non
     assert 'aria-current="page"' in topo and ">Topology<" in topo
 
 
+def _with_slow_port(details: dict[str, Any]) -> dict[str, Any]:
+    """The gateway's second port up at 100 Mbit/s, although it can do a gigabit."""
+    details["interfaces"]["ports"][1].update(state="UP", speedMbps=100)
+    return details
+
+
+def test_port_list_and_slow_links() -> None:
+    gw = parse_device(_fx("devices")["data"][0], _with_slow_port(_fx("device-gw")))
+    assert gw is not None
+    assert [(p.idx, p.speed_mbps, p.slow) for p in gw.ports] == [(1, 2500, False), (2, 100, True)]
+    assert gw.ports[1].as_dict() == {
+        "idx": 2,
+        "state": "UP",
+        "connector": "RJ45",
+        "speed": 100,
+        "max_speed": 1000,
+        "poe": None,
+        "slow": True,
+    }
+    # 1 Gbit/s on a 2.5 Gbit/s port is what most devices do; a down port has no speed.
+    ap = parse_device(_fx("devices")["data"][1], _fx("device-ap"))
+    assert ap is not None and not ap.ports[0].slow
+    plain = parse_device(_fx("devices")["data"][0], _fx("device-gw"))
+    assert plain is not None and not plain.ports[1].slow
+
+
+async def test_slow_link_rule_and_pages(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        ids = _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        await collect_unifi(config, store, sid, Controller().client())
+        assert UnifiSlowLinkRule().evaluate(_ctx(store, config)) == []
+        gw_row = next(r for r in store.infra("unifi-device") if r.key.endswith(":01"))
+        assert [p["speed"] for p in gw_row.data["port_list"]] == [2500, None]
+
+        ctl = Controller()
+        ctl.patch = {GW: _with_slow_port}
+        await collect_unifi(config, store, sid, ctl.client())
+        found = UnifiSlowLinkRule().evaluate(_ctx(store, config))
+        assert [f.title for f in found] == [
+            "Port 2 on UniFi Express (UX7) runs at 100 Mbit/s, the port can do 1000"
+        ]
+        assert found[0].device_id == ids["gw"] and found[0].severity is Severity.INFO
+        assert found[0].evidence["port"] == 2 and found[0].evidence["connector"] == "RJ45"
+    client = TestClient(create_app(config))
+    assert "port 2 at 100 Mbit/s" in client.get("/infra").text
+    gw = client.get(f"/devices/{ids['gw']}").text
+    assert "port 1 2.5 Gbit/s" in gw and "100 Mbit/s, can do 1 Gbit/s" in gw
+
+
+def test_parse_stats_checks_fields() -> None:
+    gw = parse_stats(_fx("stats-gw"))
+    assert gw is not None
+    assert gw.as_dict() == {
+        "uptime_s": 864000,
+        "cpu_pct": 7.2,
+        "mem_pct": 61.5,
+        "load_1": 0.42,
+        "uplink_tx_bps": 420000,
+        "uplink_rx_bps": 3400000,
+        "radios": [
+            {"band": 5.0, "tx_retries_pct": 4.2},
+            {"band": 2.4, "tx_retries_pct": 31.0},
+        ],
+    }
+    assert gw.metrics() == {
+        "unifi.uplink_tx_bps": 420000.0,
+        "unifi.uplink_rx_bps": 3400000.0,
+        "unifi.cpu_pct": 7.2,
+        "unifi.mem_pct": 61.5,
+        "unifi.tx_retries_pct.5": 4.2,
+        "unifi.tx_retries_pct.2.4": 31.0,
+    }
+    # Every field is optional, and nothing odd gets through.
+    ap = parse_stats(_fx("stats-ap"))
+    assert ap is not None and ap.load_1 is None and ap.radios[0].tx_retries_pct is None
+    assert "unifi.tx_retries_pct.6" not in ap.metrics()
+    odd = parse_stats(
+        {
+            "uptimeSec": "long",
+            "cpuUtilizationPct": 250,
+            "memoryUtilizationPct": True,
+            "uplink": {"txRateBps": -1, "rxRateBps": float("nan")},
+            "interfaces": {"radios": ["x", {"txRetriesPct": 5}]},
+        }
+    )
+    assert odd is not None and odd.metrics() == {} and odd.radios == []
+    assert parse_stats(["not", "an", "object"]) is None
+
+
+async def test_statistics_are_stored_graphed_and_a_restart_is_an_event(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        ids = _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        await collect_unifi(config, store, sid, Controller().client())
+        rows = {r.key[-2:]: r.data for r in store.infra("unifi-device")}
+        assert rows["01"]["stats"]["uplink_rx_bps"] == 3400000 and rows["03"]["stats"] is None
+        gw = store.device(ids["gw"])
+        assert gw is not None and gw.attrs["unifi_device"]["stats"]["uptime_s"] == 864000
+        series = store.snmp_series("a8:bb:cc:00:00:01", "unifi.uplink_rx_bps", "2000")
+        assert [v for _, v in series] == [3400000.0]
+        assert store.snmp_series("a8:bb:cc:00:00:03", "unifi.cpu_pct", "2000") == []
+        assert store.events(kinds=["unifi.device-restarted"]) == []
+
+        # The next read: the gateway's uptime has gone down, so it restarted in between.
+        ctl = Controller()
+        ctl.stats = {GW: {**_fx("stats-gw"), "uptimeSec": 240}}
+        await collect_unifi(config, store, sid, ctl.client())
+        events = store.events(kinds=["unifi.device-restarted"])
+        assert [e.summary for e in events] == ["UniFi Express restarted 4 min before this read"]
+        assert events[0].device_id == ids["gw"]
+        assert len(store.snmp_series("a8:bb:cc:00:00:01", "unifi.cpu_pct", "2000")) == 2
+    client = TestClient(create_app(config))
+    infra = client.get("/infra").text
+    assert "7.2 % / 61.5 %" in infra and "3.4 Mbit/s / 420 kbit/s" in infra
+    assert "640 bit/s / 12 kbit/s" in infra
+    page = client.get(f"/devices/{ids['gw']}").text
+    assert "up 4 min" in page and "uplink 3.4 Mbit/s in, 420 kbit/s out" in page
+    assert "UniFi statistics" in page and "Uplink in over the last 24 hours" in page
+    assert "<polyline" in page and "Memory" in page
+    week = client.get(f"/devices/{ids['gw']}?range=7d").text
+    assert "CPU over the last 7 days" in week
+    # A device that is not UniFi gear gets no such block.
+    assert "UniFi statistics" not in client.get(f"/devices/{ids['nas']}").text
+
+
+async def test_radio_retries_rule_needs_an_hour_of_bad_reads(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        ids = _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        rule = UnifiRadioRetriesRule()
+        # The gateway's 2.4 GHz radio resends 31 %; two reads are not yet enough.
+        for _ in range(2):
+            await collect_unifi(config, store, sid, Controller().client())
+        assert rule.evaluate(_ctx(store, config)) == []
+        await collect_unifi(config, store, sid, Controller().client())
+        found = rule.evaluate(_ctx(store, config))
+        assert [f.title for f in found] == [
+            "UniFi Express (UX7) resends 31 % of what it transmits on 2.4 GHz"
+        ]
+        ev = found[0].evidence
+        assert found[0].device_id == ids["gw"] and found[0].severity is Severity.LOW
+        assert ev["channel"] == 6 and ev["tx_retries_pct"] == [31.0, 31.0, 31.0]
+        assert ev["threshold_pct"] == 30.0
+        # A higher threshold, or one read below it, and there is nothing to report.
+        config.unifi = _cfg(tx_retries_warn_pct=40)
+        assert rule.evaluate(_ctx(store, config)) == []
+        config.unifi = _cfg()
+        ctl = Controller()
+        calm = _fx("stats-gw")
+        calm["interfaces"]["radios"][1]["txRetriesPct"] = 12
+        ctl.stats = {GW: calm}
+        await collect_unifi(config, store, sid, ctl.client())
+        assert rule.evaluate(_ctx(store, config)) == []
+    client = TestClient(create_app(config))
+    page = client.get(f"/devices/{ids['gw']}").text
+    assert "resent: 4.2 % on 5 GHz, 12.0 % on 2.4 GHz" in page
+    assert "Resent on 2.4 GHz over the last 24 hours" in page
+    with pytest.raises(ValueError, match="tx_retries_warn_pct"):
+        _cfg(tx_retries_warn_pct=0)
+
+
+async def test_pending_devices_rule_and_page(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        out = await collect_unifi(config, store, sid, Controller().client())
+        assert out.snapshot is not None
+        assert [(p.mac, p.model) for p in out.snapshot.pending] == [
+            ("a8:bb:cc:00:00:09", "U6 Lite")
+        ]
+        found = UnifiPendingDeviceRule().evaluate(_ctx(store, config))
+        assert [f.title for f in found] == ["UniFi U6 Lite (192.168.1.50) is waiting to be adopted"]
+        assert found[0].severity is Severity.LOW and found[0].device_id is None
+        assert found[0].evidence["known_to_lanwatch"] is False
+        assert found[0].evidence["firmware_version"] == "6.6.77"
+    page = TestClient(create_app(config)).get("/infra").text
+    assert "Waiting for adoption" in page and "a8:bb:cc:00:00:09" in page
+
+    # A controller without the endpoint: the rest is read as before, and nothing is pending.
+    with Store(config.store_path) as store:
+        ctl = Controller()
+        ctl.has_pending = False
+        out = await collect_unifi(config, store, sid, ctl.client())
+        assert out.error is None and out.devices == 3
+        assert store.infra("unifi-pending") == []
+        assert UnifiPendingDeviceRule().evaluate(_ctx(store, config)) == []
+    assert "Waiting for adoption" not in TestClient(create_app(config)).get("/infra").text
+
+
 def test_topology_layout_and_overflow(store: Store) -> None:
     assert build_topology(store) is None
     sid = store.begin_snapshot("infra", "t")
@@ -659,8 +885,10 @@ def test_cli_unifi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert "UniFi Network 10.1.84, site Home" in r.output and "update available" in r.output
     # Device columns are as wide as their longest entry: a long model name ("USW-Lite-8-PoE")
     # no longer runs into the state column.
-    rows = r.output.split("devices:\n", 1)[1].split("clients:", 1)[0].splitlines()
+    devices, pending = r.output.split("devices:\n", 1)[1].split("waiting for adoption:\n", 1)
+    rows = devices.splitlines()
     assert len(rows) == 3
+    assert pending.startswith("  U6 Lite  192.168.1.50  a8:bb:cc:00:00:09\nclients:")
     states = {row.index(state) for row in rows for state in ("online", "offline") if state in row}
     assert len(states) == 1, rows
     assert "clients: 2 (1 wired, 1 wireless, 1 guest); 2 not seen by lanwatch" in r.output

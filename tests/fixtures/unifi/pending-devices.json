@@ -1,0 +1,20 @@
+{
+  "offset": 0,
+  "limit": 200,
+  "count": 1,
+  "totalCount": 1,
+  "data": [
+    {
+      "macAddress": "A8:BB:CC:00:00:09",
+      "ipAddress": "192.168.1.50",
+      "model": "U6 Lite",
+      "state": "PENDING_ADOPTION",
+      "supported": true,
+      "firmwareVersion": "6.6.77",
+      "firmwareUpdatable": true,
+      "features": [
+        "accessPoint"
+      ]
+    }
+  ]
+}

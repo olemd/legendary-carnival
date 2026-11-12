@@ -8,10 +8,16 @@ can read what the controller knows and no scan can see:
   the name set in the controller, when it connected, and which network (VLAN) it is on;
 - the networks and SSIDs that exist, with VLAN ids, subnets and isolation settings;
 - the UniFi devices themselves: state, firmware, whether an update is pending, ports and
-  radios, and how they are chained together.
+  radios, and how they are chained together;
+- per UniFi device that is online: uptime, CPU and memory use, how much it was sending
+  and receiving on its uplink when the controller last heard from it, and for each radio
+  the share of its transmissions it had to resend;
+- UniFi gear the controller sees on the network but nobody has adopted (Network 10 or
+  later).
 
-That feeds three rules (`net.iot-on-main-network`, `inventory.unifi-only`,
-`net.unifi-device-offline`), sharpens the flat-network note, puts UniFi firmware under the
+That feeds six rules (`net.iot-on-main-network`, `inventory.unifi-only`,
+`net.unifi-device-offline`, `net.unifi-slow-link`, `net.unifi-radio-retries`,
+`inventory.unifi-pending-device`), sharpens the flat-network note, puts UniFi firmware under the
 existing `device.firmware-outdated` rule, and draws the **Topology** page.
 
 Everything lanwatch does is read-only, over HTTPS, on the LAN: none of the API's write
@@ -90,18 +96,29 @@ The two are mutually exclusive: `ca_file` with `verify_tls = false` is a config 
 | Key | Default | Meaning |
 |---|---|---|
 | `site` | first site | Site id or name when the controller has several. |
+| `tx_retries_warn_pct` | `30` | The share of its transmissions a radio must resend, for about an hour, before `net.unifi-radio-retries` fires. Raise it if a busy but working network keeps tripping it. |
 | `adopt_names` | `true` | A device without a name in lanwatch gets the name set in the controller. A name set in lanwatch is never overwritten, and a controller "name" that is just the hostname is ignored. |
 
 ## 3. What you get
 
 **Device pages.** A *UniFi* row: name, wired/wireless, guest, via which device, which
 network and VLAN, and the SSIDs on that network. A UniFi device's page gets a *UniFi device*
-row (model, state, uplink, ports up, radios) and a *Firmware* row that says *update
-available* when the controller has one pending.
+row (model, state, uplink, ports up, radios, and the link speed of every port that is
+up) and a *Firmware* row that says *update
+available* when the controller has one pending. It also shows uptime, CPU and memory use,
+the uplink rate and the share each radio resends, and under **UniFi statistics** a graph of each over the last 24 hours
+or 7 days.
+
+The uplink rate is what the device was sending and receiving on its uplink at the moment
+of the read. lanwatch keeps one sample per read (every 15 minutes), so the graph shows
+spot checks, not how much was used in between. A device whose uptime has gone down since the previous read gets a
+`unifi.device-restarted` entry on the **Timeline**.
 
 **Infra page.** Controller version and site, the networks with VLAN, subnet, SSIDs,
 isolation and internet access, the SSIDs with their type, and the UniFi devices with state,
-firmware and client counts. Plus how many clients lanwatch has never seen itself.
+firmware, client counts, any port with a slow link, uptime, CPU and memory use, and the
+uplink rate. Under *Waiting for adoption*, UniFi gear nobody has adopted. Plus how many
+clients lanwatch has never seen itself.
 
 **Topology page.** Gateway on the left, access points and switches beside it, clients under
 the device they hang off, each labelled with its network. The same tree as a list below.
@@ -113,15 +130,19 @@ the device they hang off, each labelled with its network. The same tree as a lis
 | `net.iot-on-main-network` | medium | An IoT-class device is on the default network while another network, or an IoT-optimised SSID, exists. Silent on a flat network. |
 | `inventory.unifi-only` | info | The controller lists a client lanwatch has never seen: another VLAN, or client isolation. |
 | `net.unifi-device-offline` | high | An adopted device is offline, isolated or has its connection interrupted. Resolves when it is back. |
+| `net.unifi-slow-link` | info | A port that can do 1 Gbit/s or more has a link at 100 Mbit/s or less: a 10/100 device, or a cable with a broken pair. The controller does not say what is plugged in; accept the finding if it is a 10/100 device. |
+| `net.unifi-radio-retries` | low | A radio has resent at least `tx_retries_warn_pct` of what it transmitted at every read for about an hour (four infra rounds, at least three readings): a crowded channel, interference, or clients at the edge of its range. Resolves when a read is below the threshold. |
+| `inventory.unifi-pending-device` | low | The controller sees UniFi gear that nobody has adopted: new, factory reset, or not yours. Resolves when it is adopted or gone. |
 | `device.firmware-outdated` | low | Now also fires for UniFi devices with a pending update. |
 | `improvement.flat-network` | info | Groups by the controller's networks instead of guessing a /24. |
 
-`lanwatch unifi` prints the same summary on the command line and lists the clients the
-controller sees but lanwatch does not.
+`lanwatch unifi` prints a summary on the command line: networks, UniFi devices, gear
+waiting for adoption, and the clients the controller sees but lanwatch does not.
 
 ## 4. What the API key cannot tell
 
-The Integration API reports no SSID, signal strength or switch port per client. Those exist
+The Integration API reports no SSID, signal strength or switch port per client, and no
+traffic per client or per port. Those exist
 only in the controller's older local API, which needs an admin password rather than a key
 and is not used by lanwatch. The network a client is on is derived from its address against
 the gateway-managed subnets, so a client without an address, or on a network the gateway

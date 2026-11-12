@@ -1,0 +1,26 @@
+{
+  "uptimeSec": 864000,
+  "lastHeartbeatAt": "2026-11-12T12:00:00Z",
+  "nextHeartbeatAt": "2026-11-12T12:00:30Z",
+  "loadAverage1Min": 0.42,
+  "loadAverage5Min": 0.4,
+  "loadAverage15Min": 0.38,
+  "cpuUtilizationPct": 7.25,
+  "memoryUtilizationPct": 61.5,
+  "uplink": {
+    "txRateBps": 420000,
+    "rxRateBps": 3400000
+  },
+  "interfaces": {
+    "radios": [
+      {
+        "frequencyGHz": 5,
+        "txRetriesPct": 4.2
+      },
+      {
+        "frequencyGHz": 2.4,
+        "txRetriesPct": 31.0
+      }
+    ]
+  }
+}
