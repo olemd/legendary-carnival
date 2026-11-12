@@ -89,9 +89,11 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORGEJO_OWNER: olemd
-      # The suite is only a name in the registry: the one package serves every supported
-      # distribution. It is the suite the owner's other packages are published in.
-      UPLOAD_URL: https://kode.naiv.no/api/packages/olemd/debian/pool/trixie/main/upload
+      REGISTRY: https://kode.naiv.no/api/packages/olemd/debian
+      # One suite per distribution the package is tested on above (Debian 12 and 13,
+      # Ubuntu 24.04), so a sources file can name the release it runs. The same .deb goes
+      # into each.
+      SUITES: bookworm trixie noble
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -106,13 +108,32 @@ jobs:
             echo "::error::the secret FORGEJO_PACKAGES_TOKEN is not set"
             exit 1
           fi
-          for deb in dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb; do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' \
-              --user "$FORGEJO_OWNER:$FORGEJO_PACKAGES_TOKEN" --upload-file "$deb" "$UPLOAD_URL")
-            # 409: this version and architecture is there already, as on a re-run.
-            case "$code" in
-              201) echo "uploaded $deb" ;;
-              409) echo "already in the registry: $deb" ;;
-              *) echo "::error::uploading $deb failed with HTTP $code"; exit 1 ;;
-            esac
+          for suite in $SUITES; do
+            for deb in dist/lanwatch_*_amd64.deb dist/lanwatch_*_arm64.deb; do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                --user "$FORGEJO_OWNER:$FORGEJO_PACKAGES_TOKEN" --upload-file "$deb" \
+                "$REGISTRY/pool/$suite/main/upload")
+              # 409: this version and architecture is there already, as on a re-run.
+              case "$code" in
+                201) echo "$suite: uploaded $deb" ;;
+                409) echo "$suite: already in the registry: $deb" ;;
+                *) echo "::error::$suite: uploading $deb failed with HTTP $code"; exit 1 ;;
+              esac
+            done
+          done
+      # A 409 above is taken on trust, so ask the index apt reads: every suite must list
+      # this version for both architectures.
+      - name: The release is in every suite's index
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for suite in $SUITES; do
+            for arch in amd64 arm64; do
+              if curl -fsS "$REGISTRY/dists/$suite/main/binary-$arch/Packages" \
+                  | grep -A10 -x 'Package: lanwatch' | grep -qxF "Version: $version"; then
+                echo "$suite/$arch: lanwatch $version"
+              else
+                echo "::error::lanwatch $version is not in the $suite index for $arch"
+                exit 1
+              fi
+            done
           done

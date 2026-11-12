@@ -27,19 +27,21 @@ repository, so `apt upgrade` picks up new versions:
 ```sh
 sudo curl -fsSL https://kode.naiv.no/api/packages/olemd/debian/repository.key \
   -o /etc/apt/keyrings/forgejo-olemd.asc
-sudo tee /etc/apt/sources.list.d/lanwatch.sources > /dev/null <<'SOURCES'
+sudo tee /etc/apt/sources.list.d/lanwatch.sources > /dev/null <<SOURCES
 Types: deb
 URIs: https://kode.naiv.no/api/packages/olemd/debian/
-Suites: trixie
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
 Components: main
 Signed-By: /etc/apt/keyrings/forgejo-olemd.asc
 SOURCES
 sudo apt update && sudo apt install lanwatch
 ```
 
-`Suites: trixie` is the name of the suite in the repository, not a requirement: the same
-package is for Debian 12 and 13 and Ubuntu 24.04. The `.deb` files are also attached to
-each GitHub release.
+The repository has a suite for each release the package is tested on: `bookworm`
+(Debian 12), `trixie` (Debian 13) and `noble` (Ubuntu 24.04). The `Suites:` line above
+fills in the one this machine runs. On any other release, write `trixie` there: the
+package is the same in all three. The `.deb` files are also attached to each GitHub
+release.
 
 The service is now scanning the networks this machine is attached to: discovery every
 5 minutes, service inventory hourly, a deep scan weekly. The first round is the baseline;
