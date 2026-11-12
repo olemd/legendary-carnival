@@ -11,10 +11,11 @@ facts, logged at debug level only. Rules over these facts are in lanwatch/rules/
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC
 from typing import Any
 
 from lanwatch.collectors.snmp import SnmpClient, SystemInfo, Value, text
+from lanwatch.collectors.snmp_clock import parse_date_and_time
 from lanwatch.collectors.snmp_kinds import ReaderResult, SnmpReader
 
 log = logging.getLogger(__name__)
@@ -118,22 +119,12 @@ def is_juniper(system: SystemInfo) -> bool:
 
 
 def date_and_time(v: Value | None) -> str | None:
-    """SNMPv2-TC DateAndTime (8 or 11 octets) -> ISO 8601 in UTC, or None. Without the
-    offset octets the time is taken as UTC; a zero date means "never"."""
-    if not isinstance(v, bytes) or len(v) not in (8, 11):
-        return None
-    year = int.from_bytes(v[0:2], "big")
-    if year == 0:
-        return None
-    try:
-        tz = UTC
-        if len(v) == 11:
-            sign = -1 if v[8] == ord("-") else 1
-            tz = timezone(sign * timedelta(hours=v[9], minutes=v[10]))
-        dt = datetime(year, v[2], v[3], v[4], v[5], v[6], tzinfo=tz)
-    except ValueError:
-        return None
-    return dt.astimezone(UTC).isoformat(timespec="seconds")
+    """SNMPv2-TC DateAndTime (8 or 11 octets) -> ISO 8601 in UTC, or None. Parsed by the
+    clock reader's parser, so both read a time the same way: without the offset octets it
+    is the device's local time, taken as lanwatch's local zone (RFC 2579). A zero date
+    means "never"."""
+    t = parse_date_and_time(v)
+    return t.at.astimezone(UTC).isoformat(timespec="seconds") if t else None
 
 
 def _columns(values: dict[str, Value], table: str) -> dict[str, dict[int, Value]]:

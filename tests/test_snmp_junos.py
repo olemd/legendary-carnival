@@ -4,6 +4,7 @@ device that lacks the tables, and the rules over what it found."""
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,10 @@ def test_date_and_time() -> None:
     assert (
         date_and_time(bytes.fromhex("07EA0B0A0A16140" + "02B0100")) == "2026-11-10T09:22:20+00:00"
     )
-    assert date_and_time(bytes.fromhex("07EA0B0A0A161400")) == "2026-11-10T10:22:20+00:00"
+    # Without the offset octets: the device's local time, read as lanwatch's local zone,
+    # the same as the clock reader (snmp_clock.parse_date_and_time).
+    local = datetime(2026, 11, 10, 10, 22, 20).astimezone()
+    assert date_and_time(bytes.fromhex("07EA0B0A0A161400")) == local.astimezone(UTC).isoformat()
     assert date_and_time(bytes.fromhex("07EA0B0A0A1614002D011E")) == "2026-11-10T11:52:20+00:00"
     assert date_and_time(bytes(8)) is None  # zero: never
     assert date_and_time(b"\x07\xea\x0d\x01\x00\x00\x00\x00") is None  # month 13
