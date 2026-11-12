@@ -422,6 +422,16 @@ async def collect_snmp(
             t = SnmpTargetOutcome(
                 host=out.host, role="router", name=target.name, system=out.system, error=out.error
             )
+        elif out.host and target.host and target.host.lower() == out.host.lower():
+            # The router without a host is the default gateway, which config validation
+            # cannot know. Another table at that address is the same device: read once, as
+            # the router, so the two do not overwrite each other's state.
+            log.warning(
+                "snmp: snmp.devices.%s is the router's address %s; read once, as the router",
+                target.name,
+                out.host,
+            )
+            continue
         else:
             t = await _read_device(target)
         extra = ReaderResult()
