@@ -32,6 +32,7 @@ from lanwatch.rules.unifi import (
     IotOnMainNetworkRule,
     UnifiDeviceOfflineRule,
     UnifiOnlyClientRule,
+    UnifiRadioRetriesRule,
     UnifiSlowLinkRule,
 )
 from lanwatch.rules.versions import FirmwareOutdatedRule
@@ -697,6 +698,43 @@ async def test_statistics_are_stored_graphed_and_a_restart_is_an_event(config: C
     assert "CPU over the last 7 days" in week
     # A device that is not UniFi gear gets no such block.
     assert "UniFi statistics" not in client.get(f"/devices/{ids['nas']}").text
+
+
+async def test_radio_retries_rule_needs_an_hour_of_bad_reads(config: Config) -> None:
+    config.unifi = _cfg()
+    with Store(config.store_path) as store:
+        ids = _seed(store)
+        sid = store.begin_snapshot("infra", "t")
+        rule = UnifiRadioRetriesRule()
+        # The gateway's 2.4 GHz radio resends 31 %; two reads are not yet enough.
+        for _ in range(2):
+            await collect_unifi(config, store, sid, Controller().client())
+        assert rule.evaluate(_ctx(store, config)) == []
+        await collect_unifi(config, store, sid, Controller().client())
+        found = rule.evaluate(_ctx(store, config))
+        assert [f.title for f in found] == [
+            "UniFi Express (UX7) resends 31 % of what it transmits on 2.4 GHz"
+        ]
+        ev = found[0].evidence
+        assert found[0].device_id == ids["gw"] and found[0].severity is Severity.LOW
+        assert ev["channel"] == 6 and ev["tx_retries_pct"] == [31.0, 31.0, 31.0]
+        assert ev["threshold_pct"] == 30.0
+        # A higher threshold, or one read below it, and there is nothing to report.
+        config.unifi = _cfg(tx_retries_warn_pct=40)
+        assert rule.evaluate(_ctx(store, config)) == []
+        config.unifi = _cfg()
+        ctl = Controller()
+        calm = _fx("stats-gw")
+        calm["interfaces"]["radios"][1]["txRetriesPct"] = 12
+        ctl.stats = {GW: calm}
+        await collect_unifi(config, store, sid, ctl.client())
+        assert rule.evaluate(_ctx(store, config)) == []
+    client = TestClient(create_app(config))
+    page = client.get(f"/devices/{ids['gw']}").text
+    assert "resent: 4.2 % on 5 GHz, 12.0 % on 2.4 GHz" in page
+    assert "Resent on 2.4 GHz over the last 24 hours" in page
+    with pytest.raises(ValueError, match="tx_retries_warn_pct"):
+        _cfg(tx_retries_warn_pct=0)
 
 
 def test_topology_layout_and_overflow(store: Store) -> None:

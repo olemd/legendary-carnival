@@ -1,5 +1,6 @@
 """What the device page shows for a UniFi device beyond its facts: graphs of the
-statistics the infra round keeps (uplink rate, CPU and memory use) over 24 h or 7 d.
+statistics the infra round keeps (uplink rate, CPU and memory use, and the share each
+radio had to resend) over 24 h or 7 d.
 Drawn like the UPS graphs, from the same table.
 """
 
@@ -24,14 +25,20 @@ def unifi_block(s: Store, device: Device, range_key: str) -> dict[str, Any] | No
     """The graphs for a device that is UniFi gear, or None when it is not or nothing has
     been recorded yet."""
     ud = device.attrs.get("unifi_device")
-    mac = ud.get("mac") if isinstance(ud, dict) else None
-    if not isinstance(mac, str):
+    if not isinstance(ud, dict) or not isinstance(ud.get("mac"), str):
         return None
+    mac: str = ud["mac"]
     range_key = range_key if range_key in RANGES else "24h"
     end = now_utc()
     start = iso(end - RANGES[range_key])
     graphs = []
-    for metric, title, unit, factor in GRAPHS:
+    bands = [r.get("band") for r in (ud.get("stats") or {}).get("radios") or []]
+    retries = [
+        (f"unifi.tx_retries_pct.{b:g}", f"Resent on {b:g} GHz", "%", 1.0)
+        for b in bands
+        if isinstance(b, int | float)
+    ]
+    for metric, title, unit, factor in GRAPHS + retries:
         series = [(ts, v * factor) for ts, v in s.snmp_series(mac, metric, start)]
         if series:
             graphs.append(

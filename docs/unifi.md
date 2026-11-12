@@ -9,11 +9,12 @@ can read what the controller knows and no scan can see:
 - the networks and SSIDs that exist, with VLAN ids, subnets and isolation settings;
 - the UniFi devices themselves: state, firmware, whether an update is pending, ports and
   radios, and how they are chained together;
-- per UniFi device that is online: uptime, CPU and memory use, and how much it was sending
-  and receiving on its uplink when the controller last heard from it.
+- per UniFi device that is online: uptime, CPU and memory use, how much it was sending
+  and receiving on its uplink when the controller last heard from it, and for each radio
+  the share of its transmissions it had to resend.
 
-That feeds four rules (`net.iot-on-main-network`, `inventory.unifi-only`,
-`net.unifi-device-offline`, `net.unifi-slow-link`), sharpens the flat-network note, puts UniFi firmware under the
+That feeds five rules (`net.iot-on-main-network`, `inventory.unifi-only`,
+`net.unifi-device-offline`, `net.unifi-slow-link`, `net.unifi-radio-retries`), sharpens the flat-network note, puts UniFi firmware under the
 existing `device.firmware-outdated` rule, and draws the **Topology** page.
 
 Everything lanwatch does is read-only, over HTTPS, on the LAN: none of the API's write
@@ -92,6 +93,7 @@ The two are mutually exclusive: `ca_file` with `verify_tls = false` is a config 
 | Key | Default | Meaning |
 |---|---|---|
 | `site` | first site | Site id or name when the controller has several. |
+| `tx_retries_warn_pct` | `30` | The share of its transmissions a radio must resend, for about an hour, before `net.unifi-radio-retries` fires. Raise it if a busy but working network keeps tripping it. |
 | `adopt_names` | `true` | A device without a name in lanwatch gets the name set in the controller. A name set in lanwatch is never overwritten, and a controller "name" that is just the hostname is ignored. |
 
 ## 3. What you get
@@ -100,8 +102,8 @@ The two are mutually exclusive: `ca_file` with `verify_tls = false` is a config 
 network and VLAN, and the SSIDs on that network. A UniFi device's page gets a *UniFi device*
 row (model, state, uplink, ports up, radios, and the link speed of every port that is
 up) and a *Firmware* row that says *update
-available* when the controller has one pending. It also shows uptime, CPU and memory use
-and the uplink rate, and under **UniFi statistics** a graph of each over the last 24 hours
+available* when the controller has one pending. It also shows uptime, CPU and memory use,
+the uplink rate and the share each radio resends, and under **UniFi statistics** a graph of each over the last 24 hours
 or 7 days.
 
 The uplink rate is what the device was sending and receiving towards the gateway at the
@@ -126,6 +128,7 @@ the device they hang off, each labelled with its network. The same tree as a lis
 | `inventory.unifi-only` | info | The controller lists a client lanwatch has never seen: another VLAN, or client isolation. |
 | `net.unifi-device-offline` | high | An adopted device is offline, isolated or has its connection interrupted. Resolves when it is back. |
 | `net.unifi-slow-link` | info | A port that can do 1 Gbit/s or more has a link at 100 Mbit/s or less: a 10/100 device, or a cable with a broken pair. The controller does not say what is plugged in; accept the finding if it is a 10/100 device. |
+| `net.unifi-radio-retries` | low | A radio has resent at least `tx_retries_warn_pct` of what it transmitted at every read for about an hour (four infra rounds, at least three readings): a crowded channel, interference, or clients at the edge of its range. Resolves when a read is below the threshold. |
 | `device.firmware-outdated` | low | Now also fires for UniFi devices with a pending update. |
 | `improvement.flat-network` | info | Groups by the controller's networks instead of guessing a /24. |
 

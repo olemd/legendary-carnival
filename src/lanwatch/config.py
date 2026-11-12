@@ -387,6 +387,9 @@ class UnifiConfig(StrictModel):
     # Give unnamed lanwatch devices the name the controller has for them. Never overwrites
     # a name set in lanwatch.
     adopt_names: bool = True
+    # net.unifi-radio-retries fires when a radio has had to resend at least this share of
+    # what it transmitted, at every read for about an hour.
+    tx_retries_warn_pct: float = Field(default=30.0, gt=0, le=100)
 
     @model_validator(mode="after")
     def _check(self) -> UnifiConfig:

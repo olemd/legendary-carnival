@@ -177,6 +177,7 @@ api_key = ""
 verify_tls = true                       # consoles are self-signed: pin with ca_file, or set false
 # ca_file = "/etc/lanwatch/unifi.pem"   # the console's certificate (docs/unifi.md shows the export)
 adopt_names = true                      # name unnamed devices as the controller names them
+tx_retries_warn_pct = 30                # a radio resending this share for an hour is a finding
 
 [snmp]
 # Read-only SNMPv3 links to devices on the LAN: one [snmp.devices.<name>] table each, named
