@@ -32,6 +32,7 @@ Types: deb
 URIs: https://kode.naiv.no/api/packages/olemd/debian/
 Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
 Components: main
+Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/forgejo-olemd.asc
 SOURCES
 sudo apt update && sudo apt install lanwatch
@@ -42,6 +43,11 @@ The repository has a suite for each release the package is tested on: `bookworm`
 fills in the one this machine runs. On any other release, write `trixie` there: the
 package is the same in all three. The `.deb` files are also attached to each GitHub
 release.
+
+The repository only carries amd64 and arm64. The `Architectures:` line limits apt to
+this machine's own architecture; without it, a machine with a foreign architecture
+enabled (typically i386) gets a "doesn't support architecture 'i386'" notice on every
+`apt update`.
 
 The service is now scanning the networks this machine is attached to: discovery every
 5 minutes, service inventory hourly, a deep scan weekly. The first round is the baseline;
